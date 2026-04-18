@@ -190,7 +190,7 @@ function buildMainExchangeEmbed() {
       { name: "Speed",  value: "Usually < 10 min\nOften faster", inline: true },
       { name: "Privacy", value: "Private tickets\nVerified staff", inline: true },
     )
-    .setImage(CONFIG.BANNER_URL || null)
+    .setImage("https://i.imgur.com/VHBuITj.gif")
     .setFooter({ text: "Konvert  •  Min fee $5" });
 }
 
@@ -492,7 +492,7 @@ async function createTicket(interaction, method, direction, amountUSD, coin, wal
   if (notes) ticketEmbed.addFields({ name: "Notes", value: notes, inline: false });
 
   ticketEmbed
-    .setImage(CONFIG.BANNER_URL || null)
+    .setImage("https://i.imgur.com/1bcQqKx.png")
     .setTimestamp()
     .setFooter({ text: "Konvert  •  Do not share sensitive info outside this ticket" });
 
@@ -509,6 +509,7 @@ async function createTicket(interaction, method, direction, amountUSD, coin, wal
       `Do not engage with anyone claiming to be an owner or exchanger in your DMs — they are impersonators.\n` +
       `All communication happens here in this ticket only.`
     )
+    .setImage("https://i.imgur.com/mUUxkET.png")
     .setFooter({ text: "Konvert  •  Stay safe, stay in this ticket" });
 
   // ── Buttons ──
@@ -574,7 +575,7 @@ async function postVouchEmbed(guild, completedBy, ticket) {
       )
       .setTimestamp()
       .setFooter({ text: "Konvert  •  Verified Trade" });
-    if (CONFIG.BANNER_URL) embed.setImage(CONFIG.BANNER_URL);
+    embed.setImage("https://i.imgur.com/cSxxqd2.png");
     await ch.send({ embeds: [embed] });
     return;
   }
@@ -602,7 +603,7 @@ async function postVouchEmbed(guild, completedBy, ticket) {
     .setTimestamp()
     .setFooter({ text: "Konvert  •  Verified Trade" });
 
-  if (CONFIG.BANNER_URL) embed.setImage(CONFIG.BANNER_URL);
+  embed.setImage("https://i.imgur.com/cSxxqd2.png");
 
   await ch.send({ embeds: [embed] });
   logAction(guild, `⭐ Auto-vouch: ${ticket.userTag} · ${m.label} · ${fmtUSD(ticket.amountUSD)} · completed by ${completedBy.tag}`);
@@ -646,7 +647,7 @@ async function buildRatesEmbed() {
         `*Type \`$BTC\`, \`$ETH\`, \`$SOL\` etc. in any channel for a detailed breakdown.*`,
       inline: false,
     })
-    .setImage(CONFIG.BANNER_URL || null)
+    .setImage("https://i.imgur.com/SF8G50a.png")
     .setFooter({ text: "Rates refresh every 10 min  •  Konvert" })
     .setTimestamp();
 }
@@ -899,6 +900,7 @@ client.on(Events.InteractionCreate, async interaction => {
         .setFooter({ text: totalTrades === 0 ? "No completed trades yet" : `${totalTrades} verified trade${totalTrades !== 1 ? "s" : ""} on Konvert` })
         .setTimestamp();
 
+      embed.setImage("https://i.imgur.com/VHBuITj.gif");
       return interaction.reply({ embeds: [embed] });
     }
 
@@ -1091,6 +1093,7 @@ client.on(Events.InteractionCreate, async interaction => {
               { name: "Rating",    value: "★★★★★",                inline: true },
             )
             .setDescription("Vouch posted. This ticket closes in **15 seconds**.")
+            .setImage("https://i.imgur.com/1bcQqKx.png")
             .setTimestamp()
             .setFooter({ text: "Konvert" }),
         ],
@@ -1260,7 +1263,7 @@ client.on(Events.InteractionCreate, async interaction => {
       const confirmEmbed = new EmbedBuilder()
         .setColor(CONFIG.COLOR)
         .setAuthor({ name: "Konvert", iconURL: CONFIG.LOGO_URL || null })
-        .setThumbnail(coinLogo)
+        .setThumbnail(coinLogo || "https://i.imgur.com/GXwsQv0.mp4")
         .setTitle("Confirm Your Exchange")
         .setDescription("Please review your exchange details below before confirming.\nOnce confirmed a private ticket will be opened for you.\n\u200b")
         .addFields(
@@ -1272,6 +1275,7 @@ client.on(Events.InteractionCreate, async interaction => {
           { name: "Est. Fee",       value: `${rate}% — ${fmtUSD(fee)}`,    inline: true },
           { name: "Your Info",      value: `||${walletInf}||`,              inline: false },
         )
+        .setImage("https://i.imgur.com/pYBg770.png")
         .setFooter({ text: "Estimate only — final fee may vary  •  Konvert" });
 
       const confirmRow = new ActionRowBuilder().addComponents(
