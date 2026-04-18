@@ -38,6 +38,7 @@ const CONFIG = {
   LOG_CHANNEL:     process.env.LOG_CHANNEL_ID     || null,
   RATES_CHANNEL:   process.env.RATES_CHANNEL_ID   || null,
   EXCHANGE_CHANNEL:"1463731676021784587",
+  PASS_ROLE:"1488344770035060786",
   MIN_FEE: 5,
   COLOR:   0x7C4DFF,
   ROLES: {
@@ -132,6 +133,10 @@ const COMMANDS = [
   new SlashCommandBuilder().setName("announce").setDescription("[Owner] Post an announcement").addStringOption(o=>o.setName("message").setDescription("Message").setRequired(true)).addStringOption(o=>o.setName("channel").setDescription("Channel ID").setRequired(true)).addStringOption(o=>o.setName("ping").setDescription("everyone / here / none").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("blacklist").setDescription("[Owner] Blacklist a user").addUserOption(o=>o.setName("user").setDescription("User").setRequired(true)).addStringOption(o=>o.setName("reason").setDescription("Reason").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("unblacklist").setDescription("[Owner] Remove blacklist").addUserOption(o=>o.setName("user").setDescription("User").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("calc").setDescription("[Owner] Instantly post live rates to the rates channel").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("passes").setDescription("[Owner] View all exchange pass holders").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("ticket").setDescription("Check your current open ticket status"),
+  new SlashCommandBuilder().setName("howto").setDescription("How to use Konvert Exchange — beginner guide"),
 ].map(c => c.toJSON());
 
 async function registerCommands() {
@@ -156,13 +161,13 @@ function mainEmbed() {
     .setColor(CONFIG.COLOR)
     .setAuthor({ name:"Konvert", iconURL:IMG.LOGO })
     .setTitle("Konvert Exchange")
-    .setDescription("**Fast. Safe. Simple.**\nExchange crypto with any major payment method. Open a private ticket — a verified handler will assist you.\n\u200b")
+    .setDescription("**Fast. Safe. Simple.**\nExchange any cryptocurrency with any major payment method.\nA private ticket opens instantly — a verified handler will assist you.\n\u200b")
     .addFields(
-      { name:"Payment Methods", value:METHODS.map(m=>`**${m.label}**`).join("  ·  "), inline:false },
-      { name:"Supported Crypto", value:COINS.map(c=>`\`${c}\``).join("  "), inline:false },
-      { name:"Fee", value:"5% – 9%\nTiered by amount", inline:true },
-      { name:"Speed", value:"Usually < 10 min\nOften faster", inline:true },
-      { name:"Support", value:"24/7\nAlways available", inline:true },
+      { name:"💳  Payment Methods", value:METHODS.map(m=>`${m.label}`).join("  ·  "), inline:false },
+      { name:"🪙  Supported Crypto", value:"**All major cryptocurrencies supported.** BTC, ETH, SOL, LTC, USDT, USDC, XRP, BNB, ADA, DOGE, MATIC, AVAX, DOT, LINK, TRX, SHIB, UNI, ATOM, FTM, NEAR and more — just ask in your ticket.", inline:false },
+      { name:"💸  Fee", value:"5% – 9%\nTiered by amount", inline:true },
+      { name:"⚡  Speed", value:"Usually < 10 min\nOften faster", inline:true },
+      { name:"🔒  Support", value:"24/7\nAlways available", inline:true },
     )
     .setImage(IMG.TICKET)
     .setFooter({ text:"Konvert  •  Click Exchange Now to begin" });
@@ -212,12 +217,18 @@ async function buildRatesEmbed() {
   }).filter(Boolean).join("\n");
 
   return new EmbedBuilder()
-    .setColor(CONFIG.COLOR).setAuthor({ name:"Konvert", iconURL:IMG.LOGO })
-    .setTitle("Live Rates").setThumbnail(COIN_LOGO["BTC"])
+    .setColor(CONFIG.COLOR)
+    .setAuthor({ name:"Konvert", iconURL:IMG.LOGO })
+    .setTitle("Live Rates")
+    .setThumbnail(COIN_LOGO["BTC"])
     .setDescription(lines + "\n\u200b")
-    .addFields({ name:"Start an Exchange", value:`Head to <#${CONFIG.EXCHANGE_CHANNEL}> and tap **Exchange Now**.\nType **$BTC**, **$ETH** etc. in any channel for a detailed single-coin lookup.`, inline:false })
+    .addFields(
+      { name:"Exchange", value:`Open a ticket in <#${CONFIG.EXCHANGE_CHANNEL}>`, inline:true },
+      { name:"Tip",      value:"Type **$BTC**, **$ETH** etc. for details", inline:true },
+    )
     .setImage(IMG.RATES)
-    .setFooter({ text:"Rates refresh every 10 min  •  Konvert" }).setTimestamp();
+    .setFooter({ text:"Updates every 10 min  •  Use /calc to post now  •  Konvert" })
+    .setTimestamp();
 }
 
 // ─── TICKET CREATION ─────────────────────────────────────────
@@ -323,7 +334,7 @@ async function postVouch(guild, { clientId, exchangerId, method, amountUSD, dire
   const embed = new EmbedBuilder()
     .setColor(CONFIG.COLOR)
     .setAuthor({ name:"Konvert", iconURL:IMG.LOGO })
-    .setTitle("Vouch Recorded")
+    .setTitle("Deal Complete")
     .addFields(
       { name:"Client",    value:`<@${clientId}>`,   inline:true },
       { name:"Exchanger", value:`<@${exchangerId}>`, inline:true },
@@ -339,7 +350,6 @@ async function postVouch(guild, { clientId, exchangerId, method, amountUSD, dire
 
 // ─── MINE GAME ───────────────────────────────────────────────
 function buildMineEmbed(userId, game) {
-  // Build 5x5 button grid showing revealed/unrevealed cells
   const rows = [];
   for (let r = 0; r < 5; r++) {
     const row = new ActionRowBuilder();
@@ -347,12 +357,16 @@ function buildMineEmbed(userId, game) {
       const idx = r * 5 + c;
       const revealed = game.revealed.includes(idx);
       const isDiamond = game.diamonds.includes(idx);
+      const isBomb    = game.bombs.includes(idx);
       let label = "?", style = ButtonStyle.Secondary, disabled = false;
       if (revealed) {
         if (isDiamond) { label = "💎"; style = ButtonStyle.Success; }
-        else { label = "X"; style = ButtonStyle.Danger; }
+        else if (isBomb) { label = "💣"; style = ButtonStyle.Danger; }
+        else { label = "·"; style = ButtonStyle.Secondary; }
         disabled = true;
       }
+      // Disable all if game over
+      if (game.over) disabled = true;
       row.addComponents(
         new ButtonBuilder()
           .setCustomId(`mine_cell_${userId}_${idx}`)
@@ -397,6 +411,20 @@ async function doCloseTicket(channel, guild, closedBy, reason) {
         fs.unlinkSync(fpath2);
       }
     } catch {}
+    // DM every owner a copy too
+    for (const oid of CONFIG.OWNER_IDS) {
+      try {
+        const owner = await guild.members.fetch(oid).then(m=>m.user).catch(()=>null);
+        if (owner && owner.id !== closedBy.id) {
+          const fname3 = `transcript-${channel.name}-owner.txt`;
+          const fpath3 = `./${fname3}`;
+          fs.writeFileSync(fpath3, lines);
+          const t2 = tickets[channel.id];
+          await owner.send({ content:`Transcript for **#${channel.name}** | Client: ${t2?.userTag||"?"} | Closed by: ${closedBy.tag}`, files:[{ attachment:fpath3, name:fname3 }] }).catch(()=>{});
+          fs.unlinkSync(fpath3);
+        }
+      } catch {}
+    }
   } catch {}
   log(guild, `CLOSED: #${channel.name} by ${closedBy.tag} — ${reason}`);
   return true;
@@ -537,16 +565,18 @@ client.on(Events.InteractionCreate, async interaction => {
           return interaction.reply({ embeds:[base("Mine — On Cooldown").setDescription(`You can mine again in **${hrs>0?`${hrs}h ${mins}m`:`${mins}m`}**.`).setFooter({ text:"Konvert Mine  •  Once every 3 hours" })], ephemeral:true });
         }
         state.cooldowns[userId] = Date.now();
-        // Generate 3 hidden diamonds in 25 cells
-        const diamonds = new Set();
-        while (diamonds.size < 3) diamonds.add(Math.floor(Math.random()*25));
-        state.mineGames[userId] = { diamonds:[...diamonds], revealed:[], found:0 };
+        // Place 3 diamonds and 5 bombs in 25 cells (no overlap)
+        const positions = Array.from({length:25},(_,i)=>i).sort(()=>Math.random()-0.5);
+        const diamonds  = positions.slice(0, 3);
+        const bombs     = positions.slice(3, 8);
+        state.mineGames[userId] = { diamonds, bombs, revealed:[], found:0, tries:0, over:false };
 
         const components = buildMineEmbed(userId, state.mineGames[userId]);
         return interaction.reply({
           embeds:[base("Konvert Mine")
-            .setDescription("A **5x5** grid lies before you. Hidden within are **3 diamonds**.\n\nClick cells to reveal them. Find all **3 diamonds** to win a **Free Exchange Pass**.\n\u200b")
-            .setFooter({ text:"Konvert Mine  •  Find all 3 diamonds  •  Cooldown: 3 hours" })],
+            .setDescription("A **5x5** grid lies before you.\n\nHidden within: **3 diamonds** 💎 and **5 bombs** 💣\n\nYou have **3 tries**. Find all 3 diamonds without hitting a bomb to win a **Free Exchange Pass**.\n\u200b")
+            .addFields({ name:"Tries Remaining", value:"**3**", inline:true }, { name:"Diamonds Found", value:"**0 / 3**", inline:true })
+            .setFooter({ text:"Konvert Mine  •  3 tries  •  Hit 1 bomb = game over  •  Cooldown: 3 hours" })],
           components,
           ephemeral:true,
         });
@@ -614,6 +644,65 @@ client.on(Events.InteractionCreate, async interaction => {
         const target = interaction.options.getUser("user");
         const bl     = load("blacklist"); delete bl[target.id]; save("blacklist", bl);
         return interaction.reply({ content:`**${target.tag}** removed from blacklist.`, ephemeral:true });
+      }
+
+      // /calc — instantly post rates
+      if (cmd === "calc") {
+        await interaction.deferReply({ ephemeral:true });
+        const guild = interaction.guild;
+        if (!CONFIG.RATES_CHANNEL) return interaction.editReply("RATES_CHANNEL_ID not configured.");
+        const ch = guild.channels.cache.get(CONFIG.RATES_CHANNEL);
+        if (!ch) return interaction.editReply("Rates channel not found.");
+        const embed = await buildRatesEmbed();
+        if (ratesMsgId) {
+          const msg = await ch.messages.fetch(ratesMsgId).catch(()=>null);
+          if (msg) { await msg.edit({ embeds:[embed] }); }
+          else { const sent = await ch.send({ embeds:[embed] }); ratesMsgId = sent.id; }
+        } else {
+          const sent = await ch.send({ embeds:[embed] }); ratesMsgId = sent.id;
+        }
+        return interaction.editReply("Rates posted.");
+      }
+
+      // /passes — view pass holders
+      if (cmd === "passes") {
+        const holders = Object.entries(state.passes).filter(([,v])=>v>0);
+        if (!holders.length) return interaction.reply({ content:"No exchange passes have been won yet.", ephemeral:true });
+        const lines = holders.map(([uid,count])=>`<@${uid}> — **${count}** pass${count!==1?"es":""}`).join("\n");
+        return interaction.reply({ embeds:[base("Exchange Pass Holders").setThumbnail(IMG.LOGO).setDescription(lines).setFooter({ text:"Konvert Mine  •  Won by finding all 3 diamonds" })], ephemeral:true });
+      }
+
+      // /ticket — check own open ticket
+      if (cmd === "ticket") {
+        const tickets = load("tickets");
+        const found   = Object.entries(tickets).find(([,t])=>t.userId===interaction.user.id&&t.status==="open");
+        if (!found) return interaction.reply({ content:"You don't have an open ticket right now. Use the **Exchange Now** button to start one.", ephemeral:true });
+        const [channelId, t] = found;
+        const m = getMethod(t.method);
+        return interaction.reply({ embeds:[base("Your Open Ticket")
+          .addFields(
+            { name:"Channel",   value:`<#${channelId}>`,                                   inline:true },
+            { name:"Method",    value:m?.label||t.method,                                  inline:true },
+            { name:"Amount",    value:fmtUSD(t.amountUSD),                                 inline:true },
+            { name:"Coin",      value:t.coin||"—",                                         inline:true },
+            { name:"Direction", value:t.direction==="send"?"Fiat → Crypto":"Crypto → Fiat", inline:true },
+            { name:"Opened",    value:`<t:${Math.floor(t.createdAt/1000)}:R>`,             inline:true },
+          ).setFooter({ text:"Konvert  •  All communication stays in your ticket" })], ephemeral:true });
+      }
+
+      // /howto — beginner guide
+      if (cmd === "howto") {
+        return interaction.reply({ embeds:[base("How to Use Konvert")
+          .setDescription("New to Konvert? Here's how a trade works step by step.\n\u200b")
+          .addFields(
+            { name:"1.  Check Rates",    value:"Use the **Live Rates** button or type `$BTC` / `$ETH` etc. in any channel to see the current price.", inline:false },
+            { name:"2.  Calculate Fee",  value:"Use **Calculate Fee** to get an estimate of what you'll pay. Fees range from **5% – 9%** depending on your amount.", inline:false },
+            { name:"3.  Open a Ticket",  value:"Click **Exchange Now**, pick your payment method, choose a direction, fill in the details, and confirm. A private ticket opens instantly.", inline:false },
+            { name:"4.  Agree on an MM", value:"A **middleman** is required on all trades. Agree on one with your exchanger inside your ticket before sending anything.", inline:false },
+            { name:"5.  Send & Confirm", value:"Staff confirms the deal. You send your funds and share proof. Once confirmed, you receive your crypto or payment.", inline:false },
+            { name:"Stay Safe",          value:"Staff never DM you first. Anyone doing so is an impersonator. All communication happens in your ticket only.", inline:false },
+          )
+          .setFooter({ text:"Konvert  •  Questions? Ask in your ticket" })], ephemeral:true });
       }
 
       return;
@@ -746,39 +835,106 @@ client.on(Events.InteractionCreate, async interaction => {
         if (interaction.user.id !== userId) return interaction.reply({ content:"This is not your mine game.", ephemeral:true });
         const game = state.mineGames[userId];
         if (!game) return interaction.reply({ content:"No active game. Use /mine to start.", ephemeral:true });
+        if (game.over) return interaction.reply({ content:"This game is already over.", ephemeral:true });
         if (game.revealed.includes(idx)) return interaction.reply({ content:"You already revealed that cell.", ephemeral:true });
 
         game.revealed.push(idx);
+        game.tries++;
         const isDiamond = game.diamonds.includes(idx);
+        const isBomb    = game.bombs.includes(idx);
         if (isDiamond) game.found++;
 
-        const allFound = game.found === 3;
-        const components = buildMineEmbed(userId, game);
+        // BOMB HIT — instant game over
+        if (isBomb) {
+          game.over = true;
+          delete state.mineGames[userId];
+          // Reveal all on game over
+          const revealGame = { ...game, revealed: Array.from({length:25},(_,i)=>i), over:true };
+          const components = buildMineEmbed(userId, revealGame);
+          return interaction.update({
+            embeds:[base("Mine — Bomb Hit")
+              .setColor(0xFF4444)
+              .setDescription("**BOOM!** You hit a bomb. The grid has been revealed.\n\nBetter luck next time — you can try again in **3 hours**.\n\u200b")
+              .addFields(
+                { name:"Diamonds Found", value:`**${game.found} / 3**`, inline:true },
+                { name:"Result",         value:"No pass awarded",        inline:true },
+                { name:"Next Try",       value:"In **3 hours**",         inline:true },
+              )
+              .setFooter({ text:"Konvert Mine  •  Try again in 3 hours" })],
+            components,
+          });
+        }
 
-        if (allFound) {
+        // TRIES EXHAUSTED — no more picks
+        const triesLeft = 3 - game.tries;
+        if (triesLeft <= 0 && game.found < 3) {
+          game.over = true;
+          delete state.mineGames[userId];
+          const revealGame = { ...game, revealed: Array.from({length:25},(_,i)=>i), over:true };
+          const components = buildMineEmbed(userId, revealGame);
+          return interaction.update({
+            embeds:[base("Mine — Out of Tries")
+              .setDescription(`You used all **3 tries** and found **${game.found} / 3** diamonds.\n\n The grid has been revealed. Try again in **3 hours**.\n\u200b`)
+              .addFields(
+                { name:"Diamonds Found", value:`**${game.found} / 3**`, inline:true },
+                { name:"Result",         value:"No pass awarded",        inline:true },
+                { name:"Next Try",       value:"In **3 hours**",         inline:true },
+              )
+              .setFooter({ text:"Konvert Mine  •  Try again in 3 hours" })],
+            components,
+          });
+        }
+
+        // ALL 3 FOUND — winner!
+        if (game.found === 3) {
+          game.over = true;
           delete state.mineGames[userId];
           state.passes[userId] = (state.passes[userId]||0) + 1;
+
+          // Award the exchange pass role
+          try {
+            const member = await interaction.guild.members.fetch(userId);
+            if (CONFIG.PASS_ROLE) await member.roles.add(CONFIG.PASS_ROLE);
+          } catch {}
+
           // DM owners
           for (const oid of CONFIG.OWNER_IDS) {
             try {
               const owner = await client.users.fetch(oid);
-              await owner.send({ embeds:[new EmbedBuilder().setColor(0xFFD700).setAuthor({ name:"Konvert Mine — Winner", iconURL:IMG.LOGO }).setTitle("Exchange Pass Won").setDescription(`<@${userId}> (${interaction.user.tag}) found all 3 diamonds and won a free exchange pass.\nTotal passes: **${state.passes[userId]}**`).setTimestamp()] });
+              await owner.send({ embeds:[new EmbedBuilder().setColor(0xFFD700)
+                .setAuthor({ name:"Konvert Mine — Winner", iconURL:IMG.LOGO })
+                .setTitle("Exchange Pass Won")
+                .setDescription(`<@${userId}> (${interaction.user.tag}) found all 3 diamonds and won a free exchange pass.\nTotal passes: **${state.passes[userId]}**`)
+                .setTimestamp()] });
             } catch {}
           }
+
+          const components = buildMineEmbed(userId, { ...game, revealed:[...game.revealed], over:true });
           return interaction.update({
-            embeds:[new EmbedBuilder().setColor(0xFFD700).setAuthor({ name:"Konvert", iconURL:IMG.LOGO }).setTitle("All 3 Diamonds Found")
-              .setDescription("You found every diamond. A **Free Exchange Pass** has been awarded.\n\nOpen a ticket and let staff know — they have been notified.")
-              .addFields({ name:"Pass Holder", value:`<@${userId}>`, inline:true }, { name:"Passes", value:`**${state.passes[userId]}**`, inline:true })
+            embeds:[new EmbedBuilder().setColor(0xFFD700)
+              .setAuthor({ name:"Konvert", iconURL:IMG.LOGO })
+              .setTitle("All 3 Diamonds Found")
+              .setDescription("You found every diamond without hitting a bomb.\n\nA **Free Exchange Pass** has been awarded and the role has been added to your account.\nOpen a ticket and let staff know.\n\u200b")
+              .addFields(
+                { name:"Pass Holder", value:`<@${userId}>`,              inline:true },
+                { name:"Passes",      value:`**${state.passes[userId]}**`, inline:true },
+                { name:"Tries Used",  value:`**${game.tries} / 3**`,    inline:true },
+              )
               .setFooter({ text:"Konvert Mine  •  Screenshot this as proof" }).setTimestamp()],
-            components:[],
+            components,
           });
         }
 
-        // Update the grid embed
+        // Still playing — update grid
+        const components = buildMineEmbed(userId, game);
         const embed = base("Konvert Mine")
-          .setDescription(`**${game.found}/3 diamonds found.**\n${isDiamond?"You found a diamond! Keep going.":"Nothing there. Keep looking."}\n\u200b`)
-          .setFooter({ text:`Konvert Mine  •  ${3-game.found} diamond${3-game.found!==1?"s":""} remaining` });
-
+          .setDescription(`${isDiamond ? "**Diamond found!** Keep going." : "Nothing there. Keep looking."}
+​`)
+          .addFields(
+            { name:"Diamonds Found",  value:`**${game.found} / 3**`, inline:true },
+            { name:"Tries Remaining", value:`**${triesLeft}**`,      inline:true },
+          )
+          .setFooter({ text:`Konvert Mine  •  ${triesLeft} tr${triesLeft!==1?"ies":"y"} left  •  Hit a bomb = game over` });
         return interaction.update({ embeds:[embed], components });
       }
     }
