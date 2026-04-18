@@ -136,41 +136,28 @@ function logAction(guild, msg) {
 function buildMainExchangeEmbed() {
   return new EmbedBuilder()
     .setColor(CONFIG.COLOR)
-    .setTitle("💱 Konvert Exchange")
+    .setTitle("Konvert Exchange")
     .setDescription(
-      `**The fastest, safest way to exchange crypto.**\n\n` +
-      `Click **Exchange Now** to get started. Our bot will walk you through everything — ` +
-      `pick your payment method, choose your direction, and your private ticket opens instantly.\n\u200b`
+      `Fast · Safe · Simple\n\n` +
+      `Click **Exchange Now**, pick your payment method, and a private ticket opens instantly.\n\u200b`
     )
     .addFields(
       {
-        name: "💳 Accepted Payment Methods",
+        name: "Methods",
         value: PAYMENT_METHODS.map(m => `${m.emoji} ${m.label}`).join("  ·  "),
         inline: false,
       },
       {
-        name: "🪙 Supported Crypto",
-        value: CONFIG.COINS.map(c => `${COIN_EMOJI[c]||"🪙"} ${c}`).join("  ·  "),
+        name: "Crypto",
+        value: CONFIG.COINS.join("  ·  "),
         inline: false,
       },
-      {
-        name: "💸 Fee",
-        value: `Fiat→Crypto: 9% / 7% / 6% / 5.5% by tier\nCrypto→Fiat: 1% less per tier\nMin fee: **$${CONFIG.MIN_FEE_USD}**`,
-        inline: true,
-      },
-      {
-        name: "📦 Minimum",
-        value: `No minimum — $${CONFIG.MIN_FEE_USD} min fee applies`,
-        inline: true,
-      },
-      {
-        name: "⏱️ Speed",
-        value: "< 30 minutes",
-        inline: true,
-      },
+      { name: "Fee",       value: "9%–5.5% by amount", inline: true },
+      { name: "Min Fee",   value: "$5",                inline: true },
+      { name: "Speed",     value: "< 30 min",          inline: true },
     )
     .setImage(CONFIG.BANNER_URL || null)
-    .setFooter({ text: "Konvert Exchange • Tap Exchange Now to begin" });
+    .setFooter({ text: "Konvert Exchange" });
 }
 
 function buildMainExchangeButtons() {
@@ -293,14 +280,9 @@ const client = new Client({
 function step1Embed() {
   return new EmbedBuilder()
     .setColor(CONFIG.COLOR)
-    .setTitle("💳 Select Payment Method")
-    .setDescription(
-      `Choose the payment method you're using for this exchange.\n\n` +
-      `**Sending crypto?** → Select what you want to receive payment in.\n` +
-      `**Receiving crypto?** → Select what you'll be sending payment from.`
-    )
-    .setFooter({ text: "Step 1 of 3 • Konvert Exchange" })
-    .setThumbnail(CONFIG.LOGO_URL || null);
+    .setTitle("Select Payment Method")
+    .setDescription("Choose your payment method from the dropdown below.")
+    .setFooter({ text: "Step 1 of 3 • Konvert Exchange" });
 }
 
 function step1Components() {
@@ -327,16 +309,14 @@ function step2Embed(method) {
   const m = getMethod(method);
   return new EmbedBuilder()
     .setColor(CONFIG.COLOR)
-    .setTitle(`${m.emoji} ${m.label} — Choose Direction`)
+    .setTitle(`${m.emoji}  ${m.label}`)
     .setDescription(
-      `**Which way are you going?**\n\n` +
-      `📤 **Send Crypto → Get ${m.label}**\n` +
-      `You send crypto to Konvert, Konvert pays you via ${m.label}.\n\n` +
-      `📥 **Send ${m.label} → Get Crypto**\n` +
-      `You pay Konvert via ${m.label}, Konvert sends you crypto.`
+      `**📤 Send Crypto → Get ${m.label}**\n` +
+      `You send crypto, Konvert pays you via ${m.label}.\n\n` +
+      `**📥 Send ${m.label} → Get Crypto**\n` +
+      `You pay via ${m.label}, Konvert sends you crypto.`
     )
-    .setFooter({ text: "Step 2 of 3 • Konvert Exchange" })
-    .setThumbnail(CONFIG.LOGO_URL || null);
+    .setFooter({ text: "Step 2 of 3 • Konvert Exchange" });
 }
 
 function step2Components(method) {
@@ -412,12 +392,19 @@ async function createTicket(interaction, method, direction, amountUSD, coin, wal
   }
 
   // ── Create channel ──
-  const ch = await guild.channels.create({
-    name:                 `${m.value}-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,15)}`,
-    type:                 ChannelType.GuildText,
-    parent:               CONFIG.TICKET_CATEGORY || null,
-    permissionOverwrites: perms,
-  });
+  let ch;
+  try {
+    ch = await guild.channels.create({
+      name:                 `${m.value}-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,15)}`,
+      type:                 ChannelType.GuildText,
+      parent:               CONFIG.TICKET_CATEGORY || null,
+      permissionOverwrites: perms,
+    });
+  } catch (err) {
+    console.error("Channel create error:", err);
+    await interaction.editReply(`❌ Failed to create ticket channel: ${err.message}`);
+    return null;
+  }
 
   // ── What they're sending / receiving ──
   const sendLabel = direction === "send"
@@ -435,22 +422,17 @@ async function createTicket(interaction, method, direction, amountUSD, coin, wal
   // ── Ticket embed ──
   const ticketEmbed = new EmbedBuilder()
     .setColor(CONFIG.COLOR)
-    .setTitle(`${m.emoji} Konvert ${m.label} Ticket`)
-    .setThumbnail(CONFIG.LOGO_URL || null)
+    .setTitle(`${m.emoji}  ${m.label} Exchange`)
     .setDescription(
-      `Hey <@${user.id}>! Your ticket is open.\n` +
-      `A **${m.label}** handler has been notified and will confirm details shortly.\n\n` +
-      `⚠️ **Do not send anything until staff confirms.**\n\u200b`
+      `<@${user.id}> — your ticket is open.\n` +
+      `⚠️ Do not send anything until staff confirms.\n\u200b`
     )
     .addFields(
-      { name: "📤 You're Sending",              value: sendLabel,    inline: true  },
-      { name: "📥 You'll Receive",              value: receiveLabel, inline: true  },
-      { name: "\u200b",                         value: "\u200b",     inline: true  },
-      { name: `💸 Konvert Fee (${rate}%)`, value: `~${fmtUSD(feeUSD)}`, inline: true },
-      { name: "💰 After Fee",                   value: fmtUSD(receiveU), inline: true },
-      { name: "\u200b",                         value: "\u200b",     inline: true  },
+      { name: "Sending",   value: sendLabel,    inline: true },
+      { name: "Receiving", value: receiveLabel, inline: true },
+      { name: "Fee",       value: `${rate}% — ${fmtUSD(feeUSD)}`, inline: true },
       {
-        name:  direction === "send" ? `👛 Your ${m.label} Info (where to pay you)` : "👛 Your Crypto Receiving Wallet",
+        name:  direction === "send" ? `Your ${m.label} Info` : "Your Wallet",
         value: `\`${walletInfo}\``,
         inline: false,
       },
