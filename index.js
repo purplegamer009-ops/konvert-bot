@@ -47,7 +47,7 @@ const CONFIG = {
 
   MIN_FEE_USD:   5,   // minimum fee on any deal
 
-  COINS: ["BTC","ETH","SOL","LTC","USDT","USDC","XRP","BNB","ADA","DOGE"],
+  COINS: ["BTC","ETH","SOL","LTC","USDT","USDC","XRP","BNB","ADA","DOGE","MATIC","AVAX","DOT","LINK","TRX","SHIB","UNI","ATOM","FTM","NEAR"],
   EXCHANGE_CHANNEL: "1463731676021784587",
   COLOR: 0x7C4DFF,
 };
@@ -106,22 +106,36 @@ function feeRate(amountUSD, direction) {
 }
 const getMethod = v  => PAYMENT_METHODS.find(m => m.value === v);
 
-const COIN_EMOJI = { BTC:"₿",ETH:"Ξ",SOL:"◎",LTC:"Ł",USDT:"₮",USDC:"💵",XRP:"✕",BNB:"🔶",ADA:"₳",DOGE:"Ð" };
-const GECKO_ID   = { BTC:"bitcoin",ETH:"ethereum",SOL:"solana",LTC:"litecoin",USDT:"tether",
-  USDC:"usd-coin",XRP:"ripple",BNB:"binancecoin",ADA:"cardano",DOGE:"dogecoin" };
+const COIN_EMOJI = { BTC:"₿",ETH:"Ξ",SOL:"◎",LTC:"Ł",USDT:"₮",USDC:"💵",XRP:"✕",BNB:"🔶",ADA:"₳",DOGE:"Ð",MATIC:"⬡",AVAX:"🔺",DOT:"●",LINK:"⬡",TRX:"◈",SHIB:"🐕",UNI:"🦄",ATOM:"⚛",FTM:"👻",NEAR:"Ⓝ" };
+const GECKO_ID   = {
+  BTC:"bitcoin", ETH:"ethereum", SOL:"solana", LTC:"litecoin", USDT:"tether",
+  USDC:"usd-coin", XRP:"ripple", BNB:"binancecoin", ADA:"cardano", DOGE:"dogecoin",
+  MATIC:"matic-network", AVAX:"avalanche-2", DOT:"polkadot", LINK:"chainlink",
+  TRX:"tron", SHIB:"shiba-inu", UNI:"uniswap", ATOM:"cosmos", FTM:"fantom", NEAR:"near",
+};
 
 // Coin logo URLs (CoinGecko CDN)
 const COIN_LOGO = {
-  BTC:  "https://assets.coingecko.com/coins/images/1/large/bitcoin.png",
-  ETH:  "https://assets.coingecko.com/coins/images/279/large/ethereum.png",
-  SOL:  "https://assets.coingecko.com/coins/images/4128/large/solana.png",
-  LTC:  "https://assets.coingecko.com/coins/images/2/large/litecoin.png",
-  USDT: "https://assets.coingecko.com/coins/images/325/large/Tether.png",
-  USDC: "https://assets.coingecko.com/coins/images/6319/large/usdc.png",
-  XRP:  "https://assets.coingecko.com/coins/images/44/large/xrp-symbol-white-128.png",
-  BNB:  "https://assets.coingecko.com/coins/images/825/large/binance-coin-logo.png",
-  ADA:  "https://assets.coingecko.com/coins/images/975/large/cardano.png",
-  DOGE: "https://assets.coingecko.com/coins/images/5/large/dogecoin.png",
+  BTC:   "https://assets.coingecko.com/coins/images/1/large/bitcoin.png",
+  ETH:   "https://assets.coingecko.com/coins/images/279/large/ethereum.png",
+  SOL:   "https://assets.coingecko.com/coins/images/4128/large/solana.png",
+  LTC:   "https://assets.coingecko.com/coins/images/2/large/litecoin.png",
+  USDT:  "https://assets.coingecko.com/coins/images/325/large/Tether.png",
+  USDC:  "https://assets.coingecko.com/coins/images/6319/large/usdc.png",
+  XRP:   "https://assets.coingecko.com/coins/images/44/large/xrp-symbol-white-128.png",
+  BNB:   "https://assets.coingecko.com/coins/images/825/large/binance-coin-logo.png",
+  ADA:   "https://assets.coingecko.com/coins/images/975/large/cardano.png",
+  DOGE:  "https://assets.coingecko.com/coins/images/5/large/dogecoin.png",
+  MATIC: "https://assets.coingecko.com/coins/images/4713/large/matic-token-icon.png",
+  AVAX:  "https://assets.coingecko.com/coins/images/12559/large/Avalanche_Circle_RedWhite_Trans.png",
+  DOT:   "https://assets.coingecko.com/coins/images/12171/large/polkadot.png",
+  LINK:  "https://assets.coingecko.com/coins/images/877/large/chainlink-new-logo.png",
+  TRX:   "https://assets.coingecko.com/coins/images/1094/large/tron-logo.png",
+  SHIB:  "https://assets.coingecko.com/coins/images/11939/large/shiba.png",
+  UNI:   "https://assets.coingecko.com/coins/images/12504/large/uniswap-uni.png",
+  ATOM:  "https://assets.coingecko.com/coins/images/1481/large/cosmos_hub.png",
+  FTM:   "https://assets.coingecko.com/coins/images/4001/large/Fantom_round.png",
+  NEAR:  "https://assets.coingecko.com/coins/images/10365/large/near.jpg",
 };
 
 async function getUSDPrice(coin) {
@@ -313,9 +327,13 @@ function step1Embed() {
   return new EmbedBuilder()
     .setColor(CONFIG.COLOR)
     .setAuthor({ name: "Konvert Exchange", iconURL: CONFIG.LOGO_URL || null })
-    .setTitle("Select Payment Method")
-    .setDescription("Choose how you'd like to pay or receive.\nA private ticket will be opened with the right handler automatically.")
-    .setFooter({ text: "Step 1 of 3" });
+    .setTitle("Step 1  —  Payment Method")
+    .setDescription(
+      "Select the payment method you want to use for this exchange.\n\n" +
+      "**Sending crypto?** Pick how you want to be paid.\n" +
+      "**Receiving crypto?** Pick how you\'ll be sending payment.\n\u200b"
+    )
+    .setFooter({ text: "Step 1 of 3  •  Konvert Exchange" });
 }
 
 function step1Components() {
@@ -343,21 +361,16 @@ function step2Embed(method) {
   return new EmbedBuilder()
     .setColor(CONFIG.COLOR)
     .setAuthor({ name: "Konvert Exchange", iconURL: CONFIG.LOGO_URL || null })
-    .setTitle(`${m.emoji}  ${m.label} — Choose Direction`)
+    .setTitle(`Step 2  —  ${m.label}`)
     .setDescription(
-      `**📤  Send Crypto → Receive ${m.label}**
-` +
-      `You send crypto. We send ${m.label} to your account.
-
-` +
-      `**📥  Send ${m.label} → Receive Crypto**
-` +
-      `You send ${m.label}. We send crypto to your wallet.
-​`
+      `Choose your direction.\n\n` +
+      `**Send Crypto → Receive ${m.label}**\n` +
+      `You send crypto. We pay you via ${m.label}.\n\n` +
+      `**Send ${m.label} → Receive Crypto**\n` +
+      `You pay via ${m.label}. We send crypto to your wallet.`
     )
-    .setFooter({ text: "Step 2 of 3" });
+    .setFooter({ text: "Step 2 of 3  •  Konvert Exchange" });
 }
-
 function step2Components(method) {
   const m = getMethod(method);
   return [
@@ -1127,6 +1140,28 @@ client.on(Events.InteractionCreate, async interaction => {
       logAction(interaction.guild, `CLOSED by ${interaction.user.tag} — #${interaction.channel.name}`);
       setTimeout(() => interaction.channel.delete().catch(()=>{}), 15000);
     }
+
+    // ── Confirm ticket ──
+    if (interaction.customId === "btn_confirm_ticket") {
+      await interaction.deferUpdate();
+      const pending = client._pendingTickets?.[interaction.user.id];
+      if (!pending) {
+        return interaction.editReply({ content: "❌ Session expired. Please run /exchange again.", components: [], embeds: [] });
+      }
+      delete client._pendingTickets[interaction.user.id];
+      const ch = await createTicket(
+        interaction, pending.method, pending.direction,
+        pending.rawAmt, pending.coin, pending.walletInf, pending.notes
+      );
+      if (ch) return interaction.editReply({ content: `✅ Your ticket is open → <#${ch.id}>`, embeds: [], components: [] });
+    }
+
+    // ── Cancel ticket ──
+    if (interaction.customId === "btn_cancel_ticket") {
+      if (client._pendingTickets) delete client._pendingTickets[interaction.user.id];
+      return interaction.update({ content: "Cancelled. Run /exchange or click **Exchange Now** to start again.", embeds: [], components: [] });
+    }
+
   }
 
   // ── MODALS ──────────────────────────────────────────────────
@@ -1235,28 +1270,6 @@ client.on(Events.InteractionCreate, async interaction => {
       );
 
       return interaction.editReply({ embeds: [confirmEmbed], components: [confirmRow] });
-    }
-
-    // Confirm ticket button
-    if (interaction.customId === "btn_confirm_ticket") {
-      await interaction.deferUpdate();
-      const pending = client._pendingTickets?.[interaction.user.id];
-      if (!pending) return interaction.editReply({ content: "❌ Session expired. Please start again.", components: [] });
-      delete client._pendingTickets[interaction.user.id];
-
-      const ch = await createTicket(
-        interaction, pending.method, pending.direction,
-        pending.rawAmt, pending.coin, pending.walletInf, pending.notes
-      );
-      if (ch) {
-        return interaction.editReply({ content: `✅ Ticket opened → <#${ch.id}>`, embeds: [], components: [] });
-      }
-    }
-
-    // Cancel ticket button
-    if (interaction.customId === "btn_cancel_ticket") {
-      delete client._pendingTickets?.[interaction.user.id];
-      return interaction.update({ content: "Cancelled. You can start a new exchange anytime.", embeds: [], components: [] });
     }
 
   }
