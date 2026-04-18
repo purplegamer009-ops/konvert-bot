@@ -136,28 +136,35 @@ function logAction(guild, msg) {
 function buildMainExchangeEmbed() {
   return new EmbedBuilder()
     .setColor(CONFIG.COLOR)
-    .setTitle("Konvert Exchange")
+    .setAuthor({ name: "Konvert Exchange", iconURL: CONFIG.LOGO_URL || null })
     .setDescription(
-      `Fast · Safe · Simple\n\n` +
-      `Click **Exchange Now**, pick your payment method, and a private ticket opens instantly.\n\u200b`
+      `## Fast. Safe. Simple.
+` +
+      `Exchange crypto with any payment method in minutes.
+` +
+      `Open a private ticket — we handle the rest.
+​`
     )
     .addFields(
       {
-        name: "Methods",
-        value: PAYMENT_METHODS.map(m => `${m.emoji} ${m.label}`).join("  ·  "),
+        name: "Payment Methods",
+        value: PAYMENT_METHODS.map(m => `${m.emoji} **${m.label}**`).join("   "),
         inline: false,
       },
       {
-        name: "Crypto",
-        value: CONFIG.COINS.join("  ·  "),
+        name: "​",
+        value: "​",
         inline: false,
       },
-      { name: "Fee",       value: "9%–5.5% by amount", inline: true },
-      { name: "Min Fee",   value: "$5",                inline: true },
-      { name: "Speed",     value: "< 30 min",          inline: true },
+      { name: "💸  Fee",         value: "9% — 5.5%
+Tiered by amount", inline: true },
+      { name: "⚡  Speed",       value: "Under 30 min
+Typically faster", inline: true },
+      { name: "🔒  Security",    value: "Private tickets
+Staff verified", inline: true },
     )
     .setImage(CONFIG.BANNER_URL || null)
-    .setFooter({ text: "Konvert Exchange" });
+    .setFooter({ text: "Konvert Exchange  •  Minimum fee $5" });
 }
 
 function buildMainExchangeButtons() {
@@ -280,9 +287,15 @@ const client = new Client({
 function step1Embed() {
   return new EmbedBuilder()
     .setColor(CONFIG.COLOR)
+    .setAuthor({ name: "Konvert Exchange", iconURL: CONFIG.LOGO_URL || null })
     .setTitle("Select Payment Method")
-    .setDescription("Choose your payment method from the dropdown below.")
-    .setFooter({ text: "Step 1 of 3 • Konvert Exchange" });
+    .setDescription(
+      "Choose how you'd like to pay or receive.
+" +
+      "A private ticket will be opened with the right handler automatically.
+​"
+    )
+    .setFooter({ text: "Step 1 of 3" });
 }
 
 function step1Components() {
@@ -309,14 +322,20 @@ function step2Embed(method) {
   const m = getMethod(method);
   return new EmbedBuilder()
     .setColor(CONFIG.COLOR)
-    .setTitle(`${m.emoji}  ${m.label}`)
+    .setAuthor({ name: "Konvert Exchange", iconURL: CONFIG.LOGO_URL || null })
+    .setTitle(`${m.emoji}  ${m.label} — Choose Direction`)
     .setDescription(
-      `**📤 Send Crypto → Get ${m.label}**\n` +
-      `You send crypto, Konvert pays you via ${m.label}.\n\n` +
-      `**📥 Send ${m.label} → Get Crypto**\n` +
-      `You pay via ${m.label}, Konvert sends you crypto.`
+      `**📤  Send Crypto → Receive ${m.label}**
+` +
+      `You send crypto. We send ${m.label} to your account.
+
+` +
+      `**📥  Send ${m.label} → Receive Crypto**
+` +
+      `You send ${m.label}. We send crypto to your wallet.
+​`
     )
-    .setFooter({ text: "Step 2 of 3 • Konvert Exchange" });
+    .setFooter({ text: "Step 2 of 3" });
 }
 
 function step2Components(method) {
@@ -422,17 +441,23 @@ async function createTicket(interaction, method, direction, amountUSD, coin, wal
   // ── Ticket embed ──
   const ticketEmbed = new EmbedBuilder()
     .setColor(CONFIG.COLOR)
+    .setAuthor({ name: "Konvert Exchange", iconURL: CONFIG.LOGO_URL || null })
     .setTitle(`${m.emoji}  ${m.label} Exchange`)
     .setDescription(
-      `<@${user.id}> — your ticket is open.\n` +
-      `⚠️ Do not send anything until staff confirms.\n\u200b`
+      `<@${user.id}> — your ticket is open.
+` +
+      `A **${m.label}** handler has been notified and will be with you shortly.
+
+` +
+      `> ⚠️ Do not send anything until staff confirms.
+​`
     )
     .addFields(
-      { name: "Sending",   value: sendLabel,    inline: true },
-      { name: "Receiving", value: receiveLabel, inline: true },
-      { name: "Fee",       value: `${rate}% — ${fmtUSD(feeUSD)}`, inline: true },
+      { name: "📤  Sending",   value: sendLabel,    inline: true },
+      { name: "📥  Receiving", value: receiveLabel, inline: true },
+      { name: "💸  Fee",       value: `**${rate}%** — ${fmtUSD(feeUSD)}`, inline: true },
       {
-        name:  direction === "send" ? `Your ${m.label} Info` : "Your Wallet",
+        name:  direction === "send" ? `💳  Your ${m.label} Info` : "👛  Your Receiving Wallet",
         value: `\`${walletInfo}\``,
         inline: false,
       },
@@ -440,8 +465,9 @@ async function createTicket(interaction, method, direction, amountUSD, coin, wal
 
   if (depositAddr) {
     ticketEmbed.addFields({
-      name:  `📬 Send Your ${coin} To This Address`,
-      value: `\`${depositAddr}\`\n> ⚠️ Always confirm this with staff before sending.`,
+      name:  `📬  Send ${coin} To`,
+      value: `\`${depositAddr}\`
+> Confirm with staff before sending.`,
       inline: false,
     });
   }
@@ -527,23 +553,21 @@ async function postVouchEmbed(guild, completedBy, ticket) {
     : `Sent **${m.label}** → Received **${ticket.coin}**`;
 
   const embed = new EmbedBuilder()
-    .setColor(CONFIG.COLOR)
-    .setTitle("✨ Vouch Recorded!")
-    .setDescription("Trade completed and verified by Konvert Exchange.")
+    .setColor(0x00C896)
+    .setAuthor({ name: "Konvert Exchange", iconURL: CONFIG.LOGO_URL || null })
+    .setTitle("✅  Trade Verified")
+    .setDescription(`${dirLabel}
+​`)
     .addFields(
-      { name: "👤 Client",       value: `<@${ticket.userId}>`,    inline: true  },
-      { name: "✅ Exchanger",    value: `<@${completedBy.id}>`,   inline: true  },
-      { name: "\u200b",         value: "\u200b",                 inline: true  },
-      { name: "🔄 Deal Type",    value: `${m.emoji} ${m.label}`,  inline: true  },
-      { name: "🪙 Crypto",       value: ticket.coin,              inline: true  },
-      { name: "📊 Direction",    value: dirLabel,                 inline: false },
-      { name: "💰 Trade Amount", value: `**${fmtUSD(ticket.amountUSD)}**`, inline: true  },
-      { name: "💸 Fee",          value: fmtUSD(ticket.feeUSD),   inline: true  },
-      { name: "📥 Client Received", value: `**${fmtUSD(ticket.amountUSD - ticket.feeUSD)}** after fee`, inline: false },
-      { name: "⭐ Rating",       value: "⭐⭐⭐⭐⭐",             inline: false },
+      { name: "Client",     value: `<@${ticket.userId}>`,                          inline: true },
+      { name: "Exchanger",  value: `<@${completedBy.id}>`,                         inline: true },
+      { name: "Method",     value: `${m.emoji} ${m.label}`,                        inline: true },
+      { name: "Amount",     value: `**${fmtUSD(ticket.amountUSD)}**`,              inline: true },
+      { name: "Received",   value: `**${fmtUSD(ticket.amountUSD - ticket.feeUSD)}**`, inline: true },
+      { name: "Rating",     value: "⭐⭐⭐⭐⭐",                                  inline: true },
     )
     .setTimestamp()
-    .setFooter({ text: "Konvert Exchange • Verified Trade" });
+    .setFooter({ text: "Konvert Exchange  •  Verified Trade" });
 
   if (CONFIG.BANNER_URL) embed.setImage(CONFIG.BANNER_URL);
 
