@@ -137,6 +137,10 @@ const COMMANDS = [
   new SlashCommandBuilder().setName("passes").setDescription("[Owner] View all exchange pass holders").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("ticket").setDescription("Check your current open ticket status"),
   new SlashCommandBuilder().setName("howto").setDescription("How to use Konvert Exchange — beginner guide"),
+  new SlashCommandBuilder().setName("ping").setDescription("Check if the bot is online and its response time"),
+  new SlashCommandBuilder().setName("supported").setDescription("View all supported payment methods and coins"),
+  new SlashCommandBuilder().setName("cancelticket").setDescription("[Owner] Cancel a ticket without completing the trade").addStringOption(o=>o.setName("reason").setDescription("Reason").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("volume").setDescription("[Owner] View total Konvert exchange volume stats").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 ].map(c => c.toJSON());
 
 async function registerCommands() {
@@ -163,11 +167,11 @@ function mainEmbed() {
     .setTitle("Konvert Exchange")
     .setDescription("**Fast. Safe. Simple.**\nExchange any cryptocurrency with any major payment method.\nA private ticket opens instantly — a verified handler will assist you.\n\u200b")
     .addFields(
-      { name:"💳  Payment Methods", value:METHODS.map(m=>`${m.label}`).join("  ·  "), inline:false },
-      { name:"🪙  Supported Crypto", value:"**All major cryptocurrencies supported.** BTC, ETH, SOL, LTC, USDT, USDC, XRP, BNB, ADA, DOGE, MATIC, AVAX, DOT, LINK, TRX, SHIB, UNI, ATOM, FTM, NEAR and more — just ask in your ticket.", inline:false },
+      { name:"💳  Payment Methods", value:"PayPal  ·  Cash App  ·  Zelle  ·  Interac  ·  Venmo  ·  Apple Pay  ·  Skrill  ·  Revolut  ·  UPI  ·  Chime  ·  Bank Transfer  ·  IBAN / SWIFT  ·  Gift Card  ·  Wire Transfer  ·  Google Pay", inline:false },
+      { name:"🪙  Supported Crypto", value:"BTC  ·  ETH  ·  SOL  ·  LTC  ·  USDT  ·  and more — all major coins accepted, just ask in your ticket.", inline:false },
       { name:"💸  Fee", value:"5% – 9%\nTiered by amount", inline:true },
-      { name:"⚡  Speed", value:"Usually < 10 min\nOften faster", inline:true },
-      { name:"🔒  Support", value:"24/7\nAlways available", inline:true },
+      { name:"⚡  Speed", value:"**Usually < 10 min**", inline:true },
+      { name:"🤝  Support", value:"**24/7 Agents**", inline:true },
     )
     .setImage(IMG.TICKET)
     .setFooter({ text:"Konvert  •  Click Exchange Now to begin" });
@@ -175,7 +179,7 @@ function mainEmbed() {
 
 function mainButtons() {
   return [new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("btn_exchange_now").setLabel("Exchange Now").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("btn_exchange_now").setLabel("Exchange Now").setEmoji("✉️").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("btn_fee_calc").setLabel("Calculate Fee").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("btn_rates_quick").setLabel("Live Rates").setStyle(ButtonStyle.Secondary),
   )];
@@ -703,6 +707,78 @@ client.on(Events.InteractionCreate, async interaction => {
             { name:"Stay Safe",          value:"Staff never DM you first. Anyone doing so is an impersonator. All communication happens in your ticket only.", inline:false },
           )
           .setFooter({ text:"Konvert  •  Questions? Ask in your ticket" })], ephemeral:true });
+      }
+
+      // /ping
+      if (cmd === "ping") {
+        const sent = Date.now();
+        await interaction.deferReply({ ephemeral:true });
+        const latency = Date.now() - sent;
+        const wsLatency = client.ws.ping;
+        return interaction.editReply({ embeds:[base("Bot Status")
+          .addFields(
+            { name:"Status",       value:"Online",              inline:true },
+            { name:"Latency",      value:`**${latency}ms**`,    inline:true },
+            { name:"API Latency",  value:`**${wsLatency}ms**`,  inline:true },
+          )
+          .setFooter({ text:"Konvert  •  All systems operational" })] });
+      }
+
+      // /supported
+      if (cmd === "supported") {
+        return interaction.reply({ embeds:[base("Supported Methods & Coins")
+          .addFields(
+            { name:"💳  Payment Methods", value:METHODS.map(m=>m.label).join("  ·  "), inline:false },
+            { name:"🪙  Cryptocurrencies", value:COINS.join("  ·  ") + "\n\nAll other major coins accepted — just ask in your ticket.", inline:false },
+          )
+          .setFooter({ text:"Don't see your method or coin? Open a ticket and ask  •  Konvert" })], ephemeral:true });
+      }
+
+      // /cancelticket
+      if (cmd === "cancelticket") {
+        const tickets = load("tickets");
+        if (!tickets[interaction.channel.id]) return interaction.reply({ content:"This is not a ticket channel.", ephemeral:true });
+        const reason = interaction.options.getString("reason") || "Cancelled by staff";
+        await interaction.deferReply();
+        tickets[interaction.channel.id].status    = "cancelled";
+        tickets[interaction.channel.id].cancelledAt = Date.now();
+        save("tickets", tickets);
+        // Notify client
+        const t = tickets[interaction.channel.id];
+        try {
+          const member = await interaction.guild.members.fetch(t.userId).catch(()=>null);
+          if (member) await member.send({ embeds:[base("Ticket Cancelled").setDescription(`Your Konvert exchange ticket has been cancelled by staff.\n**Reason:** ${reason}\n\nIf you believe this is a mistake, please open a new ticket.`).setFooter({ text:"Konvert" })] }).catch(()=>{});
+        } catch {}
+        await interaction.editReply({ embeds:[new EmbedBuilder().setColor(0xFF6600).setTitle("Ticket Cancelled").setDescription(`Cancelled by ${interaction.user.tag}\n**Reason:** ${reason}\n\nDeleting in 10 seconds.`).setTimestamp()] });
+        log(interaction.guild, `CANCELLED: #${interaction.channel.name} by ${interaction.user.tag} — ${reason}`);
+        setTimeout(()=>interaction.channel.delete().catch(()=>{}), 10000);
+        return;
+      }
+
+      // /volume
+      if (cmd === "volume") {
+        const tickets = load("tickets");
+        const all     = Object.values(tickets);
+        const completed = all.filter(t=>t.status==="vouched"&&t.amountUSD);
+        const totalVol  = completed.reduce((s,t)=>s+(t.amountUSD||0), 0);
+        const totalFees = completed.reduce((s,t)=>s+(t.feeUSD||0), 0);
+        const open      = all.filter(t=>t.status==="open").length;
+        const methods   = {};
+        completed.forEach(t=>{ if(t.method) methods[t.method]=(methods[t.method]||0)+1; });
+        const topMethod = Object.entries(methods).sort((a,b)=>b[1]-a[1])[0];
+        const today     = completed.filter(t=>t.completedAt&&Date.now()-t.completedAt < 86400000);
+        const todayVol  = today.reduce((s,t)=>s+(t.amountUSD||0),0);
+        return interaction.reply({ embeds:[base("Konvert Volume Stats")
+          .setThumbnail(IMG.LOGO)
+          .addFields(
+            { name:"Total Completed", value:`**${completed.length}** trades`,        inline:true },
+            { name:"Total Volume",    value:`**${fmtUSD(totalVol)}**`,               inline:true },
+            { name:"Total Fees",      value:`**${fmtUSD(totalFees)}**`,              inline:true },
+            { name:"Open Tickets",    value:`**${open}**`,                           inline:true },
+            { name:"Today's Volume",  value:`**${fmtUSD(todayVol)}** (${today.length} trades)`, inline:true },
+            { name:"Top Method",      value:topMethod?`**${getMethod(topMethod[0])?.label||topMethod[0]}** (${topMethod[1]})`:"—", inline:true },
+          )
+          .setFooter({ text:"Konvert  •  Server Volume Statistics" })], ephemeral:true });
       }
 
       return;
