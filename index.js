@@ -406,7 +406,7 @@ async function createTicket(interaction, method, direction, amountUSD, coin, wal
   let ch;
   try {
     ch = await guild.channels.create({
-      name:                 `${m.value}-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,15)}`,
+      name:                 `${m.value}-${Math.round(amountUSD)}-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,10)}`,
       type:                 ChannelType.GuildText,
       parent:               CONFIG.TICKET_CATEGORY || null,
       permissionOverwrites: perms,
@@ -586,36 +586,23 @@ async function buildRatesEmbed() {
   }).filter(Boolean);
 
   const priceLines = rows.map(r =>
-    `\`${r.coin.padEnd(5)}\`  **$${r.usd}**  ·  CA$${r.cad}  ·  ${r.arrow} ${r.change}%`
+    `\`${r.coin.padEnd(5)}\` $${r.usd} · CA$${r.cad} · ${r.arrow} ${r.change}%`
   ).join("\n");
+
+  const exchangeChannel = process.env.EXCHANGE_CHANNEL_ID || "";
 
   return new EmbedBuilder()
     .setColor(CONFIG.COLOR)
     .setAuthor({ name: "Konvert Exchange", iconURL: CONFIG.LOGO_URL || null })
     .setTitle("Live Rates")
-    .setDescription(
-      priceLines +
-      "\n\u200b"
-    )
-    .addFields(
-      {
-        name: "Our Fees",
-        value:
-          "`Under $150 ` — 9% fiat→crypto  ·  8% crypto→fiat\n" +
-          "`$150–$500  ` — 7% fiat→crypto  ·  6% crypto→fiat\n" +
-          "`$500–$1000 ` — 6% fiat→crypto  ·  5% crypto→fiat\n" +
-          "`$1000+     ` — 5.5% fiat→crypto  ·  4.5% crypto→fiat\n" +
-          "`Min fee    ` — **$5 on any deal**",
-        inline: false,
-      },
-      {
-        name: "Open a Ticket",
-        value: `Head to <#${process.env.EXCHANGE_CHANNEL_ID || CONFIG.TICKET_CATEGORY || ""}> and click **Exchange Now** to get started.`,
-        inline: false,
-      },
-    )
+    .setDescription(priceLines + "\n\u200b")
+    .addFields({
+      name: "Ready to Exchange?",
+      value: `Head to ${exchangeChannel ? `<#${exchangeChannel}>` : "the exchange channel"} and tap **Exchange Now** to open a ticket.\nUse the **Calculate Fee** button there to see exactly what you'll pay.`,
+      inline: false,
+    })
     .setImage(CONFIG.BANNER_URL || null)
-    .setFooter({ text: "Rates update every 10 min  •  Konvert Exchange" })
+    .setFooter({ text: "Rates update every 10 min  •  Tip: type $BTC $ETH etc for a single coin  •  Konvert Exchange" })
     .setTimestamp();
 }
 
@@ -935,10 +922,12 @@ client.on(Events.InteractionCreate, async interaction => {
       if (!ticket) return interaction.reply({ content: "❌ No ticket data found.", ephemeral: true });
 
       // Staff/owner only
-      const isOwner = CONFIG.OWNER_IDS.includes(interaction.user.id);
-      const isStaff = CONFIG.STAFF_ROLE ? interaction.member.roles.cache.has(CONFIG.STAFF_ROLE) : false;
-      if (!isOwner && !isStaff) {
-        return interaction.reply({ content: "❌ Only staff can mark a trade as complete.", ephemeral: true });
+      const isOwner      = CONFIG.OWNER_IDS.includes(interaction.user.id);
+      const isStaff      = CONFIG.STAFF_ROLE ? interaction.member.roles.cache.has(CONFIG.STAFF_ROLE) : false;
+      const methodRoleId = ticket.method ? CONFIG.ROLES[ticket.method] : null;
+      const isHandler    = methodRoleId ? interaction.member.roles.cache.has(methodRoleId) : false;
+      if (!isOwner && !isStaff && !isHandler) {
+        return interaction.reply({ content: "❌ Only staff or the assigned handler can mark a trade complete.", ephemeral: true });
       }
       if (ticket.status === "vouched" || ticket.status === "closed") {
         return interaction.reply({ content: "❌ This ticket has already been completed.", ephemeral: true });
@@ -990,8 +979,8 @@ client.on(Events.InteractionCreate, async interaction => {
       const tickets = load("tickets");
       const ticket  = tickets[interaction.channel.id];
       if (!ticket) return interaction.reply({ content: "❌ Not a ticket channel.", ephemeral: true });
-      if (interaction.user.id !== ticket.userId && !CONFIG.OWNER_IDS.includes(interaction.user.id)) {
-        return interaction.reply({ content: "❌ Only the ticket owner or staff can close this.", ephemeral: true });
+      if (!CONFIG.OWNER_IDS.includes(interaction.user.id)) {
+        return interaction.reply({ content: "❌ Only an owner can close tickets.", ephemeral: true });
       }
 
       await interaction.deferReply();
@@ -1117,57 +1106,112 @@ client.on(Events.InteractionCreate, async interaction => {
 // ════════════════════════════════════════════════════════════════
 async function generateTranscript(channel, ticket) {
   try {
-    const messages = await channel.messages.fetch({ limit: 100 });
-    const sorted   = [...messages.values()].reverse();
+    const fetched  = await channel.messages.fetch({ limit: 100 });
+    const sorted   = [...fetched.values()].reverse();
     const m        = getMethod(ticket.method);
+    const opened   = new Date(ticket.createdAt).toLocaleString("en-US", { timeZone: "America/Toronto" });
+    const generated = new Date().toLocaleString("en-US", { timeZone: "America/Toronto" });
 
     const rows = sorted.map(msg => {
-      const time    = new Date(msg.createdTimestamp).toLocaleString("en-US", { timeZone: "America/Toronto" });
-      const content = msg.content ? msg.content.replace(/</g,"&lt;").replace(/>/g,"&gt;") : "";
-      const embeds  = msg.embeds.map(e =>
-        `<div class="embed">` +
-        (e.title  ? `<div class="embed-title">${e.title}</div>` : "") +
-        (e.description ? `<div class="embed-desc">${e.description.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</div>` : "") +
-        `</div>`
-      ).join("");
-      return `
-        <div class="msg">
-          <img class="avatar" src="${msg.author.displayAvatarURL({ size: 32 })}" onerror="this.style.display='none'"/>
-          <div class="msg-body">
-            <span class="author">${msg.author.tag}</span>
-            <span class="time">${time}</span>
-            <div class="content">${content}${embeds}</div>
-          </div>
+      const time      = new Date(msg.createdTimestamp).toLocaleString("en-US", { timeZone: "America/Toronto" });
+      const isBot     = msg.author.bot;
+      const avatarURL = msg.author.displayAvatarURL({ size: 64, extension: "png" });
+      const content   = msg.content ? msg.content.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;") : "";
+
+      const embedsHtml = msg.embeds.map(e => {
+        const fields = (e.fields || []).map(f =>
+          `<div class="field"><span class="field-name">${f.name.replace(/</g,"&lt;")}</span><span class="field-value">${String(f.value).replace(/</g,"&lt;").replace(/>/g,"&gt;")}</span></div>`
+        ).join("");
+        return `<div class="embed" style="border-color:${e.hexColor||"#7C4DFF"}">
+          ${e.author ? `<div class="embed-author">${e.author.name||""}</div>` : ""}
+          ${e.title  ? `<div class="embed-title">${e.title.replace(/</g,"&lt;")}</div>` : ""}
+          ${e.description ? `<div class="embed-desc">${e.description.replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\n/g,"<br>")}</div>` : ""}
+          ${fields ? `<div class="fields">${fields}</div>` : ""}
         </div>`;
+      }).join("");
+
+      const attachHtml = [...(msg.attachments?.values()||[])].map(a =>
+        a.contentType?.startsWith("image") ? `<img class="attach-img" src="${a.url}"/>` : `<a class="attach-link" href="${a.url}">${a.name}</a>`
+      ).join("");
+
+      return `<div class="msg ${isBot ? "bot-msg" : ""}">
+        <img class="avatar" src="${avatarURL}" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'"/>
+        <div class="msg-body">
+          <div class="msg-header">
+            <span class="author ${isBot ? "bot-tag" : ""}">${msg.author.username}${isBot ? " <span class='app-badge'>APP</span>" : ""}</span>
+            <span class="userid">ID: ${msg.author.id}</span>
+            <span class="time">${time}</span>
+          </div>
+          ${content ? `<div class="content">${content}</div>` : ""}
+          ${embedsHtml}
+          ${attachHtml}
+        </div>
+      </div>`;
     }).join("");
 
     const html = `<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8"/>
-<title>Transcript — ${channel.name}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Konvert — Transcript #${channel.name}</title>
 <style>
-  body { background:#1a1a2e; color:#e0e0e0; font-family:sans-serif; margin:0; padding:20px; }
-  .header { background:#7C4DFF; padding:20px 24px; border-radius:10px; margin-bottom:20px; }
-  .header h1 { margin:0; font-size:18px; }
-  .header p  { margin:4px 0 0; opacity:.75; font-size:13px; }
-  .msg { display:flex; gap:12px; padding:8px 0; border-bottom:1px solid #2a2a3e; }
-  .avatar { width:32px; height:32px; border-radius:50%; flex-shrink:0; }
-  .author { font-weight:bold; color:#A78BFA; margin-right:8px; font-size:13px; }
-  .time   { color:#666; font-size:11px; }
-  .content { margin-top:4px; font-size:13px; white-space:pre-wrap; }
-  .embed  { background:#2a2040; border-left:3px solid #7C4DFF; padding:8px 12px; margin-top:6px; border-radius:4px; }
-  .embed-title { font-weight:bold; font-size:13px; margin-bottom:4px; }
-  .embed-desc  { font-size:12px; opacity:.85; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0e0e1a;color:#dcddde;font-family:'Segoe UI',sans-serif;font-size:14px;line-height:1.5}
+  .topbar{background:linear-gradient(135deg,#7C4DFF,#5c35cc);padding:24px 32px;display:flex;align-items:center;gap:16px}
+  .topbar img{width:48px;height:48px;border-radius:50%;border:2px solid rgba(255,255,255,.3)}
+  .topbar h1{font-size:20px;font-weight:700;color:#fff}
+  .topbar p{font-size:12px;color:rgba(255,255,255,.7);margin-top:2px}
+  .meta-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:1px;background:#1a1a2e;border-bottom:1px solid #2a2a40}
+  .meta-item{background:#12121f;padding:16px 24px}
+  .meta-label{font-size:10px;font-weight:700;letter-spacing:1px;color:#7C4DFF;text-transform:uppercase;margin-bottom:4px}
+  .meta-value{font-size:14px;color:#fff;font-weight:500}
+  .messages{padding:16px 24px;max-width:900px;margin:0 auto}
+  .msg{display:flex;gap:14px;padding:12px 0;border-bottom:1px solid #1a1a2e;transition:background .1s}
+  .msg:hover{background:#12121f;border-radius:8px;padding:12px 8px;margin:0 -8px}
+  .bot-msg .msg-body{opacity:.9}
+  .avatar{width:40px;height:40px;border-radius:50%;flex-shrink:0;object-fit:cover}
+  .msg-header{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:4px}
+  .author{font-weight:700;color:#A78BFA;font-size:14px}
+  .bot-tag{color:#7289da}
+  .app-badge{background:#5865f2;color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;letter-spacing:.5px;vertical-align:middle}
+  .userid{font-size:10px;color:#4a4a6a;font-family:monospace}
+  .time{font-size:11px;color:#4f545c;margin-left:auto}
+  .content{color:#dcddde;white-space:pre-wrap;word-break:break-word}
+  .embed{background:#1e1e2e;border-left:4px solid #7C4DFF;border-radius:0 6px 6px 0;padding:12px 16px;margin-top:8px;max-width:520px}
+  .embed-author{font-size:12px;color:#b9bbbe;font-weight:600;margin-bottom:6px}
+  .embed-title{font-size:15px;font-weight:700;color:#fff;margin-bottom:6px}
+  .embed-desc{font-size:13px;color:#b9bbbe;white-space:pre-wrap}
+  .fields{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+  .field{background:#16162a;padding:8px;border-radius:4px}
+  .field-name{display:block;font-size:11px;font-weight:700;color:#7C4DFF;margin-bottom:2px}
+  .field-value{display:block;font-size:12px;color:#dcddde}
+  .attach-img{max-width:300px;max-height:200px;border-radius:6px;margin-top:8px;display:block}
+  .attach-link{color:#7C4DFF;font-size:12px;margin-top:6px;display:block}
+  .footer{text-align:center;padding:24px;color:#4f545c;font-size:11px;border-top:1px solid #1a1a2e;margin-top:24px}
 </style>
 </head>
 <body>
-<div class="header">
-  <h1>Konvert Exchange — Ticket Transcript</h1>
-  <p>Channel: #${channel.name} &nbsp;|&nbsp; ${m ? m.label : "Exchange"} &nbsp;|&nbsp; ${ticket.coin} &nbsp;|&nbsp; ${fmtUSD(ticket.amountUSD)} &nbsp;|&nbsp; Client: ${ticket.userTag}</p>
-  <p>Generated: ${new Date().toLocaleString("en-US", { timeZone: "America/Toronto" })}</p>
+<div class="topbar">
+  ${CONFIG.LOGO_URL ? `<img src="${CONFIG.LOGO_URL}" alt="Konvert"/>` : ""}
+  <div>
+    <h1>Konvert Exchange — Ticket Transcript</h1>
+    <p>#${channel.name}</p>
+  </div>
 </div>
-${rows}
+<div class="meta-grid">
+  <div class="meta-item"><div class="meta-label">Channel</div><div class="meta-value">#${channel.name}</div></div>
+  <div class="meta-item"><div class="meta-label">Client</div><div class="meta-value">${ticket.userTag} <span style="color:#4a4a6a;font-size:11px">(${ticket.userId})</span></div></div>
+  <div class="meta-item"><div class="meta-label">Method</div><div class="meta-value">${m ? m.label : "—"}</div></div>
+  <div class="meta-item"><div class="meta-label">Coin</div><div class="meta-value">${ticket.coin || "—"}</div></div>
+  <div class="meta-item"><div class="meta-label">Amount</div><div class="meta-value">${fmtUSD(ticket.amountUSD || 0)}</div></div>
+  <div class="meta-item"><div class="meta-label">Direction</div><div class="meta-value">${ticket.direction === "send" ? "Fiat → Crypto" : "Crypto → Fiat"}</div></div>
+  <div class="meta-item"><div class="meta-label">Opened</div><div class="meta-value">${opened}</div></div>
+  <div class="meta-item"><div class="meta-label">Status</div><div class="meta-value">${ticket.status || "closed"}</div></div>
+  <div class="meta-item"><div class="meta-label">Generated</div><div class="meta-value">${generated}</div></div>
+</div>
+<div class="messages">${rows}</div>
+<div class="footer">Konvert Exchange &nbsp;•&nbsp; Transcript generated ${generated} &nbsp;•&nbsp; ${sorted.length} messages</div>
 </body>
 </html>`;
 
@@ -1180,6 +1224,66 @@ ${rows}
     return null;
   }
 }
+
+
+// ════════════════════════════════════════════════════════════════
+//  $COIN QUICK LOOKUP — type $BTC $ETH etc in any channel
+// ════════════════════════════════════════════════════════════════
+client.on(Events.MessageCreate, async message => {
+  if (message.author.bot) return;
+  const match = message.content.trim().match(/^\$([A-Za-z]{2,10})$/);
+  if (!match) return;
+  const coin = match[1].toUpperCase();
+  if (!CONFIG.COINS.includes(coin)) return;
+
+  try {
+    const id  = GECKO_ID[coin] || coin.toLowerCase();
+    const res = await fetch(
+      `https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd,cad,eur,gbp&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`
+    );
+    const dat  = await res.json();
+    const d    = dat[id];
+    if (!d) return;
+
+    const usd    = d.usd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const cad    = d.cad.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const eur    = d.eur.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const gbp    = d.gbp.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const change = parseFloat(d.usd_24h_change || 0).toFixed(2);
+    const arrow  = Number(change) >= 0 ? "▲" : "▼";
+    const mcap   = d.usd_market_cap ? `$${(d.usd_market_cap / 1e9).toFixed(2)}B` : "—";
+    const vol    = d.usd_24h_vol    ? `$${(d.usd_24h_vol / 1e9).toFixed(2)}B`    : "—";
+
+    const fiatFee  = calcFee(d.usd, "send");
+    const cryptoFee = calcFee(d.usd, "receive");
+
+    const embed = new EmbedBuilder()
+      .setColor(CONFIG.COLOR)
+      .setAuthor({ name: "Konvert Exchange", iconURL: CONFIG.LOGO_URL || null })
+      .setTitle(`${coin} — Live Price`)
+      .addFields(
+        { name: "USD",        value: `**$${usd}**`,  inline: true },
+        { name: "CAD",        value: `CA$${cad}`,    inline: true },
+        { name: "EUR / GBP",  value: `€${eur} / £${gbp}`, inline: true },
+        { name: "24h Change", value: `${arrow} **${change}%**`, inline: true },
+        { name: "Market Cap", value: mcap,            inline: true },
+        { name: "24h Volume", value: vol,             inline: true },
+        {
+          name: "Konvert Fee on 1 ${coin}",
+          value:
+            `Fiat → Crypto: **${feeRate(d.usd,"send")}%** — ${fmtUSD(fiatFee)} fee → you get **${fmtUSD(d.usd - fiatFee)}**\n` +
+            `Crypto → Fiat: **${feeRate(d.usd,"receive")}%** — ${fmtUSD(cryptoFee)} fee → you get **${fmtUSD(d.usd - cryptoFee)}**`,
+          inline: false,
+        },
+      )
+      .setFooter({ text: `Type $${coin} anytime for a live update  •  Konvert Exchange` })
+      .setTimestamp();
+
+    await message.reply({ embeds: [embed] });
+  } catch (e) {
+    console.error("Coin lookup error:", e.message);
+  }
+});
 
 // ─── AUTO RATES ──────────────────────────────────────────────
 let ratesMsgId = null;
