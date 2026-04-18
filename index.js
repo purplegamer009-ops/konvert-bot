@@ -48,6 +48,7 @@ const CONFIG = {
   MIN_FEE_USD:   5,   // minimum fee on any deal
 
   COINS: ["BTC","ETH","SOL","LTC","USDT","USDC","XRP","BNB","ADA","DOGE"],
+  EXCHANGE_CHANNEL: "1463731676021784587",
   COLOR: 0x7C4DFF,
 };
 
@@ -70,6 +71,7 @@ const FILES = {
   tickets:   "./tickets.json",
   wallets:   "./wallets.json",
   blacklist: "./blacklist.json",
+  stats:     "./stats.json",
 };
 function load(key)       { try { return JSON.parse(fs.readFileSync(FILES[key], "utf8")); } catch { return {}; } }
 function save(key, data) { fs.writeFileSync(FILES[key], JSON.stringify(data, null, 2)); }
@@ -107,6 +109,20 @@ const getMethod = v  => PAYMENT_METHODS.find(m => m.value === v);
 const COIN_EMOJI = { BTC:"₿",ETH:"Ξ",SOL:"◎",LTC:"Ł",USDT:"₮",USDC:"💵",XRP:"✕",BNB:"🔶",ADA:"₳",DOGE:"Ð" };
 const GECKO_ID   = { BTC:"bitcoin",ETH:"ethereum",SOL:"solana",LTC:"litecoin",USDT:"tether",
   USDC:"usd-coin",XRP:"ripple",BNB:"binancecoin",ADA:"cardano",DOGE:"dogecoin" };
+
+// Coin logo URLs (CoinGecko CDN)
+const COIN_LOGO = {
+  BTC:  "https://assets.coingecko.com/coins/images/1/large/bitcoin.png",
+  ETH:  "https://assets.coingecko.com/coins/images/279/large/ethereum.png",
+  SOL:  "https://assets.coingecko.com/coins/images/4128/large/solana.png",
+  LTC:  "https://assets.coingecko.com/coins/images/2/large/litecoin.png",
+  USDT: "https://assets.coingecko.com/coins/images/325/large/Tether.png",
+  USDC: "https://assets.coingecko.com/coins/images/6319/large/usdc.png",
+  XRP:  "https://assets.coingecko.com/coins/images/44/large/xrp-symbol-white-128.png",
+  BNB:  "https://assets.coingecko.com/coins/images/825/large/binance-coin-logo.png",
+  ADA:  "https://assets.coingecko.com/coins/images/975/large/cardano.png",
+  DOGE: "https://assets.coingecko.com/coins/images/5/large/dogecoin.png",
+};
 
 async function getUSDPrice(coin) {
   try {
@@ -255,6 +271,18 @@ const COMMANDS = [
     .setDescription("✅ [Owner] Remove a user from the blacklist")
     .addUserOption(o => o.setName("user").setDescription("User").setRequired(true))
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+
+  new SlashCommandBuilder()
+    .setName("stats")
+    .setDescription("📊 View Konvert exchange statistics"),
+
+  new SlashCommandBuilder()
+    .setName("alert")
+    .setDescription("🔔 Get alerted when a coin hits a target price")
+    .addStringOption(o => o.setName("coin").setDescription("Coin (BTC, ETH…)").setRequired(true))
+    .addNumberOption(o => o.setName("price").setDescription("Target price in USD").setRequired(true))
+    .addStringOption(o => o.setName("direction").setDescription("above or below").setRequired(true)
+      .addChoices({ name: "Above", value: "above" }, { name: "Below", value: "below" })),
 
 ].map(c => c.toJSON());
 
@@ -457,15 +485,18 @@ async function createTicket(interaction, method, direction, amountUSD, coin, wal
 
   // ── Rules embed ──
   const rulesEmbed = new EmbedBuilder()
-    .setColor(0xFF4444)
-    .setTitle("Important — Please Read")
+    .setColor(0x7C4DFF)
+    .setTitle("Before You Proceed — Please Read")
     .setDescription(
-      `**A middleman is required for all trades.**\n` +
-      `Do not go first under any circumstances unless **@jswaps** or **@3uce** explicitly says otherwise.\n\n` +
-      `**Do not send any funds until your exchanger and a middleman are confirmed.**\n` +
-      `If anything looks incorrect, speak up before proceeding.`
+      `**Middleman (MM) Required**\n` +
+      `All trades must go through a middleman. We support various trusted third-party MMs — talk to your exchanger to agree on one before sending anything.\n\n` +
+      `**Do not go first** under any circumstances unless **@jswaps** or **@3uce** explicitly tells you to.\n\n` +
+      `**Stay Safe**\n` +
+      `Owners and staff will **never** DM you first.\n` +
+      `Do not engage with anyone claiming to be an owner or exchanger in your DMs — they are impersonators.\n` +
+      `All communication happens here in this ticket only.`
     )
-    .setFooter({ text: "Konvert Exchange" });
+    .setFooter({ text: "Konvert Exchange  •  Stay safe, stay in the ticket" });
 
   // ── Buttons ──
   const ticketButtons = new ActionRowBuilder().addComponents(
@@ -598,7 +629,7 @@ async function buildRatesEmbed() {
     .setDescription(priceLines + "\n\u200b")
     .addFields({
       name: "Ready to Exchange?",
-      value: `Head to ${exchangeChannel ? `<#${exchangeChannel}>` : "the exchange channel"} and tap **Exchange Now** to open a ticket.\nUse the **Calculate Fee** button there to see exactly what you'll pay.`,
+      value: `Head to <#${CONFIG.EXCHANGE_CHANNEL}> and tap **Exchange Now** to open a ticket.\nUse the **Calculate Fee** button to get an estimate before you commit.`,
       inline: false,
     })
     .setImage(CONFIG.BANNER_URL || null)
@@ -798,6 +829,61 @@ client.on(Events.InteractionCreate, async interaction => {
       const bl     = load("blacklist"); delete bl[target.id]; save("blacklist", bl);
       return interaction.reply({ content: `✅ **${target.tag}** removed from blacklist.`, ephemeral: true });
     }
+
+    // /stats
+    if (cmd === "stats") {
+      const tickets = load("tickets");
+      const stats   = load("stats");
+      const all     = Object.values(tickets);
+      const total   = all.length;
+      const open    = all.filter(t => t.status === "open").length;
+      const done    = all.filter(t => t.status === "vouched").length;
+      const volume  = all.filter(t => t.amountUSD).reduce((s, t) => s + (t.amountUSD || 0), 0);
+      const methods = {};
+      all.forEach(t => { if (t.method) methods[t.method] = (methods[t.method] || 0) + 1; });
+      const topMethod = Object.entries(methods).sort((a,b) => b[1]-a[1])[0];
+
+      const embed = new EmbedBuilder()
+        .setColor(CONFIG.COLOR)
+        .setAuthor({ name: "Konvert Exchange", iconURL: CONFIG.LOGO_URL || null })
+        .setTitle("Exchange Statistics")
+        .addFields(
+          { name: "Total Tickets",   value: `**${total}**`,                                          inline: true },
+          { name: "Completed",       value: `**${done}**`,                                           inline: true },
+          { name: "Open",            value: `**${open}**`,                                           inline: true },
+          { name: "Total Volume",    value: `**${fmtUSD(volume)}**`,                                 inline: true },
+          { name: "Top Method",      value: topMethod ? `**${getMethod(topMethod[0])?.label || topMethod[0]}** (${topMethod[1]})` : "—", inline: true },
+          { name: "Avg Deal Size",   value: total > 0 ? `**${fmtUSD(volume / total)}**` : "—",      inline: true },
+        )
+        .setImage(CONFIG.BANNER_URL || null)
+        .setFooter({ text: "Konvert Exchange  •  Live Statistics" })
+        .setTimestamp();
+
+      return interaction.reply({ embeds: [embed] });
+    }
+
+    // /alert
+    if (cmd === "alert") {
+      const coin      = interaction.options.getString("coin").toUpperCase();
+      const target    = interaction.options.getNumber("price");
+      const direction = interaction.options.getString("direction");
+      if (!CONFIG.COINS.includes(coin)) return interaction.reply({ content: `❌ Unsupported coin: ${coin}`, ephemeral: true });
+
+      if (!client._alerts) client._alerts = [];
+      client._alerts.push({ userId: interaction.user.id, coin, target, direction, channelId: interaction.channel.id });
+
+      return interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(CONFIG.COLOR)
+            .setThumbnail(COIN_LOGO[coin] || null)
+            .setTitle("Price Alert Set")
+            .setDescription(`You'll be notified when **${coin}** goes **${direction}** $${target.toLocaleString("en-US")}.`)
+            .setFooter({ text: "Konvert Exchange  •  Price Alerts" }),
+        ],
+        ephemeral: true,
+      });
+    }
   }
 
   // ── STRING SELECT — Method chosen ───────────────────────────
@@ -944,6 +1030,13 @@ client.on(Events.InteractionCreate, async interaction => {
       tickets[interaction.channel.id].completedAt = Date.now();
       save("tickets", tickets);
 
+      // Update stats
+      const stats = load("stats");
+      stats.totalCompleted = (stats.totalCompleted || 0) + 1;
+      stats.totalVolume    = (stats.totalVolume    || 0) + (ticket.amountUSD || 0);
+      stats.lastTrade      = Date.now();
+      save("stats", stats);
+
       // Completion message in ticket
       const m = getMethod(ticket.method);
       await interaction.editReply({
@@ -1064,19 +1157,21 @@ client.on(Events.InteractionCreate, async interaction => {
               { name: "Fee",                 value: `**${fmtUSD(feeRecv)}**`,         inline: true },
               { name: "You Receive",         value: `**${fmtUSD(raw - feeRecv)}**`,   inline: true },
             )
-            .setFooter({ text: "Min fee $5 on any deal • Click Exchange Now to open a ticket" }),
+            .setDescription("Here\'s a fee estimate for your trade amount. Note that fees shown are **estimates** — the final fee may vary slightly depending on your specific deal and any negotiation with your exchanger.\n\u200b")
+            .setFooter({ text: "Head to #exchange to open a ticket  •  Konvert Exchange" }),
         ],
         ephemeral: true,
       });
     }
 
-    // Amount modal → open ticket
+    // Amount modal → show confirmation summary before opening ticket
     if (interaction.customId.startsWith("modal_amount__")) {
       await interaction.deferReply({ ephemeral: true });
 
-      const parts     = interaction.customId.split("__"); // modal_amount__METHOD__DIRECTION
+      const parts     = interaction.customId.split("__");
       const method    = parts[1];
       const direction = parts[2];
+      const m         = getMethod(method);
 
       const rawAmt    = parseFloat(interaction.fields.getTextInputValue("inp_amount"));
       const coin      = interaction.fields.getTextInputValue("inp_coin").toUpperCase().trim();
@@ -1084,17 +1179,84 @@ client.on(Events.InteractionCreate, async interaction => {
       const notes     = interaction.fields.getTextInputValue("inp_notes")?.trim() || "";
 
       if (isNaN(rawAmt) || rawAmt <= 0) {
-        return interaction.editReply(`❌ Please enter a valid amount greater than $0.`);
+        return interaction.editReply("❌ Please enter a valid amount greater than $0.");
       }
       if (!CONFIG.COINS.includes(coin)) {
-        return interaction.editReply(`❌ **${coin}** is not supported.\nSupported: ${CONFIG.COINS.join(", ")}`);
+        return interaction.editReply(`❌ **${coin}** is not supported.\nTry one of: ${CONFIG.COINS.join(", ")}`);
       }
       if (!walletInf) {
-        return interaction.editReply("❌ Please enter your wallet or account info.");
+        return interaction.editReply("❌ Please enter your receiving wallet or account info.");
       }
 
-      const ch = await createTicket(interaction, method, direction, rawAmt, coin, walletInf, notes);
-      if (ch) return interaction.editReply(`✅ Ticket opened! → <#${ch.id}>`);
+      const fee      = calcFee(rawAmt, direction);
+      const rate     = feeRate(rawAmt, direction);
+      const receives = rawAmt - fee;
+      const coinLogo = COIN_LOGO[coin] || null;
+
+      const sendLabel = direction === "send"
+        ? `**${coin}** worth **${fmtUSD(rawAmt)}**`
+        : `**${fmtUSD(rawAmt)}** via ${m.label}`;
+      const recvLabel = direction === "send"
+        ? `**${fmtUSD(receives)}** via ${m.label}`
+        : (receives < 5 ? "To be discussed" : `**~${fmtUSD(receives)}** worth of ${coin}`);
+
+      // Store pending data in memory keyed by user ID
+      if (!client._pendingTickets) client._pendingTickets = {};
+      client._pendingTickets[interaction.user.id] = { method, direction, rawAmt, coin, walletInf, notes };
+
+      const confirmEmbed = new EmbedBuilder()
+        .setColor(CONFIG.COLOR)
+        .setAuthor({ name: "Konvert Exchange", iconURL: CONFIG.LOGO_URL || null })
+        .setThumbnail(coinLogo)
+        .setTitle("Confirm Your Exchange")
+        .setDescription("Please review your exchange details below before confirming.\nOnce confirmed a private ticket will be opened for you.\n\u200b")
+        .addFields(
+          { name: "Payment Method", value: `${m.emoji}  ${m.label}`,      inline: true },
+          { name: "Crypto",         value: coin,                            inline: true },
+          { name: "Direction",      value: direction === "send" ? "Fiat → Crypto" : "Crypto → Fiat", inline: true },
+          { name: "You Send",       value: sendLabel,                       inline: true },
+          { name: "You Receive",    value: recvLabel,                       inline: true },
+          { name: "Est. Fee",       value: `${rate}% — ${fmtUSD(fee)}`,    inline: true },
+          { name: "Your Info",      value: `||${walletInf}||`,              inline: false },
+        )
+        .setFooter({ text: "Fee shown is an estimate and may vary slightly  •  Konvert Exchange" });
+
+      const confirmRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("btn_confirm_ticket")
+          .setLabel("Confirm & Open Ticket")
+          .setStyle(ButtonStyle.Success)
+          .setEmoji("✅"),
+        new ButtonBuilder()
+          .setCustomId("btn_cancel_ticket")
+          .setLabel("Cancel")
+          .setStyle(ButtonStyle.Secondary)
+          .setEmoji("✖️"),
+      );
+
+      return interaction.editReply({ embeds: [confirmEmbed], components: [confirmRow] });
+    }
+
+    // Confirm ticket button
+    if (interaction.customId === "btn_confirm_ticket") {
+      await interaction.deferUpdate();
+      const pending = client._pendingTickets?.[interaction.user.id];
+      if (!pending) return interaction.editReply({ content: "❌ Session expired. Please start again.", components: [] });
+      delete client._pendingTickets[interaction.user.id];
+
+      const ch = await createTicket(
+        interaction, pending.method, pending.direction,
+        pending.rawAmt, pending.coin, pending.walletInf, pending.notes
+      );
+      if (ch) {
+        return interaction.editReply({ content: `✅ Ticket opened → <#${ch.id}>`, embeds: [], components: [] });
+      }
+    }
+
+    // Cancel ticket button
+    if (interaction.customId === "btn_cancel_ticket") {
+      delete client._pendingTickets?.[interaction.user.id];
+      return interaction.update({ content: "Cancelled. You can start a new exchange anytime.", embeds: [], components: [] });
     }
 
   }
@@ -1241,42 +1403,31 @@ client.on(Events.MessageCreate, async message => {
     const res = await fetch(
       `https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd,cad,eur,gbp&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`
     );
-    const dat  = await res.json();
-    const d    = dat[id];
+    const dat = await res.json();
+    const d   = dat[id];
     if (!d) return;
 
-    const usd    = d.usd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const cad    = d.cad.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const eur    = d.eur.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    const gbp    = d.gbp.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const fmt = (n) => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const change = parseFloat(d.usd_24h_change || 0).toFixed(2);
     const arrow  = Number(change) >= 0 ? "▲" : "▼";
+    const color  = Number(change) >= 0 ? 0x00C896 : 0xFF4444;
     const mcap   = d.usd_market_cap ? `$${(d.usd_market_cap / 1e9).toFixed(2)}B` : "—";
     const vol    = d.usd_24h_vol    ? `$${(d.usd_24h_vol / 1e9).toFixed(2)}B`    : "—";
-
-    const fiatFee  = calcFee(d.usd, "send");
-    const cryptoFee = calcFee(d.usd, "receive");
+    const logo   = COIN_LOGO[coin] || CONFIG.LOGO_URL || null;
 
     const embed = new EmbedBuilder()
-      .setColor(CONFIG.COLOR)
-      .setAuthor({ name: "Konvert Exchange", iconURL: CONFIG.LOGO_URL || null })
-      .setTitle(`${coin} — Live Price`)
+      .setColor(color)
+      .setAuthor({ name: `${coin} — Live Price`, iconURL: logo })
+      .setThumbnail(logo)
       .addFields(
-        { name: "USD",        value: `**$${usd}**`,  inline: true },
-        { name: "CAD",        value: `CA$${cad}`,    inline: true },
-        { name: "EUR / GBP",  value: `€${eur} / £${gbp}`, inline: true },
-        { name: "24h Change", value: `${arrow} **${change}%**`, inline: true },
-        { name: "Market Cap", value: mcap,            inline: true },
-        { name: "24h Volume", value: vol,             inline: true },
-        {
-          name: "Konvert Fee on 1 ${coin}",
-          value:
-            `Fiat → Crypto: **${feeRate(d.usd,"send")}%** — ${fmtUSD(fiatFee)} fee → you get **${fmtUSD(d.usd - fiatFee)}**\n` +
-            `Crypto → Fiat: **${feeRate(d.usd,"receive")}%** — ${fmtUSD(cryptoFee)} fee → you get **${fmtUSD(d.usd - cryptoFee)}**`,
-          inline: false,
-        },
+        { name: "USD",        value: `**$${fmt(d.usd)}**`,        inline: true },
+        { name: "CAD",        value: `CA$${fmt(d.cad)}`,          inline: true },
+        { name: "EUR",        value: `€${fmt(d.eur)}`,            inline: true },
+        { name: "24h Change", value: `${arrow} **${change}%**`,   inline: true },
+        { name: "Market Cap", value: mcap,                         inline: true },
+        { name: "24h Volume", value: vol,                          inline: true },
       )
-      .setFooter({ text: `Type $${coin} anytime for a live update  •  Konvert Exchange` })
+      .setFooter({ text: `Konvert Exchange  •  Type $${coin} anytime for a live update` })
       .setTimestamp();
 
     await message.reply({ embeds: [embed] });
@@ -1313,6 +1464,44 @@ client.once(Events.ClientReady, async () => {
   if (guild) {
     await autoRates(guild);
     setInterval(() => autoRates(guild), 10 * 60 * 1000);
+
+    // Price alert checker — runs every 5 minutes
+    setInterval(async () => {
+      if (!client._alerts || client._alerts.length === 0) return;
+      const ids  = [...new Set(client._alerts.map(a => GECKO_ID[a.coin]||a.coin.toLowerCase()))].join(",");
+      try {
+        const res    = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`);
+        const prices = await res.json();
+        const fired  = [];
+        for (const alert of client._alerts) {
+          const price = prices[GECKO_ID[alert.coin]||alert.coin.toLowerCase()]?.usd;
+          if (!price) continue;
+          const triggered = alert.direction === "above" ? price >= alert.target : price <= alert.target;
+          if (!triggered) continue;
+          try {
+            const user = await client.users.fetch(alert.userId);
+            await user.send({
+              embeds: [
+                new EmbedBuilder()
+                  .setColor(CONFIG.COLOR)
+                  .setThumbnail(COIN_LOGO[alert.coin] || null)
+                  .setTitle("🔔 Price Alert Triggered!")
+                  .setDescription(
+                    `**${alert.coin}** is now **${alert.direction === "above" ? "above" : "below"}** your target of $${alert.target.toLocaleString("en-US")}\n\n` +
+                    `Current price: **$${price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}**\n\n` +
+                    `Head to <#${CONFIG.EXCHANGE_CHANNEL}> to open a trade.`
+                  )
+                  .setFooter({ text: "Konvert Exchange  •  Price Alerts" })
+                  .setTimestamp(),
+              ],
+            });
+          } catch {}
+          fired.push(alert);
+        }
+        // Remove fired alerts
+        client._alerts = client._alerts.filter(a => !fired.includes(a));
+      } catch {}
+    }, 5 * 60 * 1000);
   }
 });
 
