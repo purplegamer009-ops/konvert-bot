@@ -417,39 +417,34 @@ async function createTicket(interaction, method, direction, amountUSD, coin, wal
     return null;
   }
 
-  // ── What they're sending / receiving ──
-  const sendLabel = direction === "send"
-    ? `${COIN_EMOJI[coin]||"🪙"} **${coin}** worth **${fmtUSD(amountUSD)}**`
-    : `${m.emoji} **${fmtUSD(amountUSD)}** via ${m.label}`;
-
+  // ── Labels ──
+  const sendLabel    = direction === "send"
+    ? `**${coin}** — ${fmtUSD(amountUSD)}`
+    : `**${fmtUSD(amountUSD)}** via ${m.label}`;
   const receiveLabel = direction === "send"
-    ? `${m.emoji} **${fmtUSD(receiveU)}** via ${m.label}`
-    : `${COIN_EMOJI[coin]||"🪙"} ${coinAmt ? `~**${coinAmt} ${coin}**` : `~**${fmtUSD(receiveU)} worth of ${coin}**`}`;
+    ? `**${fmtUSD(receiveU)}** via ${m.label}`
+    : coinAmt ? `**${coinAmt} ${coin}**` : `**${fmtUSD(receiveU)} worth of ${coin}**`;
 
-  // ── Konvert deposit address ──
+  // ── Deposit address ──
   const wallets     = load("wallets");
-  const depositAddr = direction === "send" ? (wallets[coin] || "⚠️ Ask staff — owner: use /setwallet to set") : null;
+  const depositAddr = direction === "send" ? (wallets[coin] || "Ask staff") : null;
 
-  // ── Ticket embed ──
+  // ── Main ticket embed ──
   const ticketEmbed = new EmbedBuilder()
     .setColor(CONFIG.COLOR)
     .setAuthor({ name: "Konvert Exchange", iconURL: CONFIG.LOGO_URL || null })
-    .setTitle(`${m.emoji}  ${m.label} Exchange`)
+    .setTitle(`${m.label} Exchange`)
     .setDescription(
-      `<@${user.id}> — your ticket is open.
-` +
-      `A **${m.label}** handler has been notified and will be with you shortly.
-
-` +
-      `> ⚠️ Do not send anything until staff confirms.
-​`
+      `Welcome <@${user.id}>\n\n` +
+      `Your ticket has been opened and a **${m.label}** handler has been notified.\n` +
+      `Please allow a few minutes for staff to confirm your details.\n\u200b`
     )
     .addFields(
-      { name: "📤  Sending",   value: sendLabel,    inline: true },
-      { name: "📥  Receiving", value: receiveLabel, inline: true },
-      { name: "💸  Fee",       value: `**${rate}%** — ${fmtUSD(feeUSD)}`, inline: true },
+      { name: "Sending",   value: sendLabel,                          inline: true },
+      { name: "Receiving", value: receiveLabel,                       inline: true },
+      { name: "Fee",       value: `${rate}%  —  ${fmtUSD(feeUSD)}`,  inline: true },
       {
-        name:  direction === "send" ? `💳  Your ${m.label} Info` : "👛  Your Receiving Wallet",
+        name:  direction === "send" ? `Your ${m.label} Details` : "Your Receiving Wallet",
         value: `\`${walletInfo}\``,
         inline: false,
       },
@@ -457,34 +452,47 @@ async function createTicket(interaction, method, direction, amountUSD, coin, wal
 
   if (depositAddr) {
     ticketEmbed.addFields({
-      name:  `📬  Send ${coin} To`,
-      value: `\`${depositAddr}\`
-> Confirm with staff before sending.`,
+      name:  `Konvert ${coin} Deposit Address`,
+      value: `\`${depositAddr}\``,
       inline: false,
     });
   }
 
-  if (notes) {
-    ticketEmbed.addFields({ name: "📝 Notes", value: notes, inline: false });
-  }
+  if (notes) ticketEmbed.addFields({ name: "Notes", value: notes, inline: false });
 
-  ticketEmbed.setTimestamp().setFooter({ text: "Konvert Exchange • Staff will be with you shortly." });
+  ticketEmbed
+    .setImage(CONFIG.BANNER_URL || null)
+    .setTimestamp()
+    .setFooter({ text: `Ticket opened  •  Konvert Exchange` });
 
-  // ── Buttons inside ticket ──
+  // ── Middleman / rules embed ──
+  const rulesEmbed = new EmbedBuilder()
+    .setColor(0xFF4444)
+    .setTitle("Important — Please Read")
+    .setDescription(
+      `**Use a middleman for all trades.**\n` +
+      `Do not go first unless explicitly advised by the owner.\n\n` +
+      `**Do not send any funds until staff confirms the details above.**\n` +
+      `If anything looks wrong, say something before proceeding.\n\n` +
+      `Konvert is not responsible for funds sent to unconfirmed addresses.`
+    )
+    .setFooter({ text: "Konvert Exchange  •  Stay safe" });
+
+  // ── Buttons ──
   const ticketButtons = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("btn_done")
-      .setLabel("✅ Mark Trade Complete")
+      .setLabel("Mark Trade Complete")
       .setStyle(ButtonStyle.Success),
     new ButtonBuilder()
       .setCustomId("btn_close")
-      .setLabel("🔒 Close Ticket")
+      .setLabel("Close Ticket")
       .setStyle(ButtonStyle.Danger),
   );
 
-  await ch.send({ content: `<@${user.id}>`, embeds: [ticketEmbed], components: [ticketButtons] });
+  await ch.send({ content: `<@${user.id}>`, embeds: [ticketEmbed, rulesEmbed], components: [ticketButtons] });
 
-  // ── Ping the right roles ──
+  // ── Ping roles ──
   const pings = [];
   if (methodRoleId) pings.push(`<@&${methodRoleId}>`);
   if (CONFIG.STAFF_ROLE && CONFIG.STAFF_ROLE !== methodRoleId) pings.push(`<@&${CONFIG.STAFF_ROLE}>`);
@@ -499,12 +507,12 @@ async function createTicket(interaction, method, direction, amountUSD, coin, wal
     notes: notes || "",
     status: "open",
     createdAt: Date.now(),
+    messages: [], // for transcript
   };
   save("tickets", updated);
 
   logAction(guild,
-    `🎫 TICKET OPENED: #${ch.name}\n` +
-    `User: ${user.tag} | ${m.label} | ${direction} | ${fmtUSD(amountUSD)} | ${coin}`
+    `TICKET OPENED: #${ch.name}\nUser: ${user.tag} | ${m.label} | ${direction} | ${fmtUSD(amountUSD)} | ${coin}`
   );
 
   return ch;
@@ -969,19 +977,57 @@ client.on(Events.InteractionCreate, async interaction => {
       if (interaction.user.id !== ticket.userId && !CONFIG.OWNER_IDS.includes(interaction.user.id)) {
         return interaction.reply({ content: "❌ Only the ticket owner or staff can close this.", ephemeral: true });
       }
+
+      await interaction.deferReply();
+
+      // Generate transcript before closing
+      const transcript = await generateTranscript(interaction.channel, ticket);
+
       tickets[interaction.channel.id].status   = "closed";
       tickets[interaction.channel.id].closedAt = Date.now();
       save("tickets", tickets);
-      await interaction.reply({
+
+      await interaction.editReply({
         embeds: [
           new EmbedBuilder()
-            .setColor(0xFF4444).setTitle("🔒 Ticket Closed")
-            .setDescription("This ticket is now closed. Deleting in 10 seconds.")
-            .setTimestamp(),
+            .setColor(0xFF4444)
+            .setAuthor({ name: "Konvert Exchange", iconURL: CONFIG.LOGO_URL || null })
+            .setTitle("Ticket Closed")
+            .setDescription("This ticket has been closed.\nTranscript saved. Deleting in 15 seconds.")
+            .setTimestamp()
+            .setFooter({ text: "Konvert Exchange" }),
         ],
       });
-      logAction(interaction.guild, `🔒 Closed by ${interaction.user.tag} — #${interaction.channel.name}`);
-      setTimeout(() => interaction.channel.delete().catch(()=>{}), 10000);
+
+      // Send transcript to log channel
+      if (transcript && CONFIG.LOG_CHANNEL) {
+        const logCh = interaction.guild.channels.cache.get(CONFIG.LOG_CHANNEL);
+        if (logCh) {
+          await logCh.send({
+            content: `Transcript for **#${interaction.channel.name}** — closed by ${interaction.user.tag}`,
+            files: [{ attachment: transcript.filepath, name: transcript.filename }],
+          });
+          fs.unlinkSync(transcript.filepath);
+        }
+      }
+
+      // DM transcript to ticket owner
+      try {
+        const owner = await interaction.guild.members.fetch(ticket.userId);
+        if (owner && transcript) {
+          const dmFile = await generateTranscript(interaction.channel, ticket);
+          if (dmFile) {
+            await owner.send({
+              content: `Your Konvert exchange ticket has been closed. Here is your transcript:`,
+              files: [{ attachment: dmFile.filepath, name: dmFile.filename }],
+            }).catch(() => {});
+            fs.unlinkSync(dmFile.filepath);
+          }
+        }
+      } catch {}
+
+      logAction(interaction.guild, `CLOSED by ${interaction.user.tag} — #${interaction.channel.name}`);
+      setTimeout(() => interaction.channel.delete().catch(()=>{}), 15000);
     }
   }
 
@@ -1048,6 +1094,76 @@ client.on(Events.InteractionCreate, async interaction => {
 
   }
 });
+
+
+// ════════════════════════════════════════════════════════════════
+//  TRANSCRIPT GENERATOR
+// ════════════════════════════════════════════════════════════════
+async function generateTranscript(channel, ticket) {
+  try {
+    const messages = await channel.messages.fetch({ limit: 100 });
+    const sorted   = [...messages.values()].reverse();
+    const m        = getMethod(ticket.method);
+
+    const rows = sorted.map(msg => {
+      const time    = new Date(msg.createdTimestamp).toLocaleString("en-US", { timeZone: "America/Toronto" });
+      const content = msg.content ? msg.content.replace(/</g,"&lt;").replace(/>/g,"&gt;") : "";
+      const embeds  = msg.embeds.map(e =>
+        `<div class="embed">` +
+        (e.title  ? `<div class="embed-title">${e.title}</div>` : "") +
+        (e.description ? `<div class="embed-desc">${e.description.replace(/</g,"&lt;").replace(/>/g,"&gt;")}</div>` : "") +
+        `</div>`
+      ).join("");
+      return `
+        <div class="msg">
+          <img class="avatar" src="${msg.author.displayAvatarURL({ size: 32 })}" onerror="this.style.display='none'"/>
+          <div class="msg-body">
+            <span class="author">${msg.author.tag}</span>
+            <span class="time">${time}</span>
+            <div class="content">${content}${embeds}</div>
+          </div>
+        </div>`;
+    }).join("");
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Transcript — ${channel.name}</title>
+<style>
+  body { background:#1a1a2e; color:#e0e0e0; font-family:sans-serif; margin:0; padding:20px; }
+  .header { background:#7C4DFF; padding:20px 24px; border-radius:10px; margin-bottom:20px; }
+  .header h1 { margin:0; font-size:18px; }
+  .header p  { margin:4px 0 0; opacity:.75; font-size:13px; }
+  .msg { display:flex; gap:12px; padding:8px 0; border-bottom:1px solid #2a2a3e; }
+  .avatar { width:32px; height:32px; border-radius:50%; flex-shrink:0; }
+  .author { font-weight:bold; color:#A78BFA; margin-right:8px; font-size:13px; }
+  .time   { color:#666; font-size:11px; }
+  .content { margin-top:4px; font-size:13px; white-space:pre-wrap; }
+  .embed  { background:#2a2040; border-left:3px solid #7C4DFF; padding:8px 12px; margin-top:6px; border-radius:4px; }
+  .embed-title { font-weight:bold; font-size:13px; margin-bottom:4px; }
+  .embed-desc  { font-size:12px; opacity:.85; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>Konvert Exchange — Ticket Transcript</h1>
+  <p>Channel: #${channel.name} &nbsp;|&nbsp; ${m ? m.label : "Exchange"} &nbsp;|&nbsp; ${ticket.coin} &nbsp;|&nbsp; ${fmtUSD(ticket.amountUSD)} &nbsp;|&nbsp; Client: ${ticket.userTag}</p>
+  <p>Generated: ${new Date().toLocaleString("en-US", { timeZone: "America/Toronto" })}</p>
+</div>
+${rows}
+</body>
+</html>`;
+
+    const filename = `transcript-${channel.name}-${Date.now()}.html`;
+    const filepath  = `./${filename}`;
+    fs.writeFileSync(filepath, html);
+    return { filepath, filename };
+  } catch (e) {
+    console.error("Transcript error:", e);
+    return null;
+  }
+}
 
 // ─── AUTO RATES ──────────────────────────────────────────────
 let ratesMsgId = null;
