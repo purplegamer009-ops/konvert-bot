@@ -156,12 +156,9 @@ function buildMainExchangeEmbed() {
         value: "​",
         inline: false,
       },
-      { name: "💸  Fee",         value: "9% — 5.5%
-Tiered by amount", inline: true },
-      { name: "⚡  Speed",       value: "Under 30 min
-Typically faster", inline: true },
-      { name: "🔒  Security",    value: "Private tickets
-Staff verified", inline: true },
+      { name: "💸  Fee",         value: "9% — 5.5%\nTiered by amount", inline: true },
+      { name: "⚡  Speed",       value: "Under 30 min\nTypically faster", inline: true },
+      { name: "🔒  Security",    value: "Private tickets\nStaff verified", inline: true },
     )
     .setImage(CONFIG.BANNER_URL || null)
     .setFooter({ text: "Konvert Exchange  •  Minimum fee $5" });
@@ -289,12 +286,7 @@ function step1Embed() {
     .setColor(CONFIG.COLOR)
     .setAuthor({ name: "Konvert Exchange", iconURL: CONFIG.LOGO_URL || null })
     .setTitle("Select Payment Method")
-    .setDescription(
-      "Choose how you'd like to pay or receive.
-" +
-      "A private ticket will be opened with the right handler automatically.
-​"
-    )
+    .setDescription("Choose how you'd like to pay or receive.\nA private ticket will be opened with the right handler automatically.")
     .setFooter({ text: "Step 1 of 3" });
 }
 
