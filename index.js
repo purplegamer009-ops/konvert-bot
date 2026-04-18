@@ -166,7 +166,7 @@ function logAction(guild, msg) {
 function buildMainExchangeEmbed() {
   return new EmbedBuilder()
     .setColor(CONFIG.COLOR)
-    .setAuthor({ name: "Konvert Exchange", iconURL: CONFIG.LOGO_URL || null })
+    .setAuthor({ name: "Konvert", iconURL: CONFIG.LOGO_URL || null })
     .setDescription(
       `## Fast. Safe. Simple.
 ` +
@@ -186,12 +186,12 @@ function buildMainExchangeEmbed() {
         value: "​",
         inline: false,
       },
-      { name: "💸  Fee",         value: "9% — 5.5%\nTiered by amount", inline: true },
-      { name: "⚡  Speed",       value: "Under 30 min\nTypically faster", inline: true },
-      { name: "🔒  Security",    value: "Private tickets\nStaff verified", inline: true },
+      { name: "Fee",    value: "5% – 9%\nby trade size",  inline: true },
+      { name: "Speed",  value: "Usually < 10 min\nOften faster", inline: true },
+      { name: "Privacy", value: "Private tickets\nVerified staff", inline: true },
     )
     .setImage(CONFIG.BANNER_URL || null)
-    .setFooter({ text: "Konvert Exchange  •  Minimum fee $5" });
+    .setFooter({ text: "Konvert  •  Min fee $5" });
 }
 
 function buildMainExchangeButtons() {
@@ -288,7 +288,8 @@ const COMMANDS = [
 
   new SlashCommandBuilder()
     .setName("stats")
-    .setDescription("📊 View Konvert exchange statistics"),
+    .setDescription("View your exchange stats or someone else's")
+    .addUserOption(o => o.setName("user").setDescription("User to check (leave blank for yourself)").setRequired(false)),
 
   new SlashCommandBuilder()
     .setName("alert")
@@ -326,14 +327,14 @@ const client = new Client({
 function step1Embed() {
   return new EmbedBuilder()
     .setColor(CONFIG.COLOR)
-    .setAuthor({ name: "Konvert Exchange", iconURL: CONFIG.LOGO_URL || null })
+    .setAuthor({ name: "Konvert", iconURL: CONFIG.LOGO_URL || null })
     .setTitle("Step 1  —  Payment Method")
     .setDescription(
       "Select the payment method you want to use for this exchange.\n\n" +
       "**Sending crypto?** Pick how you want to be paid.\n" +
       "**Receiving crypto?** Pick how you\'ll be sending payment.\n\u200b"
     )
-    .setFooter({ text: "Step 1 of 3  •  Konvert Exchange" });
+    .setFooter({ text: "Step 1 of 3  •  Konvert" });
 }
 
 function step1Components() {
@@ -360,7 +361,7 @@ function step2Embed(method) {
   const m = getMethod(method);
   return new EmbedBuilder()
     .setColor(CONFIG.COLOR)
-    .setAuthor({ name: "Konvert Exchange", iconURL: CONFIG.LOGO_URL || null })
+    .setAuthor({ name: "Konvert", iconURL: CONFIG.LOGO_URL || null })
     .setTitle(`Step 2  —  ${m.label}`)
     .setDescription(
       `Choose your direction.\n\n` +
@@ -369,7 +370,7 @@ function step2Embed(method) {
       `**Send ${m.label} → Receive Crypto**\n` +
       `You pay via ${m.label}. We send crypto to your wallet.`
     )
-    .setFooter({ text: "Step 2 of 3  •  Konvert Exchange" });
+    .setFooter({ text: "Step 2 of 3  •  Konvert" });
 }
 function step2Components(method) {
   const m = getMethod(method);
@@ -467,19 +468,20 @@ async function createTicket(interaction, method, direction, amountUSD, coin, wal
     : (receiveU < 5 ? "To be discussed" : coinAmt ? `**${coinAmt} ${coin}**` : `**${fmtUSD(receiveU)} worth of ${coin}**`);
 
   // ── Main ticket embed ──
+  const coinLogo = COIN_LOGO[coin] || null;
   const ticketEmbed = new EmbedBuilder()
     .setColor(CONFIG.COLOR)
-    .setAuthor({ name: "Konvert Exchange", iconURL: CONFIG.LOGO_URL || null })
+    .setAuthor({ name: "Konvert", iconURL: CONFIG.LOGO_URL || null })
     .setTitle(`${m.label} Exchange`)
+    .setThumbnail(coinLogo)
     .setDescription(
-      `Welcome <@${user.id}>\n\n` +
-      `Your ticket has been opened and a **${m.label}** handler has been notified.\n` +
-      `Please allow a few minutes for staff to confirm your details.\n\u200b`
+      `**Welcome, <@${user.id}>**\n\n` +
+      `Your ticket is open. A **${m.label}** handler has been notified and will confirm your details shortly.\n\u200b`
     )
     .addFields(
-      { name: "Sending",   value: sendLabel,                          inline: true },
-      { name: "Receiving", value: receiveLabel,                       inline: true },
-      { name: "Fee",       value: `${rate}%  —  ${fmtUSD(feeUSD)}`,  inline: true },
+      { name: "Sending",   value: `**${sendLabel}**`,                          inline: true },
+      { name: "Receiving", value: `**${receiveLabel}**`,                       inline: true },
+      { name: "Fee",       value: `**${rate}%** — ${fmtUSD(feeUSD)}`,         inline: true },
       {
         name:  direction === "send" ? `Your ${m.label} Details` : "Your Receiving Wallet",
         value: `\`${walletInfo}\``,
@@ -487,14 +489,12 @@ async function createTicket(interaction, method, direction, amountUSD, coin, wal
       },
     );
 
-
-
   if (notes) ticketEmbed.addFields({ name: "Notes", value: notes, inline: false });
 
   ticketEmbed
     .setImage(CONFIG.BANNER_URL || null)
     .setTimestamp()
-    .setFooter({ text: `Ticket opened  •  Konvert Exchange` });
+    .setFooter({ text: "Konvert  •  Do not share sensitive info outside this ticket" });
 
   // ── Rules embed ──
   const rulesEmbed = new EmbedBuilder()
@@ -509,7 +509,7 @@ async function createTicket(interaction, method, direction, amountUSD, coin, wal
       `Do not engage with anyone claiming to be an owner or exchanger in your DMs — they are impersonators.\n` +
       `All communication happens here in this ticket only.`
     )
-    .setFooter({ text: "Konvert Exchange  •  Stay safe, stay in the ticket" });
+    .setFooter({ text: "Konvert  •  Stay safe, stay in this ticket" });
 
   // ── Buttons ──
   const ticketButtons = new ActionRowBuilder().addComponents(
@@ -573,7 +573,7 @@ async function postVouchEmbed(guild, completedBy, ticket) {
         { name: "⭐ Rating",        value: stars,                       inline: false },
       )
       .setTimestamp()
-      .setFooter({ text: "Konvert Exchange • Verified Trade" });
+      .setFooter({ text: "Konvert  •  Verified Trade" });
     if (CONFIG.BANNER_URL) embed.setImage(CONFIG.BANNER_URL);
     await ch.send({ embeds: [embed] });
     return;
@@ -587,20 +587,20 @@ async function postVouchEmbed(guild, completedBy, ticket) {
 
   const embed = new EmbedBuilder()
     .setColor(0x00C896)
-    .setAuthor({ name: "Konvert Exchange", iconURL: CONFIG.LOGO_URL || null })
+    .setAuthor({ name: "Konvert", iconURL: CONFIG.LOGO_URL || null })
     .setTitle("✅  Trade Verified")
     .setDescription(`${dirLabel}
 ​`)
     .addFields(
       { name: "Client",     value: `<@${ticket.userId}>`,                          inline: true },
       { name: "Exchanger",  value: `<@${completedBy.id}>`,                         inline: true },
-      { name: "Method",     value: `${m.emoji} ${m.label}`,                        inline: true },
+      { name: "Method",     value: `${m.label}`,                                    inline: true },
       { name: "Amount",     value: `**${fmtUSD(ticket.amountUSD)}**`,              inline: true },
       { name: "Received",   value: `**${fmtUSD(ticket.amountUSD - ticket.feeUSD)}**`, inline: true },
       { name: "Rating",     value: "⭐⭐⭐⭐⭐",                                  inline: true },
     )
     .setTimestamp()
-    .setFooter({ text: "Konvert Exchange  •  Verified Trade" });
+    .setFooter({ text: "Konvert  •  Verified Trade" });
 
   if (CONFIG.BANNER_URL) embed.setImage(CONFIG.BANNER_URL);
 
@@ -618,7 +618,6 @@ async function buildRatesEmbed() {
   );
   const prices = await res.json();
 
-  // Build clean price rows
   const rows = CONFIG.COINS.map(coin => {
     const d = prices[GECKO_ID[coin]||coin.toLowerCase()];
     if (!d) return null;
@@ -630,25 +629,28 @@ async function buildRatesEmbed() {
   }).filter(Boolean);
 
   const priceLines = rows.map(r =>
-    `\`${r.coin.padEnd(5)}\` $${r.usd} · CA$${r.cad} · ${r.arrow} ${r.change}%`
+    `\`${r.coin.padEnd(5)}\` **$${r.usd}** · CA$${r.cad} · ${r.arrow} ${r.change}%`
   ).join("\n");
-
-  const exchangeChannel = process.env.EXCHANGE_CHANNEL_ID || "";
 
   return new EmbedBuilder()
     .setColor(CONFIG.COLOR)
-    .setAuthor({ name: "Konvert Exchange", iconURL: CONFIG.LOGO_URL || null })
+    .setAuthor({ name: "Konvert", iconURL: CONFIG.LOGO_URL || null })
     .setTitle("Live Rates")
+    .setThumbnail(COIN_LOGO["BTC"] || null)
     .setDescription(priceLines + "\n\u200b")
     .addFields({
-      name: "Ready to Exchange?",
-      value: `Head to <#${CONFIG.EXCHANGE_CHANNEL}> and tap **Exchange Now** to open a ticket.\nUse the **Calculate Fee** button to get an estimate before you commit.`,
+      name: "Start an Exchange",
+      value:
+        `Head to <#${CONFIG.EXCHANGE_CHANNEL}> and tap **Exchange Now**.\n` +
+        `Use the **Calculate Fee** button for an instant cost estimate.\n` +
+        `*Type \`$BTC\`, \`$ETH\`, \`$SOL\` etc. in any channel for a detailed breakdown.*`,
       inline: false,
     })
     .setImage(CONFIG.BANNER_URL || null)
-    .setFooter({ text: "Rates update every 10 min  •  Tip: type $BTC $ETH etc for a single coin  •  Konvert Exchange" })
+    .setFooter({ text: "Rates refresh every 10 min  •  Konvert" })
     .setTimestamp();
 }
+
 
 // ════════════════════════════════════════════════════════════════
 //  INTERACTION HANDLER
@@ -745,7 +747,7 @@ client.on(Events.InteractionCreate, async interaction => {
               {
                 name: "📊 Full Fee Tiers",
                 value:
-                  `\`$0–$150    \` → **9%** fiat→crypto · **8%** crypto→fiat
+                  `\`Under $150  \` → fiat→crypto **9%**  ·  crypto→fiat **8%**
 ` +
                   `\`$150–$350  \` → **7%** fiat→crypto · **6%** crypto→fiat
 ` +
@@ -753,7 +755,7 @@ client.on(Events.InteractionCreate, async interaction => {
 ` +
                   `\`$500–$1000 \` → **6%** fiat→crypto · **5%** crypto→fiat
 ` +
-                  `\`$1000+     \` → **5.5%** fiat→crypto · **4.5%** crypto→fiat
+                  `\`$1000+      \` → fiat→crypto **5.5%**  ·  crypto→fiat **4.5%**
 ` +
                   `\`Min fee\`   → **$5.00** on any deal`,
                 inline: false,
@@ -845,31 +847,56 @@ client.on(Events.InteractionCreate, async interaction => {
 
     // /stats
     if (cmd === "stats") {
-      const tickets = load("tickets");
-      const stats   = load("stats");
-      const all     = Object.values(tickets);
-      const total   = all.length;
-      const open    = all.filter(t => t.status === "open").length;
-      const done    = all.filter(t => t.status === "vouched").length;
-      const volume  = all.filter(t => t.amountUSD).reduce((s, t) => s + (t.amountUSD || 0), 0);
+      const target   = interaction.options.getUser("user") || interaction.user;
+      const tickets  = load("tickets");
+      const userStats = load("stats");
+      const all      = Object.values(tickets);
+
+      // Per-user stats from tickets
+      const userTickets  = all.filter(t => t.userId === target.id);
+      const totalTrades  = userTickets.filter(t => t.status === "vouched").length;
+      const totalVolume  = userTickets.filter(t => t.status === "vouched").reduce((s, t) => s + (t.amountUSD || 0), 0);
+      const avgDeal      = totalTrades > 0 ? totalVolume / totalTrades : 0;
+      const openTicket   = userTickets.find(t => t.status === "open");
+
+      // Method breakdown
       const methods = {};
-      all.forEach(t => { if (t.method) methods[t.method] = (methods[t.method] || 0) + 1; });
+      userTickets.filter(t => t.status === "vouched").forEach(t => {
+        if (t.method) methods[t.method] = (methods[t.method] || 0) + 1;
+      });
       const topMethod = Object.entries(methods).sort((a,b) => b[1]-a[1])[0];
+
+      // Most traded coin
+      const coins = {};
+      userTickets.filter(t => t.status === "vouched").forEach(t => {
+        if (t.coin) coins[t.coin] = (coins[t.coin] || 0) + 1;
+      });
+      const topCoin = Object.entries(coins).sort((a,b) => b[1]-a[1])[0];
+
+      // Last trade date
+      const lastTrade = userTickets
+        .filter(t => t.completedAt)
+        .sort((a,b) => b.completedAt - a.completedAt)[0];
+
+      const isSelf = target.id === interaction.user.id;
+      const member = await interaction.guild.members.fetch(target.id).catch(() => null);
+      const avatarURL = target.displayAvatarURL({ size: 64 });
 
       const embed = new EmbedBuilder()
         .setColor(CONFIG.COLOR)
-        .setAuthor({ name: "Konvert Exchange", iconURL: CONFIG.LOGO_URL || null })
-        .setTitle("Exchange Statistics")
+        .setAuthor({ name: "Konvert", iconURL: CONFIG.LOGO_URL || null })
+        .setTitle(isSelf ? "Your Exchange Stats" : `${target.username}'s Exchange Stats`)
+        .setThumbnail(avatarURL)
         .addFields(
-          { name: "Total Tickets",   value: `**${total}**`,                                          inline: true },
-          { name: "Completed",       value: `**${done}**`,                                           inline: true },
-          { name: "Open",            value: `**${open}**`,                                           inline: true },
-          { name: "Total Volume",    value: `**${fmtUSD(volume)}**`,                                 inline: true },
-          { name: "Top Method",      value: topMethod ? `**${getMethod(topMethod[0])?.label || topMethod[0]}** (${topMethod[1]})` : "—", inline: true },
-          { name: "Avg Deal Size",   value: total > 0 ? `**${fmtUSD(volume / total)}**` : "—",      inline: true },
+          { name: "Completed Trades", value: `**${totalTrades}**`,                                inline: true },
+          { name: "Total Volume",     value: totalVolume > 0 ? `**${fmtUSD(totalVolume)}**` : "—", inline: true },
+          { name: "Avg Deal Size",    value: avgDeal > 0 ? `**${fmtUSD(avgDeal)}**` : "—",        inline: true },
+          { name: "Favourite Method", value: topMethod ? `**${getMethod(topMethod[0])?.label || topMethod[0]}** (${topMethod[1]} trades)` : "—", inline: true },
+          { name: "Favourite Coin",   value: topCoin ? `**${topCoin[0]}** (${topCoin[1]} trades)` : "—", inline: true },
+          { name: "Last Trade",       value: lastTrade ? `<t:${Math.floor(lastTrade.completedAt/1000)}:R>` : "—", inline: true },
+          { name: "Open Ticket",      value: openTicket ? `<#${Object.entries(tickets).find(([,t])=>t===openTicket)?.[0] || "??"}>` : "None", inline: true },
         )
-        .setImage(CONFIG.BANNER_URL || null)
-        .setFooter({ text: "Konvert Exchange  •  Live Statistics" })
+        .setFooter({ text: totalTrades === 0 ? "No completed trades yet" : `${totalTrades} verified trade${totalTrades !== 1 ? "s" : ""} on Konvert` })
         .setTimestamp();
 
       return interaction.reply({ embeds: [embed] });
@@ -892,7 +919,7 @@ client.on(Events.InteractionCreate, async interaction => {
             .setThumbnail(COIN_LOGO[coin] || null)
             .setTitle("Price Alert Set")
             .setDescription(`You'll be notified when **${coin}** goes **${direction}** $${target.toLocaleString("en-US")}.`)
-            .setFooter({ text: "Konvert Exchange  •  Price Alerts" }),
+            .setFooter({ text: "Konvert  •  Price Alerts" }),
         ],
         ephemeral: true,
       });
@@ -1043,12 +1070,9 @@ client.on(Events.InteractionCreate, async interaction => {
       tickets[interaction.channel.id].completedAt = Date.now();
       save("tickets", tickets);
 
-      // Update stats
-      const stats = load("stats");
-      stats.totalCompleted = (stats.totalCompleted || 0) + 1;
-      stats.totalVolume    = (stats.totalVolume    || 0) + (ticket.amountUSD || 0);
-      stats.lastTrade      = Date.now();
-      save("stats", stats);
+      // Update per-user stats in tickets.json (stats are derived from tickets)
+      // ticket already saved above with status=vouched, completedAt, amountUSD, method, coin
+      // /stats command reads directly from tickets so no separate tracking needed
 
       // Completion message in ticket
       const m = getMethod(ticket.method);
@@ -1056,28 +1080,23 @@ client.on(Events.InteractionCreate, async interaction => {
         embeds: [
           new EmbedBuilder()
             .setColor(0x00C896)
-            .setTitle("✅ Trade Complete!")
-            .setDescription(
-              `Trade marked complete by <@${interaction.user.id}>.
-
-` +
-              `**Client:** <@${ticket.userId}>
-` +
-              `**Deal:** ${m.emoji} ${m.label} · **${ticket.coin}** · ${fmtUSD(ticket.amountUSD)}
-` +
-              `**Direction:** ${ticket.direction === "send" ? `Sent ${ticket.coin} → Received ${m.label}` : `Sent ${m.label} → Received ${ticket.coin}`}
-
-` +
-              `⭐⭐⭐⭐⭐ vouch has been posted to the vouch channel.
-
-` +
-              `This ticket deletes in **15 seconds**.`
+            .setAuthor({ name: "Konvert", iconURL: CONFIG.LOGO_URL || null })
+            .setTitle("Trade Complete")
+            .addFields(
+              { name: "Client",    value: `<@${ticket.userId}>`,   inline: true },
+              { name: "Method",    value: m.label,                  inline: true },
+              { name: "Amount",    value: fmtUSD(ticket.amountUSD), inline: true },
+              { name: "Coin",      value: ticket.coin,              inline: true },
+              { name: "Direction", value: ticket.direction === "send" ? `${ticket.coin} → ${m.label}` : `${m.label} → ${ticket.coin}`, inline: true },
+              { name: "Rating",    value: "★★★★★",                inline: true },
             )
-            .setTimestamp(),
+            .setDescription("Vouch posted. This ticket closes in **15 seconds**.")
+            .setTimestamp()
+            .setFooter({ text: "Konvert" }),
         ],
       });
 
-      setTimeout(() => interaction.channel.delete().catch(() => {}), 15000);
+            setTimeout(() => interaction.channel.delete().catch(() => {}), 15000);
     }
 
     // ── 🔒 Close ticket ──
@@ -1102,11 +1121,11 @@ client.on(Events.InteractionCreate, async interaction => {
         embeds: [
           new EmbedBuilder()
             .setColor(0xFF4444)
-            .setAuthor({ name: "Konvert Exchange", iconURL: CONFIG.LOGO_URL || null })
+            .setAuthor({ name: "Konvert", iconURL: CONFIG.LOGO_URL || null })
             .setTitle("Ticket Closed")
             .setDescription("This ticket has been closed.\nTranscript saved. Deleting in 15 seconds.")
             .setTimestamp()
-            .setFooter({ text: "Konvert Exchange" }),
+            .setFooter({ text: "Konvert" }),
         ],
       });
 
@@ -1192,8 +1211,7 @@ client.on(Events.InteractionCreate, async interaction => {
               { name: "Fee",                 value: `**${fmtUSD(feeRecv)}**`,         inline: true },
               { name: "You Receive",         value: `**${fmtUSD(raw - feeRecv)}**`,   inline: true },
             )
-            .setDescription("Here\'s a fee estimate for your trade amount. Note that fees shown are **estimates** — the final fee may vary slightly depending on your specific deal and any negotiation with your exchanger.\n\u200b")
-            .setFooter({ text: "Head to #exchange to open a ticket  •  Konvert Exchange" }),
+            .setFooter({ text: "Estimate only — final fee may vary slightly  •  Konvert" }),
         ],
         ephemeral: true,
       });
@@ -1241,12 +1259,12 @@ client.on(Events.InteractionCreate, async interaction => {
 
       const confirmEmbed = new EmbedBuilder()
         .setColor(CONFIG.COLOR)
-        .setAuthor({ name: "Konvert Exchange", iconURL: CONFIG.LOGO_URL || null })
+        .setAuthor({ name: "Konvert", iconURL: CONFIG.LOGO_URL || null })
         .setThumbnail(coinLogo)
         .setTitle("Confirm Your Exchange")
         .setDescription("Please review your exchange details below before confirming.\nOnce confirmed a private ticket will be opened for you.\n\u200b")
         .addFields(
-          { name: "Payment Method", value: `${m.emoji}  ${m.label}`,      inline: true },
+          { name: "Payment Method", value: m.label,                        inline: true },
           { name: "Crypto",         value: coin,                            inline: true },
           { name: "Direction",      value: direction === "send" ? "Fiat → Crypto" : "Crypto → Fiat", inline: true },
           { name: "You Send",       value: sendLabel,                       inline: true },
@@ -1254,7 +1272,7 @@ client.on(Events.InteractionCreate, async interaction => {
           { name: "Est. Fee",       value: `${rate}% — ${fmtUSD(fee)}`,    inline: true },
           { name: "Your Info",      value: `||${walletInf}||`,              inline: false },
         )
-        .setFooter({ text: "Fee shown is an estimate and may vary slightly  •  Konvert Exchange" });
+        .setFooter({ text: "Estimate only — final fee may vary  •  Konvert" });
 
       const confirmRow = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
@@ -1440,7 +1458,7 @@ client.on(Events.MessageCreate, async message => {
         { name: "Market Cap", value: mcap,                         inline: true },
         { name: "24h Volume", value: vol,                          inline: true },
       )
-      .setFooter({ text: `Konvert Exchange  •  Type $${coin} anytime for a live update` })
+      .setFooter({ text: `Type $${coin} in any channel for a live update  •  Konvert` })
       .setTimestamp();
 
     await message.reply({ embeds: [embed] });
@@ -1470,7 +1488,7 @@ async function autoRates(guild) {
 client.once(Events.ClientReady, async () => {
   console.log(`✅ Konvert Bot v3 online — ${client.user.tag}`);
   client.user.setPresence({
-    activities: [{ name: "Konvert Exchange", type: 3 }],
+    activities: [{ name: "Konvert", type: 3 }],
     status: "online",
   });
   const guild = client.guilds.cache.get(CONFIG.GUILD_ID);
@@ -1504,7 +1522,7 @@ client.once(Events.ClientReady, async () => {
                     `Current price: **$${price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}**\n\n` +
                     `Head to <#${CONFIG.EXCHANGE_CHANNEL}> to open a trade.`
                   )
-                  .setFooter({ text: "Konvert Exchange  •  Price Alerts" })
+                  .setFooter({ text: "Konvert  •  Price Alerts" })
                   .setTimestamp(),
               ],
             });
