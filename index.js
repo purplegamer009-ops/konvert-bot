@@ -422,12 +422,8 @@ async function createTicket(interaction, method, direction, amountUSD, coin, wal
     ? `**${coin}** — ${fmtUSD(amountUSD)}`
     : `**${fmtUSD(amountUSD)}** via ${m.label}`;
   const receiveLabel = direction === "send"
-    ? `**${fmtUSD(receiveU)}** via ${m.label}`
-    : coinAmt ? `**${coinAmt} ${coin}**` : `**${fmtUSD(receiveU)} worth of ${coin}**`;
-
-  // ── Deposit address ──
-  const wallets     = load("wallets");
-  const depositAddr = direction === "send" ? (wallets[coin] || "Ask staff") : null;
+    ? (receiveU < 5 ? "To be discussed" : `**${fmtUSD(receiveU)}** via ${m.label}`)
+    : (receiveU < 5 ? "To be discussed" : coinAmt ? `**${coinAmt} ${coin}**` : `**${fmtUSD(receiveU)} worth of ${coin}**`);
 
   // ── Main ticket embed ──
   const ticketEmbed = new EmbedBuilder()
@@ -450,13 +446,7 @@ async function createTicket(interaction, method, direction, amountUSD, coin, wal
       },
     );
 
-  if (depositAddr) {
-    ticketEmbed.addFields({
-      name:  `Konvert ${coin} Deposit Address`,
-      value: `\`${depositAddr}\``,
-      inline: false,
-    });
-  }
+
 
   if (notes) ticketEmbed.addFields({ name: "Notes", value: notes, inline: false });
 
@@ -465,18 +455,17 @@ async function createTicket(interaction, method, direction, amountUSD, coin, wal
     .setTimestamp()
     .setFooter({ text: `Ticket opened  •  Konvert Exchange` });
 
-  // ── Middleman / rules embed ──
+  // ── Rules embed ──
   const rulesEmbed = new EmbedBuilder()
     .setColor(0xFF4444)
     .setTitle("Important — Please Read")
     .setDescription(
-      `**Use a middleman for all trades.**\n` +
-      `Do not go first unless explicitly advised by the owner.\n\n` +
-      `**Do not send any funds until staff confirms the details above.**\n` +
-      `If anything looks wrong, say something before proceeding.\n\n` +
-      `Konvert is not responsible for funds sent to unconfirmed addresses.`
+      `**A middleman is required for all trades.**\n` +
+      `Do not go first under any circumstances unless **@jswaps** or **@3uce** explicitly says otherwise.\n\n` +
+      `**Do not send any funds until your exchanger and a middleman are confirmed.**\n` +
+      `If anything looks incorrect, speak up before proceeding.`
     )
-    .setFooter({ text: "Konvert Exchange  •  Stay safe" });
+    .setFooter({ text: "Konvert Exchange" });
 
   // ── Buttons ──
   const ticketButtons = new ActionRowBuilder().addComponents(
@@ -581,26 +570,53 @@ async function postVouchEmbed(guild, completedBy, ticket) {
 async function buildRatesEmbed() {
   const ids = CONFIG.COINS.map(c => GECKO_ID[c]||c.toLowerCase()).join(",");
   const res = await fetch(
-    `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd,cad,eur&include_24hr_change=true`
+    `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd,cad&include_24hr_change=true`
   );
   const prices = await res.json();
-  const embed  = baseEmbed("📈 Konvert Live Rates")
-    .setDescription(`Live prices via CoinGecko · Konvert fees: **9%→5.5%** (tiered by amount)\n\u200b`);
 
-  for (const coin of CONFIG.COINS) {
+  // Build clean price rows
+  const rows = CONFIG.COINS.map(coin => {
     const d = prices[GECKO_ID[coin]||coin.toLowerCase()];
-    if (!d) continue;
-    const ch  = d.usd_24h_change?.toFixed(2);
-    const arr = Number(ch) >= 0 ? "🟢" : "🔴";
-    embed.addFields({
-      name:   `${COIN_EMOJI[coin]||"🪙"} ${coin}`,
-      value:  `**$${d.usd.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}**\n${arr} ${ch}% (24h)`,
-      inline: true,
-    });
-  }
+    if (!d) return null;
+    const usd    = d.usd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const cad    = d.cad.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const change = parseFloat(d.usd_24h_change || 0).toFixed(2);
+    const arrow  = Number(change) >= 0 ? "▲" : "▼";
+    return { coin, usd, cad, change, arrow };
+  }).filter(Boolean);
 
-  embed.setFooter({ text: "Konvert Exchange · Updates every 10 min" });
-  return embed;
+  const priceLines = rows.map(r =>
+    `\`${r.coin.padEnd(5)}\`  **$${r.usd}**  ·  CA$${r.cad}  ·  ${r.arrow} ${r.change}%`
+  ).join("\n");
+
+  return new EmbedBuilder()
+    .setColor(CONFIG.COLOR)
+    .setAuthor({ name: "Konvert Exchange", iconURL: CONFIG.LOGO_URL || null })
+    .setTitle("Live Rates")
+    .setDescription(
+      priceLines +
+      "\n\u200b"
+    )
+    .addFields(
+      {
+        name: "Our Fees",
+        value:
+          "`Under $150 ` — 9% fiat→crypto  ·  8% crypto→fiat\n" +
+          "`$150–$500  ` — 7% fiat→crypto  ·  6% crypto→fiat\n" +
+          "`$500–$1000 ` — 6% fiat→crypto  ·  5% crypto→fiat\n" +
+          "`$1000+     ` — 5.5% fiat→crypto  ·  4.5% crypto→fiat\n" +
+          "`Min fee    ` — **$5 on any deal**",
+        inline: false,
+      },
+      {
+        name: "Open a Ticket",
+        value: `Head to <#${process.env.EXCHANGE_CHANNEL_ID || CONFIG.TICKET_CATEGORY || ""}> and click **Exchange Now** to get started.`,
+        inline: false,
+      },
+    )
+    .setImage(CONFIG.BANNER_URL || null)
+    .setFooter({ text: "Rates update every 10 min  •  Konvert Exchange" })
+    .setTimestamp();
 }
 
 // ════════════════════════════════════════════════════════════════
