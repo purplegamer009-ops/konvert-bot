@@ -150,7 +150,7 @@ async function getUSDPrice(coin) {
 function baseEmbed(title) {
   return new EmbedBuilder()
     .setColor(CONFIG.COLOR).setTitle(title).setTimestamp()
-    .setThumbnail(CONFIG.LOGO_URL || null);
+    .setThumbnail("https://i.imgur.com/GXwsQv0.png");
 }
 
 function logAction(guild, msg) {
@@ -166,7 +166,7 @@ function logAction(guild, msg) {
 function buildMainExchangeEmbed() {
   return new EmbedBuilder()
     .setColor(CONFIG.COLOR)
-    .setAuthor({ name: "Konvert", iconURL: CONFIG.LOGO_URL || null })
+    .setAuthor({ name: "Konvert", iconURL: "https://i.imgur.com/GXwsQv0.png" })
     .setDescription(
       `## Fast. Safe. Simple.
 ` +
@@ -190,7 +190,7 @@ function buildMainExchangeEmbed() {
       { name: "Speed",  value: "Usually < 10 min\nOften faster", inline: true },
       { name: "Privacy", value: "Private tickets\nVerified staff", inline: true },
     )
-    .setImage("https://i.imgur.com/VHBuITj.gif")
+    .setImage("https://i.imgur.com/1bcQqKx.png")
     .setFooter({ text: "Konvert  •  Min fee $5" });
 }
 
@@ -299,6 +299,32 @@ const COMMANDS = [
     .addStringOption(o => o.setName("direction").setDescription("above or below").setRequired(true)
       .addChoices({ name: "Above", value: "above" }, { name: "Below", value: "below" })),
 
+  // /leaderboard
+  new SlashCommandBuilder()
+    .setName("leaderboard")
+    .setDescription("View the top traders on Konvert by volume"),
+
+  // /market
+  new SlashCommandBuilder()
+    .setName("market")
+    .setDescription("Get a full crypto market summary — top movers and sentiment"),
+
+  // /lookup
+  new SlashCommandBuilder()
+    .setName("lookup")
+    .setDescription("Look up any past ticket by ticket channel name")
+    .addStringOption(o => o.setName("channel").setDescription("Ticket channel name (e.g. paypal-250-zuman)").setRequired(true)),
+
+  // /withdraw
+  new SlashCommandBuilder()
+    .setName("wallets")
+    .setDescription("View Konvert deposit wallet addresses for all supported coins"),
+
+  // /mm
+  new SlashCommandBuilder()
+    .setName("mm")
+    .setDescription("View trusted middlemen and how to pick one for your trade"),
+
 ].map(c => c.toJSON());
 
 async function registerCommands() {
@@ -327,7 +353,7 @@ const client = new Client({
 function step1Embed() {
   return new EmbedBuilder()
     .setColor(CONFIG.COLOR)
-    .setAuthor({ name: "Konvert", iconURL: CONFIG.LOGO_URL || null })
+    .setAuthor({ name: "Konvert", iconURL: "https://i.imgur.com/GXwsQv0.png" })
     .setTitle("Step 1  —  Payment Method")
     .setDescription(
       "Select the payment method you want to use for this exchange.\n\n" +
@@ -361,7 +387,7 @@ function step2Embed(method) {
   const m = getMethod(method);
   return new EmbedBuilder()
     .setColor(CONFIG.COLOR)
-    .setAuthor({ name: "Konvert", iconURL: CONFIG.LOGO_URL || null })
+    .setAuthor({ name: "Konvert", iconURL: "https://i.imgur.com/GXwsQv0.png" })
     .setTitle(`Step 2  —  ${m.label}`)
     .setDescription(
       `Choose your direction.\n\n` +
@@ -471,7 +497,7 @@ async function createTicket(interaction, method, direction, amountUSD, coin, wal
   const coinLogo = COIN_LOGO[coin] || null;
   const ticketEmbed = new EmbedBuilder()
     .setColor(CONFIG.COLOR)
-    .setAuthor({ name: "Konvert", iconURL: CONFIG.LOGO_URL || null })
+    .setAuthor({ name: "Konvert", iconURL: "https://i.imgur.com/GXwsQv0.png" })
     .setTitle(`${m.label} Exchange`)
     .setThumbnail(coinLogo)
     .setDescription(
@@ -587,8 +613,8 @@ async function postVouchEmbed(guild, completedBy, ticket) {
     : `Sent **${m.label}** → Received **${ticket.coin}**`;
 
   const embed = new EmbedBuilder()
-    .setColor(0x00C896)
-    .setAuthor({ name: "Konvert", iconURL: CONFIG.LOGO_URL || null })
+    .setColor(CONFIG.COLOR)
+    .setAuthor({ name: "Konvert", iconURL: "https://i.imgur.com/GXwsQv0.png" })
     .setTitle("✅  Trade Verified")
     .setDescription(`${dirLabel}
 ​`)
@@ -635,7 +661,7 @@ async function buildRatesEmbed() {
 
   return new EmbedBuilder()
     .setColor(CONFIG.COLOR)
-    .setAuthor({ name: "Konvert", iconURL: CONFIG.LOGO_URL || null })
+    .setAuthor({ name: "Konvert", iconURL: "https://i.imgur.com/GXwsQv0.png" })
     .setTitle("Live Rates")
     .setThumbnail(COIN_LOGO["BTC"] || null)
     .setDescription(priceLines + "\n\u200b")
@@ -644,7 +670,7 @@ async function buildRatesEmbed() {
       value:
         `Head to <#${CONFIG.EXCHANGE_CHANNEL}> and tap **Exchange Now**.\n` +
         `Use the **Calculate Fee** button for an instant cost estimate.\n` +
-        `*Type \`$BTC\`, \`$ETH\`, \`$SOL\` etc. in any channel for a detailed breakdown.*`,
+        `*Type $BTC, $ETH, $SOL etc. in any channel for a detailed breakdown.*`,
       inline: false,
     })
     .setImage("https://i.imgur.com/SF8G50a.png")
@@ -748,17 +774,11 @@ client.on(Events.InteractionCreate, async interaction => {
               {
                 name: "📊 Full Fee Tiers",
                 value:
-                  `\`Under $150  \` → fiat→crypto **9%**  ·  crypto→fiat **8%**
-` +
-                  `\`$150–$350  \` → **7%** fiat→crypto · **6%** crypto→fiat
-` +
-                  `\`$350–$500  \` → **7%** fiat→crypto · **6%** crypto→fiat
-` +
-                  `\`$500–$1000 \` → **6%** fiat→crypto · **5%** crypto→fiat
-` +
-                  `\`$1000+      \` → fiat→crypto **5.5%**  ·  crypto→fiat **4.5%**
-` +
-                  `\`Min fee\`   → **$5.00** on any deal`,
+                  "Under $150  → fiat→crypto **9%**  ·  crypto→fiat **8%**\n" +
+                  "$150–$500   → fiat→crypto **7%**  ·  crypto→fiat **6%**\n" +
+                  "$500–$1000  → fiat→crypto **6%**  ·  crypto→fiat **5%**\n" +
+                  "$1000+      → fiat→crypto **5.5%**  ·  crypto→fiat **4.5%**\n" +
+                  "Min fee     → **$5.00** on any deal",
                 inline: false,
               },
             )
@@ -846,6 +866,164 @@ client.on(Events.InteractionCreate, async interaction => {
       return interaction.reply({ content: `✅ **${target.tag}** removed from blacklist.`, ephemeral: true });
     }
 
+    // /leaderboard
+    if (cmd === "leaderboard") {
+      const tickets  = load("tickets");
+      const all      = Object.values(tickets).filter(t => t.status === "vouched" && t.amountUSD);
+      const byUser   = {};
+      all.forEach(t => {
+        if (!byUser[t.userId]) byUser[t.userId] = { userId: t.userId, userTag: t.userTag, volume: 0, trades: 0 };
+        byUser[t.userId].volume += t.amountUSD;
+        byUser[t.userId].trades += 1;
+      });
+      const ranked = Object.values(byUser).sort((a, b) => b.volume - a.volume).slice(0, 10);
+
+      if (ranked.length === 0) {
+        return interaction.reply({ content: "No completed trades yet.", ephemeral: true });
+      }
+
+      const medals = ["🥇", "🥈", "🥉"];
+      const lines  = ranked.map((u, i) =>
+        `${medals[i] || `**${i+1}.**`}  <@${u.userId}>  —  **${fmtUSD(u.volume)}**  ·  ${u.trades} trade${u.trades !== 1 ? "s" : ""}`
+      ).join("\n");
+
+      const embed = new EmbedBuilder()
+        .setColor(CONFIG.COLOR)
+        .setAuthor({ name: "Konvert", iconURL: "${LOGO}" })
+        .setTitle("Top Traders")
+        .setDescription(lines + "\n\u200b")
+        .setThumbnail("${LOGO}")
+        .setImage("https://i.imgur.com/1bcQqKx.png")
+        .setFooter({ text: "Ranked by total volume  •  Konvert" })
+        .setTimestamp();
+
+      return interaction.reply({ embeds: [embed] });
+    }
+
+    // /market
+    if (cmd === "market") {
+      await interaction.deferReply();
+      try {
+        const ids  = CONFIG.COINS.map(c => GECKO_ID[c]||c.toLowerCase()).join(",");
+        const res  = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`);
+        const data = await res.json();
+
+        const rows = CONFIG.COINS.map(coin => {
+          const d = data[GECKO_ID[coin]||coin.toLowerCase()];
+          if (!d) return null;
+          return { coin, price: d.usd, change: parseFloat(d.usd_24h_change||0) };
+        }).filter(Boolean);
+
+        const gainers = [...rows].sort((a,b) => b.change - a.change).slice(0, 3);
+        const losers  = [...rows].sort((a,b) => a.change - b.change).slice(0, 3);
+        const avgChange = (rows.reduce((s,r) => s + r.change, 0) / rows.length).toFixed(2);
+        const sentiment = parseFloat(avgChange) >= 0 ? "Bullish 📈" : "Bearish 📉";
+
+        const gainerLines = gainers.map(r => `\`${r.coin.padEnd(5)}\` **▲ ${r.change.toFixed(2)}%**  $${r.price.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`).join("\n");
+        const loserLines  = losers.map(r  => `\`${r.coin.padEnd(5)}\` **▼ ${Math.abs(r.change).toFixed(2)}%**  $${r.price.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`).join("\n");
+
+        const embed = new EmbedBuilder()
+          .setColor(CONFIG.COLOR)
+          .setAuthor({ name: "Konvert", iconURL: "${LOGO}" })
+          .setTitle("Market Summary")
+          .setThumbnail("${LOGO}")
+          .addFields(
+            { name: "Market Sentiment", value: `**${sentiment}**  ·  Avg 24h: **${avgChange}%**`, inline: false },
+            { name: "Top Gainers",      value: gainerLines,                                         inline: true  },
+            { name: "Top Losers",       value: loserLines,                                          inline: true  },
+          )
+          .setImage("https://i.imgur.com/SF8G50a.png")
+          .setFooter({ text: "Live market data  •  Konvert" })
+          .setTimestamp();
+
+        return interaction.editReply({ embeds: [embed] });
+      } catch (e) {
+        return interaction.editReply("❌ Could not fetch market data right now.");
+      }
+    }
+
+    // /lookup
+    if (cmd === "lookup") {
+      const query   = interaction.options.getString("channel").toLowerCase().trim();
+      const tickets = load("tickets");
+      const match   = Object.entries(tickets).find(([id, t]) => {
+        const chName = interaction.guild.channels.cache.get(id)?.name || "";
+        return chName.includes(query) || id === query;
+      });
+
+      if (!match) {
+        return interaction.reply({ content: `❌ No ticket found matching **${query}**.`, ephemeral: true });
+      }
+
+      const [channelId, t] = match;
+      const m = getMethod(t.method);
+      const embed = new EmbedBuilder()
+        .setColor(CONFIG.COLOR)
+        .setAuthor({ name: "Konvert", iconURL: "${LOGO}" })
+        .setTitle("Ticket Lookup")
+        .setThumbnail("${LOGO}")
+        .addFields(
+          { name: "Client",    value: `<@${t.userId}>`,                                                inline: true  },
+          { name: "Method",    value: m?.label || t.method,                                             inline: true  },
+          { name: "Status",    value: t.status === "vouched" ? "Completed" : t.status === "open" ? "Open" : "Closed", inline: true },
+          { name: "Amount",    value: fmtUSD(t.amountUSD || 0),                                        inline: true  },
+          { name: "Coin",      value: t.coin || "—",                                                   inline: true  },
+          { name: "Direction", value: t.direction === "send" ? "Fiat → Crypto" : "Crypto → Fiat",     inline: true  },
+          { name: "Opened",    value: t.createdAt ? `<t:${Math.floor(t.createdAt/1000)}:R>` : "—",  inline: true  },
+          { name: "Completed", value: t.completedAt ? `<t:${Math.floor(t.completedAt/1000)}:R>` : "—", inline: true },
+          { name: "Channel",   value: `<#${channelId}>`,                                             inline: true  },
+        )
+        .setFooter({ text: "Konvert  •  Ticket Lookup" })
+        .setTimestamp();
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    // /wallets
+    if (cmd === "wallets") {
+      const w = load("wallets");
+      const fields = Object.entries(w).length
+        ? Object.entries(w).map(([coin, addr]) => ({ name: coin, value: `\`\${addr}\``, inline: true }))
+        : [{ name: "No wallets set", value: "Owner: use /setwallet to add addresses.", inline: false }];
+
+      const embed = new EmbedBuilder()
+        .setColor(CONFIG.COLOR)
+        .setAuthor({ name: "Konvert", iconURL: "${LOGO}" })
+        .setTitle("Deposit Wallets")
+        .setThumbnail("${LOGO}")
+        .setDescription("Send funds **only** to the address confirmed by staff in your ticket.\n\u200b")
+        .addFields(fields)
+        .setFooter({ text: "Always verify addresses with staff before sending  •  Konvert" })
+        .setTimestamp();
+
+      return interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+
+    // /mm
+    if (cmd === "mm") {
+      const embed = new EmbedBuilder()
+        .setColor(CONFIG.COLOR)
+        .setAuthor({ name: "Konvert", iconURL: "${LOGO}" })
+        .setTitle("Middleman Guide")
+        .setThumbnail("${LOGO}")
+        .setDescription(
+          "A **middleman (MM)** is a trusted neutral third party who holds crypto during a trade to protect both sides.\n\n" +
+          "**Why you need one:**\n" +
+          "They prevent scams — neither side can run off with funds because the MM holds them until both confirm.\n\u200b"
+        )
+        .addFields(
+          { name: "How to Pick an MM",   value: "Talk to your exchanger in your ticket and agree on a trusted MM you both know. Konvert supports any reputable third-party MM.", inline: false },
+          { name: "Who Can Be an MM",    value: "Trusted community members, known middlemen services, or verified staff if agreed upon. **Never use an MM suggested only by one side.**", inline: false },
+          { name: "Owner Override Only", value: "The **only** time you skip an MM is if **@jswaps** or **@3uce** explicitly tells you to in your ticket. Anyone else saying this is an impersonator.", inline: false },
+          { name: "Stay Safe",           value: "Staff never DM you first. All MM arrangements happen **in your ticket only**. Never take the conversation to DMs.", inline: false },
+        )
+        .setImage("https://i.imgur.com/mUUxkET.png")
+        .setFooter({ text: "Konvert  •  Trade safely, always" })
+        .setTimestamp();
+
+      return interaction.reply({ embeds: [embed] });
+    }
+
     // /stats
     if (cmd === "stats") {
       const target   = interaction.options.getUser("user") || interaction.user;
@@ -885,7 +1063,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
       const embed = new EmbedBuilder()
         .setColor(CONFIG.COLOR)
-        .setAuthor({ name: "Konvert", iconURL: CONFIG.LOGO_URL || null })
+        .setAuthor({ name: "Konvert", iconURL: "https://i.imgur.com/GXwsQv0.png" })
         .setTitle(isSelf ? "Your Exchange Stats" : `${target.username}'s Exchange Stats`)
         .setThumbnail(avatarURL)
         .addFields(
@@ -900,7 +1078,7 @@ client.on(Events.InteractionCreate, async interaction => {
         .setFooter({ text: totalTrades === 0 ? "No completed trades yet" : `${totalTrades} verified trade${totalTrades !== 1 ? "s" : ""} on Konvert` })
         .setTimestamp();
 
-      embed.setImage("https://i.imgur.com/VHBuITj.gif");
+      embed.setImage("https://i.imgur.com/1bcQqKx.png");
       return interaction.reply({ embeds: [embed] });
     }
 
@@ -1082,7 +1260,7 @@ client.on(Events.InteractionCreate, async interaction => {
         embeds: [
           new EmbedBuilder()
             .setColor(0x00C896)
-            .setAuthor({ name: "Konvert", iconURL: CONFIG.LOGO_URL || null })
+            .setAuthor({ name: "Konvert", iconURL: "https://i.imgur.com/GXwsQv0.png" })
             .setTitle("Trade Complete")
             .addFields(
               { name: "Client",    value: `<@${ticket.userId}>`,   inline: true },
@@ -1124,7 +1302,7 @@ client.on(Events.InteractionCreate, async interaction => {
         embeds: [
           new EmbedBuilder()
             .setColor(0xFF4444)
-            .setAuthor({ name: "Konvert", iconURL: CONFIG.LOGO_URL || null })
+            .setAuthor({ name: "Konvert", iconURL: "https://i.imgur.com/GXwsQv0.png" })
             .setTitle("Ticket Closed")
             .setDescription("This ticket has been closed.\nTranscript saved. Deleting in 15 seconds.")
             .setTimestamp()
@@ -1262,8 +1440,8 @@ client.on(Events.InteractionCreate, async interaction => {
 
       const confirmEmbed = new EmbedBuilder()
         .setColor(CONFIG.COLOR)
-        .setAuthor({ name: "Konvert", iconURL: CONFIG.LOGO_URL || null })
-        .setThumbnail(coinLogo || "https://i.imgur.com/GXwsQv0.mp4")
+        .setAuthor({ name: "Konvert", iconURL: "https://i.imgur.com/GXwsQv0.png" })
+        .setThumbnail(coinLogo || "https://i.imgur.com/GXwsQv0.png")
         .setTitle("Confirm Your Exchange")
         .setDescription("Please review your exchange details below before confirming.\nOnce confirmed a private ticket will be opened for you.\n\u200b")
         .addFields(
