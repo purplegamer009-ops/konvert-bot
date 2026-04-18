@@ -37,7 +37,12 @@ const CONFIG = {
     skrill:   process.env.ROLE_SKRILL,
     revolut:  process.env.ROLE_REVOLUT,
     upi:      process.env.ROLE_UPI,
-    chime:    process.env.ROLE_CHIME,
+    chime:     process.env.ROLE_CHIME,
+    bank:      process.env.ROLE_BANK,
+    iban:      process.env.ROLE_IBAN,
+    giftcard:  process.env.ROLE_GIFTCARD,
+    wire:      process.env.ROLE_WIRE,
+    googlepay: process.env.ROLE_GOOGLEPAY,
   },
 
   TICKET_CATEGORY: process.env.TICKET_CATEGORY_ID,
@@ -54,16 +59,21 @@ const CONFIG = {
 
 // ─── PAYMENT METHODS ─────────────────────────────────────────
 const PAYMENT_METHODS = [
-  { value: "paypal",   label: "PayPal",    emoji: "💸", roleKey: "paypal"   },
-  { value: "cashapp",  label: "Cash App",  emoji: "💵", roleKey: "cashapp"  },
-  { value: "zelle",    label: "Zelle",     emoji: "⚡", roleKey: "zelle"    },
-  { value: "interac",  label: "Interac",   emoji: "🍁", roleKey: "interac"  },
-  { value: "venmo",    label: "Venmo",     emoji: "🔵", roleKey: "venmo"    },
-  { value: "applepay", label: "Apple Pay", emoji: "🍎", roleKey: "applepay" },
-  { value: "skrill",   label: "Skrill",    emoji: "🟣", roleKey: "skrill"   },
-  { value: "revolut",  label: "Revolut",   emoji: "🔷", roleKey: "revolut"  },
-  { value: "upi",      label: "UPI",       emoji: "🪙", roleKey: "upi"      },
-  { value: "chime",    label: "Chime",     emoji: "🟩", roleKey: "chime"    },
+  { value: "paypal",       label: "PayPal",        emoji: "", roleKey: "paypal"   },
+  { value: "cashapp",      label: "Cash App",       emoji: "", roleKey: "cashapp"  },
+  { value: "zelle",        label: "Zelle",          emoji: "", roleKey: "zelle"    },
+  { value: "interac",      label: "Interac",        emoji: "", roleKey: "interac"  },
+  { value: "venmo",        label: "Venmo",          emoji: "", roleKey: "venmo"    },
+  { value: "applepay",     label: "Apple Pay",      emoji: "", roleKey: "applepay" },
+  { value: "skrill",       label: "Skrill",         emoji: "", roleKey: "skrill"   },
+  { value: "revolut",      label: "Revolut",        emoji: "", roleKey: "revolut"  },
+  { value: "upi",          label: "UPI",            emoji: "", roleKey: "upi"      },
+  { value: "chime",        label: "Chime",          emoji: "", roleKey: "chime"    },
+  { value: "bank",         label: "Bank Transfer",  emoji: "", roleKey: "bank"     },
+  { value: "iban",         label: "IBAN / SWIFT",   emoji: "", roleKey: "iban"     },
+  { value: "giftcard",     label: "Gift Card",      emoji: "", roleKey: "giftcard" },
+  { value: "wire",         label: "Wire Transfer",  emoji: "", roleKey: "wire"     },
+  { value: "googlepay",    label: "Google Pay",     emoji: "", roleKey: "googlepay"},
 ];
 
 // ─── STORAGE ─────────────────────────────────────────────────
@@ -178,7 +188,7 @@ function buildMainExchangeEmbed() {
     .addFields(
       {
         name: "Payment Methods",
-        value: PAYMENT_METHODS.map(m => `${m.emoji} **${m.label}**`).join("   "),
+        value: PAYMENT_METHODS.map(m => `**${m.label}**`).join("  ·  "),
         inline: false,
       },
       {
@@ -324,6 +334,10 @@ const COMMANDS = [
   new SlashCommandBuilder()
     .setName("mm")
     .setDescription("View trusted middlemen and how to pick one for your trade"),
+
+  new SlashCommandBuilder()
+    .setName("mine")
+    .setDescription("Try your luck — mine for a free exchange pass. Very rare."),
 
 ].map(c => c.toJSON());
 
@@ -889,11 +903,10 @@ client.on(Events.InteractionCreate, async interaction => {
 
       const embed = new EmbedBuilder()
         .setColor(CONFIG.COLOR)
-        .setAuthor({ name: "Konvert", iconURL: "${LOGO}" })
+        .setAuthor({ name: "Konvert", iconURL: "https://i.imgur.com/GXwsQv0.png" })
         .setTitle("Top Traders")
         .setDescription(lines + "\n\u200b")
-        .setThumbnail("${LOGO}")
-        .setImage("https://i.imgur.com/1bcQqKx.png")
+        .setThumbnail("https://i.imgur.com/GXwsQv0.png")
         .setFooter({ text: "Ranked by total volume  •  Konvert" })
         .setTimestamp();
 
@@ -924,9 +937,9 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const embed = new EmbedBuilder()
           .setColor(CONFIG.COLOR)
-          .setAuthor({ name: "Konvert", iconURL: "${LOGO}" })
+          .setAuthor({ name: "Konvert", iconURL: "https://i.imgur.com/GXwsQv0.png" })
           .setTitle("Market Summary")
-          .setThumbnail("${LOGO}")
+          .setThumbnail("https://i.imgur.com/GXwsQv0.png")
           .addFields(
             { name: "Market Sentiment", value: `**${sentiment}**  ·  Avg 24h: **${avgChange}%**`, inline: false },
             { name: "Top Gainers",      value: gainerLines,                                         inline: true  },
@@ -959,9 +972,9 @@ client.on(Events.InteractionCreate, async interaction => {
       const m = getMethod(t.method);
       const embed = new EmbedBuilder()
         .setColor(CONFIG.COLOR)
-        .setAuthor({ name: "Konvert", iconURL: "${LOGO}" })
+        .setAuthor({ name: "Konvert", iconURL: "https://i.imgur.com/GXwsQv0.png" })
         .setTitle("Ticket Lookup")
-        .setThumbnail("${LOGO}")
+        .setThumbnail("https://i.imgur.com/GXwsQv0.png")
         .addFields(
           { name: "Client",    value: `<@${t.userId}>`,                                                inline: true  },
           { name: "Method",    value: m?.label || t.method,                                             inline: true  },
@@ -988,9 +1001,9 @@ client.on(Events.InteractionCreate, async interaction => {
 
       const embed = new EmbedBuilder()
         .setColor(CONFIG.COLOR)
-        .setAuthor({ name: "Konvert", iconURL: "${LOGO}" })
+        .setAuthor({ name: "Konvert", iconURL: "https://i.imgur.com/GXwsQv0.png" })
         .setTitle("Deposit Wallets")
-        .setThumbnail("${LOGO}")
+        .setThumbnail("https://i.imgur.com/GXwsQv0.png")
         .setDescription("Send funds **only** to the address confirmed by staff in your ticket.\n\u200b")
         .addFields(fields)
         .setFooter({ text: "Always verify addresses with staff before sending  •  Konvert" })
@@ -1003,9 +1016,9 @@ client.on(Events.InteractionCreate, async interaction => {
     if (cmd === "mm") {
       const embed = new EmbedBuilder()
         .setColor(CONFIG.COLOR)
-        .setAuthor({ name: "Konvert", iconURL: "${LOGO}" })
+        .setAuthor({ name: "Konvert", iconURL: "https://i.imgur.com/GXwsQv0.png" })
         .setTitle("Middleman Guide")
-        .setThumbnail("${LOGO}")
+        .setThumbnail("https://i.imgur.com/GXwsQv0.png")
         .setDescription(
           "A **middleman (MM)** is a trusted neutral third party who holds crypto during a trade to protect both sides.\n\n" +
           "**Why you need one:**\n" +
@@ -1024,6 +1037,122 @@ client.on(Events.InteractionCreate, async interaction => {
       return interaction.reply({ embeds: [embed] });
     }
 
+    // /mine — 5x5 grid, find 3 diamonds to win an exchange pass
+    if (cmd === "mine") {
+      const userId = interaction.user.id;
+
+      // 3 hour cooldown
+      if (!client._mineCooldowns) client._mineCooldowns = {};
+      const lastMine  = client._mineCooldowns[userId] || 0;
+      const cooldownMs = 3 * 60 * 60 * 1000;
+      const remaining  = cooldownMs - (Date.now() - lastMine);
+
+      if (remaining > 0) {
+        const hrs  = Math.floor(remaining / 3600000);
+        const mins = Math.ceil((remaining % 3600000) / 60000);
+        const timeStr = hrs > 0 ? `${hrs}h ${mins}m` : `${mins}m`;
+        return interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(CONFIG.COLOR)
+              .setAuthor({ name: "Konvert", iconURL: "https://i.imgur.com/GXwsQv0.png" })
+              .setTitle("Mine — On Cooldown")
+              .setDescription(`Your attempt is cooling down.\nYou can mine again in **${timeStr}**.`)
+              .setFooter({ text: "Konvert Mine  •  Once every 3 hours" }),
+          ],
+          ephemeral: true,
+        });
+      }
+
+      // Set cooldown immediately
+      client._mineCooldowns[userId] = Date.now();
+
+      // Build 5x5 grid — place exactly 3 diamonds randomly
+      // User needs to pick ALL 3 correctly on first try to win
+      // Grid has 25 cells, 3 are diamonds = (3/25) * (2/24) * (1/23) = 0.0435% for perfect 3 picks
+      // We show them the grid visually and they pick via a select menu with cell labels
+
+      const GRID_SIZE = 25; // 5x5
+      const DIAMONDS  = 3;
+
+      // Generate the hidden grid
+      const cells = Array(GRID_SIZE).fill("rock");
+      const diamondPositions = new Set();
+      while (diamondPositions.size < DIAMONDS) {
+        diamondPositions.add(Math.floor(Math.random() * GRID_SIZE));
+      }
+      diamondPositions.forEach(i => { cells[i] = "diamond"; });
+
+      // Store the grid for this user
+      if (!client._mineGames) client._mineGames = {};
+      client._mineGames[userId] = {
+        cells,
+        diamondPositions: [...diamondPositions],
+        picks: [],
+        startedAt: Date.now(),
+      };
+
+      // Build the visual 5x5 grid (all hidden as ⬜)
+      const rows = [];
+      for (let r = 0; r < 5; r++) {
+        let row = "";
+        for (let c = 0; c < 5; c++) {
+          const idx = r * 5 + c;
+          row += `\`${String(idx + 1).padStart(2, "0")}\` `;
+        }
+        rows.push(row.trim());
+      }
+      const gridDisplay = rows.join("\n");
+
+      // Build 3 select menus (one per pick) using strings 01-25
+      const options = Array.from({ length: 25 }, (_, i) => ({
+        label: `Cell ${String(i + 1).padStart(2, "0")}`,
+        value: String(i),
+        description: `Row ${Math.floor(i / 5) + 1}, Column ${(i % 5) + 1}`,
+      }));
+
+      const pick1Row = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId(`mine_pick1_${userId}`)
+          .setPlaceholder("Pick your 1st cell")
+          .addOptions(options.map(o => new StringSelectMenuOptionBuilder().setLabel(o.label).setValue(o.value).setDescription(o.description)))
+      );
+      const pick2Row = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId(`mine_pick2_${userId}`)
+          .setPlaceholder("Pick your 2nd cell")
+          .addOptions(options.map(o => new StringSelectMenuOptionBuilder().setLabel(o.label).setValue(o.value).setDescription(o.description)))
+      );
+      const pick3Row = new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId(`mine_pick3_${userId}`)
+          .setPlaceholder("Pick your 3rd cell")
+          .addOptions(options.map(o => new StringSelectMenuOptionBuilder().setLabel(o.label).setValue(o.value).setDescription(o.description)))
+      );
+
+      const mineEmbed = new EmbedBuilder()
+        .setColor(CONFIG.COLOR)
+        .setAuthor({ name: "Konvert", iconURL: "https://i.imgur.com/GXwsQv0.png" })
+        .setTitle("Konvert Mine")
+        .setDescription(
+          "A **5x5** grid lies before you. Hidden within are **3 diamonds**.\n" +
+          "Select **3 different cells** below. If all 3 are diamonds — you win a **Free Exchange Pass**.\n\u200b"
+        )
+        .addFields({
+          name: "Grid — Select 3 cells below",
+          value: gridDisplay,
+          inline: false,
+        })
+        .setFooter({ text: "Konvert Mine  •  Find all 3 diamonds to win  •  Cooldown: 3 hours" })
+        .setTimestamp();
+
+      return interaction.reply({
+        embeds: [mineEmbed],
+        components: [pick1Row, pick2Row, pick3Row],
+        ephemeral: true,
+      });
+    }
+
     // /stats
     if (cmd === "stats") {
       const target   = interaction.options.getUser("user") || interaction.user;
@@ -1036,8 +1165,6 @@ client.on(Events.InteractionCreate, async interaction => {
       const totalTrades  = userTickets.filter(t => t.status === "vouched").length;
       const totalVolume  = userTickets.filter(t => t.status === "vouched").reduce((s, t) => s + (t.amountUSD || 0), 0);
       const avgDeal      = totalTrades > 0 ? totalVolume / totalTrades : 0;
-      const openTicket   = userTickets.find(t => t.status === "open");
-
       // Method breakdown
       const methods = {};
       userTickets.filter(t => t.status === "vouched").forEach(t => {
@@ -1053,10 +1180,6 @@ client.on(Events.InteractionCreate, async interaction => {
       const topCoin = Object.entries(coins).sort((a,b) => b[1]-a[1])[0];
 
       // Last trade date
-      const lastTrade = userTickets
-        .filter(t => t.completedAt)
-        .sort((a,b) => b.completedAt - a.completedAt)[0];
-
       const isSelf = target.id === interaction.user.id;
       const member = await interaction.guild.members.fetch(target.id).catch(() => null);
       const avatarURL = target.displayAvatarURL({ size: 64 });
@@ -1064,16 +1187,14 @@ client.on(Events.InteractionCreate, async interaction => {
       const embed = new EmbedBuilder()
         .setColor(CONFIG.COLOR)
         .setAuthor({ name: "Konvert", iconURL: "https://i.imgur.com/GXwsQv0.png" })
-        .setTitle(isSelf ? "Your Exchange Stats" : `${target.username}'s Exchange Stats`)
+        .setTitle(isSelf ? "Your Exchange Stats" : `${target.username}'s Stats`)
         .setThumbnail(avatarURL)
         .addFields(
           { name: "Completed Trades", value: `**${totalTrades}**`,                                inline: true },
           { name: "Total Volume",     value: totalVolume > 0 ? `**${fmtUSD(totalVolume)}**` : "—", inline: true },
           { name: "Avg Deal Size",    value: avgDeal > 0 ? `**${fmtUSD(avgDeal)}**` : "—",        inline: true },
-          { name: "Favourite Method", value: topMethod ? `**${getMethod(topMethod[0])?.label || topMethod[0]}** (${topMethod[1]} trades)` : "—", inline: true },
-          { name: "Favourite Coin",   value: topCoin ? `**${topCoin[0]}** (${topCoin[1]} trades)` : "—", inline: true },
-          { name: "Last Trade",       value: lastTrade ? `<t:${Math.floor(lastTrade.completedAt/1000)}:R>` : "—", inline: true },
-          { name: "Open Ticket",      value: openTicket ? `<#${Object.entries(tickets).find(([,t])=>t===openTicket)?.[0] || "??"}>` : "None", inline: true },
+          { name: "Top Method",       value: topMethod ? `**${getMethod(topMethod[0])?.label || topMethod[0]}** (${topMethod[1]})` : "—", inline: true },
+          { name: "Top Coin",         value: topCoin ? `**${topCoin[0]}** (${topCoin[1]} trades)` : "—", inline: true },
         )
         .setFooter({ text: totalTrades === 0 ? "No completed trades yet" : `${totalTrades} verified trade${totalTrades !== 1 ? "s" : ""} on Konvert` })
         .setTimestamp();
@@ -1107,12 +1228,151 @@ client.on(Events.InteractionCreate, async interaction => {
   }
 
   // ── STRING SELECT — Method chosen ───────────────────────────
-  if (interaction.isStringSelectMenu() && interaction.customId === "select_method") {
-    const method = interaction.values[0];
-    return interaction.update({
-      embeds:     [step2Embed(method)],
-      components: step2Components(method),
-    });
+  if (interaction.isStringSelectMenu()) {
+
+    // ── Exchange method selection ──
+    if (interaction.customId === "select_method") {
+      const method = interaction.values[0];
+      return interaction.update({
+        embeds:     [step2Embed(method)],
+        components: step2Components(method),
+      });
+    }
+
+    // ── Mine picks ──
+    if (interaction.customId.startsWith("mine_pick")) {
+      const parts  = interaction.customId.split("_"); // mine_pick1_USERID
+      const pickNo = parseInt(parts[2]);              // 1, 2, or 3
+      const userId = parts[3];
+
+      // Only the user who started this game
+      if (interaction.user.id !== userId) {
+        return interaction.reply({ content: "This isn't your mine game.", ephemeral: true });
+      }
+
+      const game = client._mineGames?.[userId];
+      if (!game) {
+        return interaction.reply({ content: "No active mine game found. Run /mine to start.", ephemeral: true });
+      }
+
+      const pickedCell = parseInt(interaction.values[0]);
+
+      // Store pick
+      if (!game.picks) game.picks = [];
+
+      // Check for duplicate pick
+      if (game.picks.includes(pickedCell)) {
+        return interaction.reply({ content: `You already picked cell **${pickedCell + 1}**. Choose a different one.`, ephemeral: true });
+      }
+
+      game.picks.push(pickedCell);
+
+      // If all 3 picks made — resolve the game
+      if (game.picks.length === 3) {
+        delete client._mineGames[userId];
+
+        const diamondSet  = new Set(game.diamondPositions);
+        const correctPicks = game.picks.filter(p => diamondSet.has(p));
+        const allCorrect  = correctPicks.length === 3;
+
+        // Build reveal grid
+        const revealRows = [];
+        for (let r = 0; r < 5; r++) {
+          let row = "";
+          for (let c = 0; c < 5; c++) {
+            const idx = r * 5 + c;
+            if (diamondSet.has(idx) && game.picks.includes(idx)) {
+              row += "💎"; // picked correctly
+            } else if (diamondSet.has(idx)) {
+              row += "🟦"; // diamond you missed
+            } else if (game.picks.includes(idx)) {
+              row += "💥"; // wrong pick
+            } else {
+              row += "⬛"; // untouched rock
+            }
+          }
+          revealRows.push(row);
+        }
+        const revealGrid = revealRows.join("\n");
+
+        if (allCorrect) {
+          // Winner
+          if (!client._exchangePasses) client._exchangePasses = {};
+          if (!client._exchangePasses[userId]) client._exchangePasses[userId] = 0;
+          client._exchangePasses[userId] += 1;
+
+          // DM owners
+          for (const ownerId of CONFIG.OWNER_IDS.filter(Boolean)) {
+            try {
+              const owner = await client.users.fetch(ownerId);
+              await owner.send({
+                embeds: [
+                  new EmbedBuilder()
+                    .setColor(0xFFD700)
+                    .setAuthor({ name: "Konvert Mine — Winner", iconURL: "https://i.imgur.com/GXwsQv0.png" })
+                    .setTitle("Exchange Pass Won")
+                    .addFields(
+                      { name: "User",   value: `<@${userId}> (${interaction.user.tag})`, inline: true },
+                      { name: "Passes", value: `**${client._exchangePasses[userId]}**`,  inline: true },
+                    )
+                    .setDescription("This user found all 3 diamonds and earned a free exchange pass.")
+                    .setTimestamp(),
+                ],
+              });
+            } catch {}
+          }
+
+          return interaction.update({
+            embeds: [
+              new EmbedBuilder()
+                .setColor(0xFFD700)
+                .setAuthor({ name: "Konvert", iconURL: "https://i.imgur.com/GXwsQv0.png" })
+                .setTitle("All 3 Diamonds Found")
+                .setDescription(
+                  revealGrid + "\n\u200b\n" +
+                  "You found every diamond. A **Free Exchange Pass** has been awarded to you.\n" +
+                  "Open a ticket and let staff know — they have been notified."
+                )
+                .addFields(
+                  { name: "Result",     value: "**Pass Awarded**",        inline: true },
+                  { name: "Pass Holder", value: `<@${userId}>`,           inline: true },
+                )
+                .setFooter({ text: "Konvert Mine  •  Screenshot this as proof" })
+                .setTimestamp(),
+            ],
+            components: [],
+          });
+
+        } else {
+          // Lose — show reveal
+          return interaction.update({
+            embeds: [
+              new EmbedBuilder()
+                .setColor(CONFIG.COLOR)
+                .setAuthor({ name: "Konvert", iconURL: "https://i.imgur.com/GXwsQv0.png" })
+                .setTitle("Mine Result")
+                .setDescription(
+                  revealGrid + "\n\u200b\n" +
+                  `You found **${correctPicks.length} of 3** diamonds.\n` +
+                  "💎 = Diamond found  ·  🟦 = Missed diamond  ·  💥 = Wrong pick  ·  ⬛ = Untouched"
+                )
+                .addFields(
+                  { name: "Correct",  value: `**${correctPicks.length} / 3**`, inline: true },
+                  { name: "Result",   value: "No pass awarded",                inline: true },
+                  { name: "Next Try", value: "In **3 hours**",                 inline: true },
+                )
+                .setFooter({ text: "Konvert Mine  •  Try again in 3 hours" })
+                .setTimestamp(),
+            ],
+            components: [],
+          });
+        }
+
+      } else {
+        // Not all 3 picked yet — acknowledge the pick silently
+        return interaction.reply({ content: `Pick ${pickNo} recorded. Choose your remaining ${3 - game.picks.length} cell${game.picks.length < 2 ? "s" : ""}.`, ephemeral: true });
+      }
+    }
   }
 
   // ── BUTTONS ─────────────────────────────────────────────────
