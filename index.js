@@ -198,6 +198,8 @@ const COMMANDS = [
   new SlashCommandBuilder().setName("postinfo").setDescription("[Owner] Post the Info embed in this channel").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("posttos").setDescription("[Owner] Post the Terms of Service embed in this channel").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("postlinks").setDescription("[Owner] Post the Official Links embed in this channel").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("lookup").setDescription("[Owner] Look up a past ticket by channel name").addStringOption(o=>o.setName("name").setDescription("Ticket channel name").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("uptime").setDescription("Check how long the bot has been running"),
 ].map(c => c.toJSON());
 
 async function registerCommands() {
@@ -230,9 +232,9 @@ function mainEmbed() {
 }
 function mainButtons() {
   return [new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("btn_exchange_now").setLabel("Exchange Now").setEmoji("✉️").setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId("btn_fee_calc").setLabel("Calculate Fee").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("btn_rates_quick").setLabel("Live Rates").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("btn_exchange_now").setLabel("Exchange Now").setEmoji("📩").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("btn_fee_calc").setLabel("Calculate Fee").setEmoji("💰").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("btn_rates_quick").setLabel("Live Rates").setEmoji("📈").setStyle(ButtonStyle.Secondary),
   )];
 }
 
@@ -382,7 +384,7 @@ async function createTicket(interaction, method, direction, amountUSD, coin, wal
   let ch;
   try {
     ch = await guild.channels.create({
-      name:`${m.value}-${Math.round(amountUSD)}-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,12)}`,
+      name:`${m.value}-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,4)}`,
       type:ChannelType.GuildText, parent:CONFIG.TICKET_CATEGORY||null, permissionOverwrites:perms,
     });
   } catch (err) {
@@ -415,8 +417,8 @@ async function createTicket(interaction, method, direction, amountUSD, coin, wal
     .setImage(IMG.RULES).setFooter({ text:"Konvert  •  Stay safe, stay in this ticket" });
 
   const btns = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("btn_done").setLabel("Mark Trade Complete").setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId("btn_close").setLabel("Close Ticket").setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId("btn_done").setLabel("Mark Trade Complete").setEmoji("✅").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId("btn_close").setLabel("Close Ticket").setEmoji("🔒").setStyle(ButtonStyle.Danger),
   );
   await ch.send({ content:`<@${user.id}>`, embeds:[ticketEmbed, rulesEmbed], components:[btns] });
   const pings = [];
@@ -1009,6 +1011,50 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.reply({ embeds:[base("Exchange Pass Holders").setThumbnail(IMG.LOGO).setDescription(lines).setFooter({ text:"Konvert Mine  •  Won by finding all 3 diamonds" })], ephemeral:true });
       }
 
+      // /lookup -- find a past ticket by name
+      if (cmd === "lookup") {
+        const query   = interaction.options.getString("name").toLowerCase().trim();
+        const tickets = load("tickets");
+        const match   = Object.entries(tickets).find(([id, t]) => {
+          const chName = interaction.guild.channels.cache.get(id)?.name || "";
+          return chName.includes(query) || id === query;
+        });
+        if (!match) {
+          return interaction.reply({ content:`No ticket found matching **${query}**.`, ephemeral:true });
+        }
+        const [channelId, t] = match;
+        const m = getMethod(t.method);
+        const statusEmoji = t.status==="vouched"?"✅":t.status==="open"?"🟡":"🔴";
+        return interaction.reply({ embeds:[base("Ticket Lookup").setThumbnail(IMG.LOGO)
+          .addFields(
+            { name:"Client",    value:`<@${t.userId}>`,                                                   inline:true },
+            { name:"Status",    value:`${statusEmoji} **${t.status==="vouched"?"Completed":t.status==="open"?"Open":"Closed"}**`, inline:true },
+            { name:"Method",    value:m?.label||t.method,                                                 inline:true },
+            { name:"Amount",    value:fmtUSD(t.amountUSD||0),                                            inline:true },
+            { name:"Coin",      value:t.coin||"—",                                                       inline:true },
+            { name:"Opened",    value:t.createdAt?`<t:${Math.floor(t.createdAt/1000)}:R>`:"—",           inline:true },
+            { name:"Completed", value:t.completedAt?`<t:${Math.floor(t.completedAt/1000)}:R>`:"—",       inline:true },
+            { name:"Channel",   value:`<#${channelId}>`,                                                  inline:true },
+          ).setFooter({ text:"Konvert  •  Ticket Lookup" })], ephemeral:true });
+      }
+
+      // /uptime
+      if (cmd === "uptime") {
+        const uptimeMs  = process.uptime() * 1000;
+        const hrs  = Math.floor(uptimeMs / 3600000);
+        const mins = Math.floor((uptimeMs % 3600000) / 60000);
+        const secs = Math.floor((uptimeMs % 60000) / 1000);
+        const uptimeStr = `${hrs}h ${mins}m ${secs}s`;
+        return interaction.reply({ embeds:[base("Bot Uptime").setThumbnail(IMG.LOGO)
+          .setDescription(`Konvert Bot has been online for **${uptimeStr}**.
+​`)
+          .addFields(
+            { name:"Status",  value:"**Online**",           inline:true },
+            { name:"Uptime",  value:`**${uptimeStr}**`,     inline:true },
+            { name:"Latency", value:`**${client.ws.ping}ms**`, inline:true },
+          ).setFooter({ text:"Konvert  •  Bot Status" })], ephemeral:true });
+      }
+
       // /postinfo
       if (cmd === "postinfo") {
         const embed = new EmbedBuilder()
@@ -1235,31 +1281,79 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.showModal(modal);
       }
 
-      // btn_done -- Mark Trade Complete (works regardless of ticket data)
+      // btn_done -- Mark Trade Complete
       if (interaction.customId === "btn_done") {
-        const tickets=load("tickets");
-        const ticket=tickets[interaction.channel.id];
-        // Allow staff/owner to complete even if ticket data is missing
-        const isOwner=CONFIG.OWNER_IDS.includes(interaction.user.id);
-        const isStaff=CONFIG.STAFF_ROLE?interaction.member.roles.cache.has(CONFIG.STAFF_ROLE):false;
-        const mRoleId=ticket?.method?CONFIG.ROLES[ticket.method]:null;
-        const isHandler=mRoleId?interaction.member.roles.cache.has(mRoleId):false;
-        if (!isOwner&&!isStaff&&!isHandler) return interaction.reply({ content:"Only staff or the assigned handler can mark a trade complete.", ephemeral:true });
-        if (ticket?.status==="vouched"||ticket?.status==="closed") return interaction.reply({ content:"This ticket has already been completed.", ephemeral:true });
+        const tickets   = load("tickets");
+        const ticket    = tickets[interaction.channel.id];
+        const isOwner   = CONFIG.OWNER_IDS.includes(interaction.user.id);
+        const isStaff   = CONFIG.STAFF_ROLE ? interaction.member.roles.cache.has(CONFIG.STAFF_ROLE) : false;
+        const mRoleId   = ticket?.method ? CONFIG.ROLES[ticket.method] : null;
+        const isHandler = mRoleId ? interaction.member.roles.cache.has(mRoleId) : false;
+        if (!isOwner && !isStaff && !isHandler) return interaction.reply({ content:"Only staff or the assigned handler can mark a trade complete.", ephemeral:true });
+        if (ticket?.status === "vouched" || ticket?.status === "closed") return interaction.reply({ content:"This ticket has already been completed.", ephemeral:true });
         await interaction.deferReply();
-        const m=ticket?getMethod(ticket.method):null;
-        // Post vouch embed
+        const m = ticket ? getMethod(ticket.method) : null;
+
         if (ticket) {
-          await postVouch(interaction.guild,{ clientId:ticket.userId, exchangerId:interaction.user.id, method:m?.label||ticket.method, amountUSD:ticket.amountUSD, direction:ticket.direction, coin:ticket.coin, message:null, rating:5 });
-          tickets[interaction.channel.id].status="vouched"; tickets[interaction.channel.id].completedBy=interaction.user.id; tickets[interaction.channel.id].completedAt=Date.now();
-          save("tickets",tickets);
+          // Save ticket as completed first
+          tickets[interaction.channel.id].status      = "vouched";
+          tickets[interaction.channel.id].completedBy = interaction.user.id;
+          tickets[interaction.channel.id].completedAt = Date.now();
+          save("tickets", tickets);
+
+          // Post vouch embed to vouch channel
+          const vouchData = { clientId:ticket.userId, exchangerId:interaction.user.id, method:m?.label||ticket.method, amountUSD:ticket.amountUSD, direction:ticket.direction, coin:ticket.coin, message:null, rating:5 };
+          await postVouch(interaction.guild, vouchData);
+
+          // Auto thank-you DM to client with volume stats
+          try {
+            const allTickets    = Object.values(load("tickets"));
+            const clientDone    = allTickets.filter(t => t.userId === ticket.userId && t.status === "vouched");
+            const totalVol      = clientDone.reduce((s,t) => s+(t.amountUSD||0), 0);
+            const tradeCount    = clientDone.length;
+            let tier = "New Client", tierColor = CONFIG.COLOR;
+            if (tradeCount >= 10 || totalVol >= 5000)       { tier = "VIP Client";       tierColor = 0xFFD700; }
+            else if (tradeCount >= 5  || totalVol >= 2000)  { tier = "Trusted Client";   tierColor = 0x9B59B6; }
+            else if (tradeCount >= 2)                        { tier = "Returning Client"; tierColor = CONFIG.COLOR; }
+
+            const clientUser = await client.users.fetch(ticket.userId);
+            const thankEmbed = new EmbedBuilder()
+              .setColor(tierColor)
+              .setAuthor({ name:"Konvert Exchange", iconURL:IMG.LOGO })
+              .setTitle("Thank You for Trading with Us")
+              .setThumbnail(IMG.LOGO)
+              .setDescription(
+                `Hey <@${ticket.userId}> — your trade has been completed successfully.\n\n` +
+                `We appreciate your trust in **Konvert Exchange**. Every deal matters to us and we look forward to trading with you again.\n\u200b`
+              )
+              .addFields(
+                { name:"Your Tier",        value:`**${tier}**`,                              inline:true },
+                { name:"Trades With Us",   value:`**${tradeCount}** completed`,              inline:true },
+                { name:"Total Exchanged",  value:`**${fmtUSD(totalVol)}**`,                  inline:true },
+                { name:"This Trade",       value:`**${fmtUSD(ticket.amountUSD)}** via ${m?.label||ticket.method}`, inline:false },
+                { name:"Come Back Anytime",value:`Head to our exchange channel anytime to open a new ticket.\n**Fast  ·  Safe  ·  Simple  ·  Private**`, inline:false },
+              )
+              .setImage(IMG.DEAL)
+              .setTimestamp()
+              .setFooter({ text:"Konvert Exchange  •  Thank you for your business" });
+            await clientUser.send({ embeds:[thankEmbed] });
+          } catch {}
         }
-        const completionEmbed=ticket
+
+        // Reply in ticket with deal complete embed
+        const completionEmbed = ticket
           ? buildDealEmbed({ clientId:ticket.userId, exchangerId:interaction.user.id, method:m?.label||ticket.method, amountUSD:ticket.amountUSD, direction:ticket.direction, coin:ticket.coin, message:null, rating:5 })
-          : new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({ name:"Konvert",iconURL:IMG.LOGO }).setTitle("Trade Complete").setDescription("Trade marked as complete by staff.").setImage(IMG.DEAL).setTimestamp().setFooter({ text:"Konvert" });
-        completionEmbed.setDescription((ticket?"Vouch posted. ":"")+"This ticket closes in **15 seconds**.\n\u200b");
-        await interaction.editReply({ embeds:[completionEmbed] });
-        setTimeout(async()=>{ await doCloseTicket(interaction.channel,interaction.guild,interaction.user,"Trade completed"); interaction.channel.delete().catch(()=>{}); },15000);
+          : new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({ name:"Konvert",iconURL:IMG.LOGO }).setTitle("Trade Complete").setDescription("Trade marked complete by staff.").setImage(IMG.DEAL).setTimestamp().setFooter({ text:"Konvert" });
+
+        // Override description cleanly without breaking the embed
+        const replyEmbed = new EmbedBuilder(completionEmbed.data)
+          .setDescription("Vouch posted to vouch channel. Thank-you card sent to client. This ticket closes in **15 seconds**.");
+
+        await interaction.editReply({ embeds:[replyEmbed] });
+        setTimeout(async () => {
+          await doCloseTicket(interaction.channel, interaction.guild, interaction.user, "Trade completed");
+          interaction.channel.delete().catch(() => {});
+        }, 15000);
         return;
       }
 
