@@ -1330,46 +1330,66 @@ This is your reminder from **${mins} minute${mins!==1?"s":""}** ago.`)
 // ─── $COIN MESSAGE LOOKUP ────────────────────────────────────
 client.on(Events.MessageCreate, async message => {
   if (message.author.bot) return;
-  const match = message.content.trim().match(/^\$([A-Za-z]{2,10})$/);
+  // Match $BTC $ETH $SOL etc — anywhere in any channel
+  const raw   = message.content.trim();
+  const match = raw.match(/^\$([A-Za-z]{2,10})$/i);
   if (!match) return;
   const coin = match[1].toUpperCase();
   if (!COINS.includes(coin)) return;
-  try {
-    const id  = GECKO[coin] || coin.toLowerCase();
-    const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd,cad,eur&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`);
-    const dat = await res.json();
-    const d   = dat[id];
-    if (!d) return;
-    const fmt    = n => n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
-    const ch     = parseFloat(d.usd_24h_change||0);
-    const chStr  = ch.toFixed(2);
-    const up     = ch >= 0;
-    const arr    = up ? "▲" : "▼";
-    const col    = CONFIG.COLOR; // always Konvert purple — clean and consistent
-    const mcap   = d.usd_market_cap ? `$${(d.usd_market_cap/1e9).toFixed(2)}B` : "—";
-    const vol    = d.usd_24h_vol    ? `$${(d.usd_24h_vol/1e9).toFixed(2)}B`    : "—";
-    const fee    = calcFee(d.usd, "send");
-    const rate   = feeRate(d.usd, "send");
 
-    const embed = new EmbedBuilder()
-      .setColor(col)
-      .setAuthor({ name:"Konvert  •  Live Price", iconURL:IMG.LOGO })
-      .setTitle(`${coin}  —  $${fmt(d.usd)} USD`)
-      .setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
-      .setDescription(`${arr} **${chStr}%** in the last 24 hours
-​`)
-      .addFields(
-        { name:"__USD__",        value:`**$${fmt(d.usd)}**`, inline:true },
-        { name:"__CAD__",        value:`CA$${fmt(d.cad)}`,   inline:true },
-        { name:"__EUR__",        value:`€${fmt(d.eur)}`,     inline:true },
-        { name:"__Market Cap__", value:mcap,                 inline:true },
-        { name:"__24h Volume__", value:vol,                  inline:true },
-        { name:"__Konvert Fee__",value:`${rate}% — **${fmtUSD(fee)}**`, inline:true },
-      )
-      .setFooter({ text:`$${coin} in any channel for a quick lookup  •  /price ${coin} for full info  •  Konvert` })
-      .setTimestamp();
-    await message.reply({ embeds:[embed] });
-  } catch {}
+  const id = GECKO[coin];
+  if (!id) return;
+
+  // Retry fetch up to 2 times in case of a transient API failure
+  let d = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const url = `https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd,cad,eur&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+      if (!res.ok) continue;
+      const json = await res.json();
+      if (json[id]?.usd) { d = json[id]; break; }
+    } catch { /* retry */ }
+    // Short pause before retry
+    await new Promise(r => setTimeout(r, 800));
+  }
+
+  if (!d) {
+    // Silent fail — don't spam errors in channels
+    return;
+  }
+
+  const fmt   = n => {
+    if (n >= 1) return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (n >= 0.01) return n.toFixed(4);
+    return n.toFixed(8);
+  };
+
+  const ch    = parseFloat(d.usd_24h_change || 0);
+  const arr   = ch >= 0 ? "▲" : "▼";
+  const mcap  = d.usd_market_cap ? `$${(d.usd_market_cap / 1e9).toFixed(2)}B` : "—";
+  const vol   = d.usd_24h_vol    ? `$${(d.usd_24h_vol / 1e9).toFixed(2)}B`    : "—";
+  const fee   = calcFee(Math.max(d.usd, 1), "send");
+  const rate  = feeRate(Math.max(d.usd, 1), "send");
+
+  const embed = new EmbedBuilder()
+    .setColor(CONFIG.COLOR)
+    .setAuthor({ name: "Konvert  •  Live Price", iconURL: IMG.LOGO })
+    .setTitle(`${coin}  —  $${fmt(d.usd)}`)
+    .setThumbnail(COIN_LOGO[coin] || IMG.LOGO)
+    .setDescription(`${arr} **${ch.toFixed(2)}%** in the last 24 hours\n\u200b`)
+    .addFields(
+      { name: "USD",         value: `**$${fmt(d.usd)}**`,                    inline: true },
+      { name: "CAD",         value: `CA$${fmt(d.cad)}`,                      inline: true },
+      { name: "EUR",         value: `€${fmt(d.eur)}`,                        inline: true },
+      { name: "Market Cap",  value: mcap,                                    inline: true },
+      { name: "24h Volume",  value: vol,                                     inline: true },
+      { name: "Konvert Fee", value: `${rate}%  —  **${fmtUSD(fee)}**`,      inline: true },
+    )
+    .setFooter({ text: `Konvert  •  /price ${coin} for full details` })
+    .setTimestamp();
+
+  await message.reply({ embeds: [embed] }).catch(() => {});
 });
 
 // ─── AUTO RATES ──────────────────────────────────────────────
