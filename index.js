@@ -24,6 +24,7 @@ const IMG = {
   RATES:  "https://i.imgur.com/SF8G50a.png",
   FEE:    "https://i.imgur.com/pYBg770.png",
   RULES:  "https://i.imgur.com/mUUxkET.png",
+  DEAL:   "https://i.imgur.com/I9rIgnV.png",
 };
 
 // ─── CONFIG ──────────────────────────────────────────────────
@@ -330,26 +331,43 @@ async function createTicket(interaction, method, direction, amountUSD, coin, wal
 }
 
 // ─── VOUCH ───────────────────────────────────────────────────
-async function postVouch(guild, { clientId, exchangerId, method, amountUSD, direction, coin, message, rating }) {
-  if (!CONFIG.VOUCH_CHANNEL) return;
-  const ch = guild.channels.cache.get(CONFIG.VOUCH_CHANNEL);
-  if (!ch) return;
-  const stars = "★".repeat(Math.min(Math.max(rating||5,1),5));
+// Unified deal complete embed — identical whether auto or manual
+function buildDealEmbed({ clientId, exchangerId, method, amountUSD, direction, coin, message, rating }) {
+  const stars  = "★".repeat(Math.min(Math.max(rating||5,1),5));
+  const dirStr = direction && coin && method
+    ? (direction === "send" ? `${coin} → ${method}` : `${method} → ${coin}`)
+    : null;
+
   const embed = new EmbedBuilder()
     .setColor(CONFIG.COLOR)
     .setAuthor({ name:"Konvert", iconURL:IMG.LOGO })
     .setTitle("Deal Complete")
+    .setDescription("Trade verified and completed on Konvert Exchange.\n\u200b")
     .addFields(
-      { name:"Client",    value:`<@${clientId}>`,   inline:true },
+      { name:"Client",    value:`<@${clientId}>`,    inline:true },
       { name:"Exchanger", value:`<@${exchangerId}>`, inline:true },
       { name:"Rating",    value:stars,               inline:true },
     );
-  if (method) embed.addFields({ name:"Method", value:method, inline:true });
-  if (amountUSD) embed.addFields({ name:"Amount", value:fmtUSD(amountUSD), inline:true });
-  if (direction && coin && method) embed.addFields({ name:"Direction", value:direction === "send" ? `${coin} → ${method}` : `${method} → ${coin}`, inline:true });
-  if (message) embed.addFields({ name:"Review", value:message, inline:false });
-  embed.setImage(IMG.VOUCH).setTimestamp().setFooter({ text:"Konvert  •  Verified Trade" });
-  await ch.send({ embeds:[embed] });
+
+  if (method)    embed.addFields({ name:"Method",    value:method,           inline:true });
+  if (amountUSD) embed.addFields({ name:"Amount",    value:fmtUSD(amountUSD), inline:true });
+  if (dirStr)    embed.addFields({ name:"Direction", value:dirStr,           inline:true });
+  if (coin && !dirStr) embed.addFields({ name:"Coin", value:coin,            inline:true });
+  if (message)   embed.addFields({ name:"Review",    value:message,          inline:false });
+
+  embed
+    .setImage(IMG.DEAL)
+    .setTimestamp()
+    .setFooter({ text:"Konvert  •  Verified Trade" });
+
+  return embed;
+}
+
+async function postVouch(guild, data) {
+  if (!CONFIG.VOUCH_CHANNEL) return;
+  const ch = guild.channels.cache.get(CONFIG.VOUCH_CHANNEL);
+  if (!ch) return;
+  await ch.send({ embeds:[buildDealEmbed(data)] });
 }
 
 // ─── MINE GAME ───────────────────────────────────────────────
@@ -878,15 +896,18 @@ client.on(Events.InteractionCreate, async interaction => {
         tickets[interaction.channel.id].completedBy = interaction.user.id;
         tickets[interaction.channel.id].completedAt = Date.now();
         save("tickets", tickets);
-        await interaction.editReply({ embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({ name:"Konvert", iconURL:IMG.LOGO }).setTitle("Trade Complete")
-          .addFields(
-            { name:"Client",    value:`<@${ticket.userId}>`,    inline:true },
-            { name:"Exchanger", value:`<@${interaction.user.id}>`, inline:true },
-            { name:"Method",    value:m?.label||"—",             inline:true },
-            { name:"Amount",    value:fmtUSD(ticket.amountUSD),  inline:true },
-            { name:"Coin",      value:ticket.coin||"—",          inline:true },
-            { name:"Rating",    value:"★★★★★",                inline:true },
-          ).setDescription("Vouch posted. This ticket closes in **15 seconds**.").setTimestamp().setFooter({ text:"Konvert" })] });
+        const completionEmbed = buildDealEmbed({
+          clientId:   ticket.userId,
+          exchangerId: interaction.user.id,
+          method:     m?.label || ticket.method,
+          amountUSD:  ticket.amountUSD,
+          direction:  ticket.direction,
+          coin:       ticket.coin,
+          message:    null,
+          rating:     5,
+        });
+        completionEmbed.setDescription("Trade complete. Vouch posted. This ticket closes in **15 seconds**.\n\u200b");
+        await interaction.editReply({ embeds:[completionEmbed] });
         setTimeout(async () => { await doCloseTicket(interaction.channel, interaction.guild, interaction.user, "Trade completed"); interaction.channel.delete().catch(()=>{}); }, 15000);
         return;
       }
