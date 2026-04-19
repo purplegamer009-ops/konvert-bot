@@ -40,6 +40,7 @@ const CONFIG = {
   RATES_CHANNEL:   process.env.RATES_CHANNEL_ID   || null,
   EXCHANGE_CHANNEL:"1463731676021784587",
   PASS_ROLE:"1488344770035060786",
+  EXCHANGER_ROLE: process.env.EXCHANGER_ROLE_ID || null,
   MIN_FEE: 5,
   COLOR:   0x7C4DFF,
   ROLES: {
@@ -56,21 +57,22 @@ const CONFIG = {
 
 // ─── PAYMENT METHODS ─────────────────────────────────────────
 const METHODS = [
-  { value: "paypal",    label: "PayPal"        },
-  { value: "cashapp",   label: "Cash App"      },
-  { value: "zelle",     label: "Zelle"         },
-  { value: "interac",   label: "Interac"       },
-  { value: "venmo",     label: "Venmo"         },
-  { value: "applepay",  label: "Apple Pay"     },
-  { value: "skrill",    label: "Skrill"        },
-  { value: "revolut",   label: "Revolut"       },
-  { value: "upi",       label: "UPI"           },
-  { value: "chime",     label: "Chime"         },
-  { value: "bank",      label: "Bank Transfer" },
-  { value: "iban",      label: "IBAN / SWIFT"  },
-  { value: "giftcard",  label: "Gift Card"     },
-  { value: "wire",      label: "Wire Transfer" },
-  { value: "googlepay", label: "Google Pay"    },
+  { value: "paypal",    label: "PayPal"          },
+  { value: "cashapp",   label: "Cash App"        },
+  { value: "zelle",     label: "Zelle"           },
+  { value: "interac",   label: "Interac"         },
+  { value: "venmo",     label: "Venmo"           },
+  { value: "applepay",  label: "Apple Pay"       },
+  { value: "skrill",    label: "Skrill"          },
+  { value: "revolut",   label: "Revolut"         },
+  { value: "upi",       label: "UPI"             },
+  { value: "chime",     label: "Chime"           },
+  { value: "bank",      label: "Bank Transfer"   },
+  { value: "iban",      label: "IBAN / SWIFT"    },
+  { value: "giftcard",  label: "Gift Card"       },
+  { value: "wire",      label: "Wire Transfer"   },
+  { value: "googlepay", label: "Google Pay"      },
+  { value: "crypto",    label: "Crypto to Crypto"},
 ];
 const getMethod = v => METHODS.find(m => m.value === v) || null;
 
@@ -142,6 +144,12 @@ const COMMANDS = [
   new SlashCommandBuilder().setName("supported").setDescription("View all supported payment methods and coins"),
   new SlashCommandBuilder().setName("cancelticket").setDescription("[Owner] Cancel a ticket without completing the trade").addStringOption(o=>o.setName("reason").setDescription("Reason").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("volume").setDescription("[Owner] View total Konvert exchange volume stats").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("openticket").setDescription("[Owner] Open this ticket to all exchangers").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("price").setDescription("Quick price check for any coin").addStringOption(o=>o.setName("coin").setDescription("Coin symbol (BTC, ETH, SOL…)").setRequired(true)),
+  new SlashCommandBuilder().setName("review").setDescription("Leave a review for Konvert in the reviews channel"),
+  new SlashCommandBuilder().setName("tradelog").setDescription("[Owner] View recent completed trades").addIntegerOption(o=>o.setName("limit").setDescription("Number of trades to show (max 10)").setMinValue(1).setMaxValue(10).setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("note").setDescription("[Owner] Add a private staff note to this ticket").addStringOption(o=>o.setName("text").setDescription("Note content").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("remind").setDescription("Set a reminder for yourself").addIntegerOption(o=>o.setName("minutes").setDescription("Minutes from now").setRequired(true)).addStringOption(o=>o.setName("message").setDescription("What to remind you about").setRequired(true)),
 ].map(c => c.toJSON());
 
 async function registerCommands() {
@@ -196,6 +204,17 @@ function step1Embed() {
 
 function step2Embed(method) {
   const m = getMethod(method);
+  if (method === "crypto") {
+    return new EmbedBuilder()
+      .setColor(CONFIG.COLOR).setAuthor({ name:"Konvert", iconURL:IMG.LOGO })
+      .setTitle("Step 2 — Crypto to Crypto")
+      .setDescription(
+        "**Send one coin, receive another.**\n" +
+        "For example: send SOL, receive BTC. Or send USDT, receive ETH.\n\n" +
+        "Select your direction below — which crypto are you sending?"
+      )
+      .setFooter({ text:"Step 2 of 3  •  Konvert" });
+  }
   return new EmbedBuilder()
     .setColor(CONFIG.COLOR).setAuthor({ name:"Konvert", iconURL:IMG.LOGO })
     .setTitle(`Step 2 — ${m.label}`)
@@ -799,6 +818,116 @@ client.on(Events.InteractionCreate, async interaction => {
           .setFooter({ text:"Konvert  •  Server Volume Statistics" })], ephemeral:true });
       }
 
+      // /openticket — open this ticket to all exchangers
+      if (cmd === "openticket") {
+        const tickets = load("tickets");
+        if (!tickets[interaction.channel.id]) return interaction.reply({ content:"This is not a ticket channel.", ephemeral:true });
+        const exchangerRole = CONFIG.EXCHANGER_ROLE || CONFIG.STAFF_ROLE;
+        if (!exchangerRole) return interaction.reply({ content:"EXCHANGER_ROLE_ID not configured in Railway.", ephemeral:true });
+        await interaction.channel.permissionOverwrites.edit(exchangerRole, {
+          ViewChannel: true, SendMessages: true, ReadMessageHistory: true,
+        });
+        await interaction.reply({ embeds:[base("Ticket Opened to All Exchangers")
+          .setDescription(`This ticket is now visible to all members with the <@&${exchangerRole}> role.
+
+Any available exchanger can assist with this trade.`)
+          .setFooter({ text:"Konvert  •  Ticket opened" })] });
+        log(interaction.guild, `OPENTICKET: #${interaction.channel.name} opened to all exchangers by ${interaction.user.tag}`);
+        return;
+      }
+
+      // /price — quick coin price
+      if (cmd === "price") {
+        await interaction.deferReply();
+        const coin = interaction.options.getString("coin").toUpperCase();
+        const id   = GECKO[coin];
+        if (!id) return interaction.editReply(`Unknown coin: **${coin}**. Try BTC, ETH, SOL, etc.`);
+        try {
+          const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd,cad,eur&include_24hr_change=true`);
+          const dat = await res.json();
+          const d   = dat[id];
+          if (!d) return interaction.editReply("Could not fetch price. Try again.");
+          const ch  = parseFloat(d.usd_24h_change||0).toFixed(2);
+          const col = Number(ch) >= 0 ? 0x00C896 : 0xFF4444;
+          const arr = Number(ch) >= 0 ? "▲" : "▼";
+          const fmt = n => n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+          return interaction.editReply({ embeds:[new EmbedBuilder()
+            .setColor(col)
+            .setAuthor({ name:`${coin} — Live Price`, iconURL:COIN_LOGO[coin]||IMG.LOGO })
+            .setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
+            .addFields(
+              { name:"USD",        value:`**$${fmt(d.usd)}**`,  inline:true },
+              { name:"CAD",        value:`CA$${fmt(d.cad)}`,    inline:true },
+              { name:"EUR",        value:`€${fmt(d.eur)}`,      inline:true },
+              { name:"24h Change", value:`${arr} **${ch}%**`,   inline:true },
+            )
+            .setFooter({ text:`Type $${coin} anytime  •  Konvert` })
+            .setTimestamp()] });
+        } catch { return interaction.editReply("Failed to fetch price."); }
+      }
+
+      // /review — post a reaction review in the reviews channel
+      if (cmd === "review") {
+        const modal = new ModalBuilder().setCustomId("modal_review").setTitle("Leave a Review for Konvert");
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("review_text").setLabel("Your experience with Konvert").setStyle(TextInputStyle.Paragraph).setPlaceholder("Fast, legit, smooth — describe your experience…").setRequired(true)),
+          new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("review_rating").setLabel("Rating out of 5 (type a number)").setStyle(TextInputStyle.Short).setPlaceholder("5").setRequired(true)),
+        );
+        return interaction.showModal(modal);
+      }
+
+      // /tradelog — recent completed trades
+      if (cmd === "tradelog") {
+        const limit   = interaction.options.getInteger("limit") || 5;
+        const tickets = load("tickets");
+        const done    = Object.values(tickets)
+          .filter(t=>t.status==="vouched"&&t.completedAt)
+          .sort((a,b)=>b.completedAt-a.completedAt)
+          .slice(0, limit);
+        if (!done.length) return interaction.reply({ content:"No completed trades yet.", ephemeral:true });
+        const lines = done.map((t,i) => {
+          const m = getMethod(t.method);
+          return `**${i+1}.** <@${t.userId}>  ·  ${m?.label||t.method}  ·  ${fmtUSD(t.amountUSD)}  ·  <t:${Math.floor(t.completedAt/1000)}:R>`;
+        }).join("\n");
+        return interaction.reply({ embeds:[base(`Last ${done.length} Completed Trades`)
+          .setDescription(lines)
+          .setFooter({ text:"Konvert  •  Trade Log" })], ephemeral:true });
+      }
+
+      // /note — add a staff note to the current ticket
+      if (cmd === "note") {
+        const tickets = load("tickets");
+        if (!tickets[interaction.channel.id]) return interaction.reply({ content:"This is not a ticket channel.", ephemeral:true });
+        const text = interaction.options.getString("text");
+        const embed = new EmbedBuilder()
+          .setColor(0xFFB347)
+          .setAuthor({ name:`Staff Note — ${interaction.user.tag}`, iconURL:interaction.user.displayAvatarURL() })
+          .setDescription(text)
+          .setTimestamp()
+          .setFooter({ text:"Konvert  •  Staff Note  •  Only visible to staff" });
+        await interaction.channel.send({ embeds:[embed] });
+        return interaction.reply({ content:"Note added.", ephemeral:true });
+      }
+
+      // /remind — personal reminder
+      if (cmd === "remind") {
+        const mins    = interaction.options.getInteger("minutes");
+        const message = interaction.options.getString("message");
+        if (mins < 1 || mins > 1440) return interaction.reply({ content:"Reminder must be between 1 minute and 24 hours.", ephemeral:true });
+        await interaction.reply({ content:`Got it. I'll remind you about **"${message}"** in **${mins} minute${mins!==1?"s":""}**.`, ephemeral:true });
+        setTimeout(async () => {
+          try {
+            const user = await client.users.fetch(interaction.user.id);
+            await user.send({ embeds:[base("Reminder")
+              .setDescription(`**"${message}"**
+
+This is your reminder from **${mins} minute${mins!==1?"s":""}** ago.`)
+              .setFooter({ text:"Konvert  •  Reminder" })] });
+          } catch {}
+        }, mins * 60 * 1000);
+        return;
+      }
+
       return;
     }
 
@@ -806,9 +935,11 @@ client.on(Events.InteractionCreate, async interaction => {
     if (interaction.isStringSelectMenu()) {
       if (interaction.customId === "select_method") {
         const method = interaction.values[0];
+        const _m = getMethod(method);
+        const _isCrypto = method === "crypto";
         return interaction.update({ embeds:[step2Embed(method)], components:[new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId(`dir_send__${method}`).setLabel(`Send Crypto → Get ${getMethod(method).label}`).setStyle(ButtonStyle.Primary),
-          new ButtonBuilder().setCustomId(`dir_receive__${method}`).setLabel(`Send ${getMethod(method).label} → Get Crypto`).setStyle(ButtonStyle.Success),
+          new ButtonBuilder().setCustomId(`dir_send__${method}`).setLabel(_isCrypto ? "I am Sending Crypto" : `Send Crypto → Get ${_m.label}`).setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId(`dir_receive__${method}`).setLabel(_isCrypto ? "I am Receiving Crypto" : `Send ${_m.label} → Get Crypto`).setStyle(ButtonStyle.Success),
         )] });
       }
     }
@@ -855,7 +986,7 @@ client.on(Events.InteractionCreate, async interaction => {
         modal.addComponents(
           new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_amount").setLabel("Trade amount in USD").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 150").setRequired(true)),
           new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_coin").setLabel("Which crypto? (BTC, ETH, SOL…)").setStyle(TextInputStyle.Short).setPlaceholder("e.g. SOL").setRequired(true)),
-          new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_wallet").setLabel(isSend?`Your ${m.label} receiving info`:"Your crypto receiving wallet").setStyle(TextInputStyle.Short).setRequired(true)),
+          new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_wallet").setLabel(method==="crypto"?"Your receiving wallet address":(isSend?`Your ${m.label} receiving info`:"Your crypto receiving wallet")).setStyle(TextInputStyle.Short).setRequired(true)),
           new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_notes").setLabel("Notes (optional)").setStyle(TextInputStyle.Paragraph).setRequired(false)),
         );
         return interaction.showModal(modal);
@@ -1038,6 +1169,29 @@ client.on(Events.InteractionCreate, async interaction => {
 
     // ════ MODALS ════════════════════════════════════════════
     if (interaction.isModalSubmit()) {
+
+      // Review modal
+      if (interaction.customId === "modal_review") {
+        const text   = interaction.fields.getTextInputValue("review_text");
+        const rating = Math.min(Math.max(parseInt(interaction.fields.getTextInputValue("review_rating"))||5,1),5);
+        const stars  = "★".repeat(rating) + "☆".repeat(5-rating);
+        // Post to vouch channel if configured, otherwise reply publicly
+        const targetCh = CONFIG.VOUCH_CHANNEL ? interaction.guild.channels.cache.get(CONFIG.VOUCH_CHANNEL) : interaction.channel;
+        if (!targetCh) return interaction.reply({ content:"Review channel not configured.", ephemeral:true });
+        const embed = new EmbedBuilder()
+          .setColor(CONFIG.COLOR)
+          .setAuthor({ name:"Konvert", iconURL:IMG.LOGO })
+          .setTitle("Community Review")
+          .setDescription(`*"${text}"*`)
+          .addFields(
+            { name:"From",   value:`<@${interaction.user.id}>`, inline:true },
+            { name:"Rating", value:stars,                       inline:true },
+          )
+          .setTimestamp()
+          .setFooter({ text:"Konvert  •  Community Review" });
+        await targetCh.send({ embeds:[embed] });
+        return interaction.reply({ content:"Your review has been posted. Thank you!", ephemeral:true });
+      }
 
       // Fee calc modal
       if (interaction.customId === "modal_fee") {
