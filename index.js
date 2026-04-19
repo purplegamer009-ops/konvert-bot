@@ -174,7 +174,7 @@ function mainEmbed() {
     .setColor(CONFIG.COLOR)
     .setAuthor({ name:"Konvert", iconURL:IMG.LOGO })
     .setTitle("Konvert Exchange")
-    .setDescription("**Fast. Safe. Simple.**\nExchange any cryptocurrency with any major payment method.\nA private ticket opens instantly — a verified handler will assist you.\n\u200b")
+    .setDescription("**Fast. Safe. Simple.**\nExchange any cryptocurrency with any major payment method.\nA private ticket opens instantly — a verified handler will be with you.\n\u200b")
     .addFields(
       { name:"💳  Payment Methods", value:"PayPal  ·  Cash App  ·  Zelle  ·  Interac  ·  Venmo  ·  Apple Pay  ·  Skrill  ·  Revolut  ·  UPI  ·  Chime  ·  Bank Transfer  ·  IBAN / SWIFT  ·  Gift Card  ·  Wire Transfer  ·  Google Pay", inline:false },
       { name:"🪙  Supported Crypto", value:"BTC  ·  ETH  ·  SOL  ·  LTC  ·  USDT  ·  and more — all major coins accepted, just ask in your ticket.", inline:false },
@@ -196,10 +196,12 @@ function mainButtons() {
 
 function step1Embed() {
   return new EmbedBuilder()
-    .setColor(CONFIG.COLOR).setAuthor({ name:"Konvert", iconURL:IMG.LOGO })
-    .setTitle("Step 1 — Payment Method")
-    .setDescription("Select your payment method from the dropdown below.\n\u200b")
-    .setFooter({ text:"Step 1 of 3  •  Konvert" });
+    .setColor(CONFIG.COLOR)
+    .setAuthor({ name:"Konvert", iconURL:IMG.LOGO })
+    .setTitle("Step 1 — Select Payment Method")
+    .setThumbnail(IMG.LOGO)
+    .setDescription("Choose how you'd like to pay or receive below.\nA private ticket with the right handler opens instantly.\n\u200b")
+    .setFooter({ text:"Step 1 of 3  •  Konvert Exchange" });
 }
 
 function step2Embed(method) {
@@ -245,10 +247,11 @@ async function buildRatesEmbed() {
     .setAuthor({ name:"Konvert", iconURL:IMG.LOGO })
     .setTitle("Live Rates")
     .setThumbnail(COIN_LOGO["BTC"])
+    .setThumbnail(IMG.LOGO)
     .setDescription(lines + "\n\u200b")
     .addFields(
       { name:"Exchange", value:`Open a ticket in <#${CONFIG.EXCHANGE_CHANNEL}>`, inline:true },
-      { name:"Tip",      value:"Type **$BTC**, **$ETH** etc. for details", inline:true },
+      { name:"Tip",      value:"Type **$BTC**, **$ETH** etc. for a quick lookup", inline:true },
     )
     .setImage(IMG.RATES)
     .setFooter({ text:"Updates every 10 min  •  Use /calc to post now  •  Konvert" })
@@ -310,10 +313,10 @@ async function createTicket(interaction, method, direction, amountUSD, coin, wal
     .setThumbnail(COIN_LOGO[coin] || IMG.LOGO)
     .setDescription(`**Welcome, <@${user.id}>**\n\nYour ticket is open. A **${m.label}** handler has been notified and will confirm your details shortly.\n\u200b`)
     .addFields(
-      { name:"Sending",   value:sendLabel,                                  inline:true },
-      { name:"Receiving", value:receiveLabel,                               inline:true },
-      { name:"Fee",       value:`**${rate}%**  —  ${fmtUSD(feeUSD)}`,      inline:true },
-      { name:direction === "send" ? `Your ${m.label} Details` : "Your Receiving Wallet", value:`\`${walletInfo}\``, inline:false },
+      { name:"__Sending__",   value:`**${sendLabel}**`,                        inline:true },
+      { name:"__Receiving__", value:`**${receiveLabel}**`,                     inline:true },
+      { name:"__Fee__",       value:`**${rate}%**  —  ${fmtUSD(feeUSD)}`,      inline:true },
+      { name:direction === "send" ? `__Your ${m.label} Details__` : "__Your Receiving Wallet__", value:`\`${walletInfo}\``, inline:false },
     );
   if (notes) ticketEmbed.addFields({ name:"Notes", value:notes, inline:false });
   ticketEmbed.setImage(IMG.TICKET).setTimestamp().setFooter({ text:"Konvert  •  All communication stays in this ticket" });
@@ -363,16 +366,16 @@ function buildDealEmbed({ clientId, exchangerId, method, amountUSD, direction, c
     .setTitle("Deal Complete")
     .setDescription("Trade verified and completed on Konvert Exchange.\n\u200b")
     .addFields(
-      { name:"Client",    value:`<@${clientId}>`,    inline:true },
-      { name:"Exchanger", value:`<@${exchangerId}>`, inline:true },
-      { name:"Rating",    value:stars,               inline:true },
+      { name:"__Client__",    value:`<@${clientId}>`,    inline:true },
+      { name:"__Exchanger__", value:`<@${exchangerId}>`, inline:true },
+      { name:"__Rating__",    value:stars,               inline:true },
     );
 
-  if (method)    embed.addFields({ name:"Method",    value:method,           inline:true });
-  if (amountUSD) embed.addFields({ name:"Amount",    value:fmtUSD(amountUSD), inline:true });
-  if (dirStr)    embed.addFields({ name:"Direction", value:dirStr,           inline:true });
-  if (coin && !dirStr) embed.addFields({ name:"Coin", value:coin,            inline:true });
-  if (message)   embed.addFields({ name:"Review",    value:message,          inline:false });
+  if (method)    embed.addFields({ name:"__Method__",    value:`**${method}**`,         inline:true });
+  if (amountUSD) embed.addFields({ name:"__Amount__",    value:`**${fmtUSD(amountUSD)}**`, inline:true });
+  if (dirStr)    embed.addFields({ name:"__Direction__", value:dirStr,                  inline:true });
+  if (coin && !dirStr) embed.addFields({ name:"__Coin__", value:`**${coin}**`,          inline:true });
+  if (message)   embed.addFields({ name:"__Review__",    value:message,                 inline:false });
 
   embed
     .setImage(IMG.DEAL)
@@ -496,11 +499,12 @@ client.on(Events.InteractionCreate, async interaction => {
         const fR   = calcFee(amt,"receive"), rR = feeRate(amt,"receive");
         return interaction.reply({
           embeds:[base("Fee Calculator")
-            .setDescription(`Estimate for **${fmtUSD(amt)}**\n*Final fee may vary slightly based on deal terms.*\n\u200b`)
+            .setThumbnail(IMG.LOGO)
+            .setDescription(`Estimate for **${fmtUSD(amt)}**\n\u200b`)
             .addFields(
-              { name:"Fiat → Crypto", value:`Rate: **${rS}%**\nFee: **${fmtUSD(fS)}**\nYou receive: **${fmtUSD(amt-fS)}**`, inline:true },
-              { name:"Crypto → Fiat", value:`Rate: **${rR}%**\nFee: **${fmtUSD(fR)}**\nYou receive: **${fmtUSD(amt-fR)}**`, inline:true },
-            ).setImage(IMG.FEE).setFooter({ text:"Konvert  •  Open a ticket to proceed" })],
+              { name:"__Fiat → Crypto__", value:`Rate: **${rS}%**\nFee: **${fmtUSD(fS)}**\nYou receive: **${fmtUSD(amt-fS)}**`, inline:true },
+              { name:"__Crypto → Fiat__", value:`Rate: **${rR}%**\nFee: **${fmtUSD(fR)}**\nYou receive: **${fmtUSD(amt-fR)}**`, inline:true },
+            ).setImage(IMG.FEE).setFooter({ text:"Konvert  •  Estimates may vary slightly  •  Open a ticket to begin" })],
           ephemeral:true,
         });
       }
@@ -520,12 +524,14 @@ client.on(Events.InteractionCreate, async interaction => {
         const fee    = calcFee(amtUSD,"send");
         const p2     = FIAT[to] ? 1/FIAT[to] : (await getPrice(to)||1);
         const youGet = result - (fee/p2);
-        return interaction.editReply({ embeds:[base("Conversion").addFields(
-          { name:"You Send",    value:`**${amount} ${from}**`,      inline:true },
-          { name:"Gross",       value:`${result.toFixed(6)} ${to}`, inline:true },
-          { name:"Fee",         value:`~${fmtUSD(fee)}`,            inline:true },
-          { name:"You Receive", value:`**${youGet.toFixed(6)} ${to}**`, inline:true },
-        ).setFooter({ text:"Estimate  •  Konvert" })] });
+        return interaction.editReply({ embeds:[base("Conversion")
+          .setThumbnail(IMG.LOGO)
+          .addFields(
+            { name:"__You Send__",    value:`**${amount} ${from}**`,          inline:true },
+            { name:"__Gross__",       value:`${result.toFixed(6)} ${to}`,      inline:true },
+            { name:"__Fee__",         value:`~${fmtUSD(fee)}`,                 inline:true },
+            { name:"__You Receive__", value:`**${youGet.toFixed(6)} ${to}**`,  inline:true },
+          ).setFooter({ text:"Estimate only  •  Konvert" })] });
       }
 
       if (cmd === "stats") {
@@ -541,12 +547,13 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.reply({ embeds:[base(isSelf ? "Your Exchange Stats" : `${target.username}'s Stats`)
           .setThumbnail(target.displayAvatarURL({ size:64 }))
           .addFields(
-            { name:"Completed Trades", value:`**${all.length}**`,                           inline:true },
-            { name:"Total Volume",     value:volume>0?`**${fmtUSD(volume)}**`:"—",          inline:true },
-            { name:"Avg Deal Size",    value:avg>0?`**${fmtUSD(avg)}**`:"—",               inline:true },
-            { name:"Top Method",       value:topM?`**${getMethod(topM[0])?.label||topM[0]}** (${topM[1]})`:"—", inline:true },
-            { name:"Top Coin",         value:topC?`**${topC[0]}** (${topC[1]})`:"—",       inline:true },
-          ).setFooter({ text:all.length===0?"No completed trades yet":`${all.length} verified trade${all.length!==1?"s":""} on Konvert` })] });
+            { name:"__Completed Trades__", value:`**${all.length}**`,                           inline:true },
+            { name:"__Total Volume__",     value:volume>0?`**${fmtUSD(volume)}**`:"—",          inline:true },
+            { name:"__Avg Deal Size__",    value:avg>0?`**${fmtUSD(avg)}**`:"—",               inline:true },
+            { name:"__Top Method__",       value:topM?`**${getMethod(topM[0])?.label||topM[0]}** (${topM[1]})`:"—", inline:true },
+            { name:"__Top Coin__",         value:topC?`**${topC[0]}** (${topC[1]})`:"—",       inline:true },
+          ).setThumbnail(interaction.options.getUser("user") ? (interaction.options.getUser("user")).displayAvatarURL({size:64}) : interaction.user.displayAvatarURL({size:64}))
+          .setFooter({ text:all.length===0?"No completed trades yet  •  Konvert":`${all.length} verified trade${all.length!==1?"s":""} on Konvert` })] });
       }
 
       if (cmd === "leaderboard") {
@@ -557,7 +564,11 @@ client.on(Events.InteractionCreate, async interaction => {
         if (!ranked.length) return interaction.reply({ content:"No completed trades yet.", ephemeral:true });
         const medals = ["🥇","🥈","🥉"];
         const lines  = ranked.map((u,i)=>`${medals[i]||`**${i+1}.**`}  <@${u.userId}>  —  **${fmtUSD(u.volume)}**  ·  ${u.trades} trade${u.trades!==1?"s":""}`).join("\n");
-        return interaction.reply({ embeds:[base("Top Traders").setThumbnail(IMG.LOGO).setDescription(lines+"\n\u200b").setFooter({ text:"Ranked by total volume  •  Konvert" })] });
+        return interaction.reply({ embeds:[base("Top Traders")
+          .setThumbnail(IMG.LOGO)
+          .setDescription("**Konvert's top traders, ranked by total volume.**\n\u200b")
+          .addFields({ name:"\u200b", value:lines, inline:false })
+          .setFooter({ text:"Ranked by total USD volume  •  Konvert" })] });
       }
 
       if (cmd === "market") {
@@ -590,9 +601,9 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.reply({ embeds:[base("Middleman Guide")
           .setDescription("A **middleman (MM)** holds crypto between both parties during a trade — protecting everyone from scams.\n\u200b")
           .addFields(
-            { name:"How to Pick",    value:"Agree with your exchanger on a trusted MM you both know. Konvert supports any reputable third-party MM.", inline:false },
-            { name:"Owner Override", value:"The only time you skip an MM is if **@jswaps** or **@3uce** explicitly says so in your ticket. Anyone else saying this is an impersonator.", inline:false },
-            { name:"Stay Safe",      value:"Staff never DM you first. All arrangements happen in your ticket only.", inline:false },
+            { name:"__How to Pick an MM__",  value:"Agree with your exchanger on a trusted MM you both know. Konvert supports any reputable third-party MM.", inline:false },
+            { name:"__Owner Override Only__", value:"The **only** time you skip an MM is if **@jswaps** or **@3uce** explicitly says so in your ticket. Anyone else saying this is an impersonator.", inline:false },
+            { name:"__Stay Safe__",           value:"**Staff will never DM you first.** All MM arrangements happen in your ticket only — never take it to DMs.", inline:false },
           ).setImage(IMG.RULES).setFooter({ text:"Konvert  •  Trade safely, always" })] });
       }
 
@@ -615,8 +626,13 @@ client.on(Events.InteractionCreate, async interaction => {
         const components = buildMineEmbed(userId, state.mineGames[userId]);
         return interaction.reply({
           embeds:[base("Konvert Mine")
-            .setDescription("A **5x5** grid lies before you.\n\nHidden within: **3 diamonds** 💎 and **5 bombs** 💣\n\nYou have **3 tries**. Find all 3 diamonds without hitting a bomb to win a **Free Exchange Pass**.\n\u200b")
-            .addFields({ name:"Tries Remaining", value:"**3**", inline:true }, { name:"Diamonds Found", value:"**0 / 3**", inline:true })
+            .setThumbnail(IMG.LOGO)
+          .setDescription("A **5×5** grid lies before you.\n\n💎 **3 diamonds** are hidden among the cells.\n💣 **5 bombs** are also hidden — hit one and it's over.\n\nYou have **3 tries**. Find all 3 diamonds to win a **Free Exchange Pass**.\n\u200b")
+          .addFields(
+            { name:"__Tries Remaining__", value:"**3**",   inline:true },
+            { name:"__Diamonds Found__",  value:"**0 / 3**", inline:true },
+            { name:"__Win Condition__",   value:"All 3 💎 with no 💣", inline:true },
+          )
             .setFooter({ text:"Konvert Mine  •  3 tries  •  Hit 1 bomb = game over  •  Cooldown: 3 hours" })],
           components,
           ephemeral:true,
@@ -669,7 +685,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const ch        = interaction.guild.channels.cache.get(channelId);
         if (!ch) return interaction.reply({ content:"Channel not found.", ephemeral:true });
         const pingStr = ping==="everyone"?"@everyone ":ping==="here"?"@here ":"";
-        await ch.send({ content:pingStr||undefined, embeds:[base("Konvert Announcement").setDescription(message).setFooter({ text:`By ${interaction.user.tag}` })] });
+        await ch.send({ content:pingStr||undefined, embeds:[base("Konvert Announcement").setThumbnail(IMG.LOGO).setDescription(message).setFooter({ text:`Announced by ${interaction.user.tag}  •  Konvert` })] });
         return interaction.reply({ content:"Announced.", ephemeral:true });
       }
 
@@ -721,19 +737,21 @@ client.on(Events.InteractionCreate, async interaction => {
         const [channelId, t] = found;
         const m = getMethod(t.method);
         return interaction.reply({ embeds:[base("Your Open Ticket")
+          .setThumbnail(IMG.LOGO)
           .addFields(
-            { name:"Channel",   value:`<#${channelId}>`,                                   inline:true },
-            { name:"Method",    value:m?.label||t.method,                                  inline:true },
-            { name:"Amount",    value:fmtUSD(t.amountUSD),                                 inline:true },
-            { name:"Coin",      value:t.coin||"—",                                         inline:true },
-            { name:"Direction", value:t.direction==="send"?"Fiat → Crypto":"Crypto → Fiat", inline:true },
-            { name:"Opened",    value:`<t:${Math.floor(t.createdAt/1000)}:R>`,             inline:true },
+            { name:"__Channel__",   value:`<#${channelId}>`,                                    inline:true },
+            { name:"__Method__",    value:`**${m?.label||t.method}**`,                          inline:true },
+            { name:"__Amount__",    value:`**${fmtUSD(t.amountUSD)}**`,                         inline:true },
+            { name:"__Coin__",      value:`**${t.coin||"—"}**`,                                 inline:true },
+            { name:"__Direction__", value:t.direction==="send"?"Fiat → Crypto":"Crypto → Fiat", inline:true },
+            { name:"__Opened__",    value:`<t:${Math.floor(t.createdAt/1000)}:R>`,              inline:true },
           ).setFooter({ text:"Konvert  •  All communication stays in your ticket" })], ephemeral:true });
       }
 
       // /howto — beginner guide
       if (cmd === "howto") {
         return interaction.reply({ embeds:[base("How to Use Konvert")
+          .setThumbnail(IMG.LOGO)
           .setDescription("New to Konvert? Here's how a trade works step by step.\n\u200b")
           .addFields(
             { name:"1.  Check Rates",    value:"Use the **Live Rates** button or type `$BTC` / `$ETH` etc. in any channel to see the current price.", inline:false },
@@ -753,20 +771,23 @@ client.on(Events.InteractionCreate, async interaction => {
         const latency = Date.now() - sent;
         const wsLatency = client.ws.ping;
         return interaction.editReply({ embeds:[base("Bot Status")
+          .setThumbnail(IMG.LOGO)
+          .setDescription("**All systems operational.** Konvert is online and ready.\n\u200b")
           .addFields(
-            { name:"Status",       value:"Online",              inline:true },
-            { name:"Latency",      value:`**${latency}ms**`,    inline:true },
-            { name:"API Latency",  value:`**${wsLatency}ms**`,  inline:true },
+            { name:"__Status__",       value:"**Online**",          inline:true },
+            { name:"__Latency__",      value:`**${latency}ms**`,    inline:true },
+            { name:"__API Latency__",  value:`**${wsLatency}ms**`,  inline:true },
           )
-          .setFooter({ text:"Konvert  •  All systems operational" })] });
+          .setFooter({ text:"Konvert  •  Bot Status" })] });
       }
 
       // /supported
       if (cmd === "supported") {
         return interaction.reply({ embeds:[base("Supported Methods & Coins")
+          .setThumbnail(IMG.LOGO)
           .addFields(
-            { name:"💳  Payment Methods", value:METHODS.map(m=>m.label).join("  ·  "), inline:false },
-            { name:"🪙  Cryptocurrencies", value:COINS.join("  ·  ") + "\n\nAll other major coins accepted — just ask in your ticket.", inline:false },
+            { name:"__💳  Payment Methods__",  value:METHODS.map(m=>`**${m.label}**`).join("  ·  "), inline:false },
+            { name:"__🪙  Cryptocurrencies__", value:COINS.map(c=>`\`${c}\``).join("  ") + "\n\n*Don't see your coin? Ask in your ticket — we support most major coins.*", inline:false },
           )
           .setFooter({ text:"Don't see your method or coin? Open a ticket and ask  •  Konvert" })], ephemeral:true });
       }
@@ -808,62 +829,101 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.reply({ embeds:[base("Konvert Volume Stats")
           .setThumbnail(IMG.LOGO)
           .addFields(
-            { name:"Total Completed", value:`**${completed.length}** trades`,        inline:true },
-            { name:"Total Volume",    value:`**${fmtUSD(totalVol)}**`,               inline:true },
-            { name:"Total Fees",      value:`**${fmtUSD(totalFees)}**`,              inline:true },
-            { name:"Open Tickets",    value:`**${open}**`,                           inline:true },
-            { name:"Today's Volume",  value:`**${fmtUSD(todayVol)}** (${today.length} trades)`, inline:true },
-            { name:"Top Method",      value:topMethod?`**${getMethod(topMethod[0])?.label||topMethod[0]}** (${topMethod[1]})`:"—", inline:true },
+            { name:"__Total Completed__", value:`**${completed.length}** trades`,        inline:true },
+            { name:"__Total Volume__",    value:`**${fmtUSD(totalVol)}**`,               inline:true },
+            { name:"__Total Fees__",      value:`**${fmtUSD(totalFees)}**`,              inline:true },
+            { name:"__Open Tickets__",    value:`**${open}**`,                           inline:true },
+            { name:"__Today's Volume__",  value:`**${fmtUSD(todayVol)}** (${today.length} trades)`, inline:true },
+            { name:"__Top Method__",      value:topMethod?`**${getMethod(topMethod[0])?.label||topMethod[0]}** (${topMethod[1]})`:"—", inline:true },
           )
           .setFooter({ text:"Konvert  •  Server Volume Statistics" })], ephemeral:true });
       }
 
-      // /openticket — open this ticket to all exchangers
+      // /openticket — open ticket to ALL exchanger roles
       if (cmd === "openticket") {
         const tickets = load("tickets");
         if (!tickets[interaction.channel.id]) return interaction.reply({ content:"This is not a ticket channel.", ephemeral:true });
-        const exchangerRole = CONFIG.EXCHANGER_ROLE || CONFIG.STAFF_ROLE;
-        if (!exchangerRole) return interaction.reply({ content:"EXCHANGER_ROLE_ID not configured in Railway.", ephemeral:true });
-        await interaction.channel.permissionOverwrites.edit(exchangerRole, {
-          ViewChannel: true, SendMessages: true, ReadMessageHistory: true,
-        });
-        await interaction.reply({ embeds:[base("Ticket Opened to All Exchangers")
-          .setDescription(`This ticket is now visible to all members with the <@&${exchangerRole}> role.
-
-Any available exchanger can assist with this trade.`)
-          .setFooter({ text:"Konvert  •  Ticket opened" })] });
-        log(interaction.guild, `OPENTICKET: #${interaction.channel.name} opened to all exchangers by ${interaction.user.tag}`);
+        await interaction.deferReply();
+        // Collect every configured role — all method roles + staff + general exchanger role
+        const allRoleIds = [
+          ...Object.values(CONFIG.ROLES),
+          CONFIG.STAFF_ROLE,
+          CONFIG.EXCHANGER_ROLE,
+        ].filter(Boolean);
+        const uniqueRoles = [...new Set(allRoleIds)];
+        const addedRoles = [];
+        for (const roleId of uniqueRoles) {
+          try {
+            const role = await interaction.guild.roles.fetch(roleId).catch(()=>null);
+            if (!role) continue;
+            await interaction.channel.permissionOverwrites.edit(roleId, {
+              ViewChannel: true, SendMessages: true, ReadMessageHistory: true,
+            });
+            addedRoles.push(`<@&${roleId}>`);
+          } catch {}
+        }
+        const embed = new EmbedBuilder()
+          .setColor(CONFIG.COLOR)
+          .setAuthor({ name:"Konvert", iconURL:IMG.LOGO })
+          .setTitle("Ticket Opened to All Exchangers")
+          .setDescription(
+            "This ticket is now **visible to all Konvert exchangers**.\n\n" +
+            "Any available handler can step in and assist with this trade.\n\u200b"
+          )
+          .addFields({ name:"Roles Added", value:addedRoles.length ? addedRoles.join("  ") : "None configured", inline:false })
+          .setFooter({ text:"Konvert  •  Open Ticket" })
+          .setTimestamp();
+        await interaction.editReply({ embeds:[embed] });
+        log(interaction.guild, `OPENTICKET: #${interaction.channel.name} opened by ${interaction.user.tag}`);
         return;
       }
 
-      // /price — quick coin price
+      
+      // /price — sleek single coin lookup
       if (cmd === "price") {
         await interaction.deferReply();
         const coin = interaction.options.getString("coin").toUpperCase();
         const id   = GECKO[coin];
-        if (!id) return interaction.editReply(`Unknown coin: **${coin}**. Try BTC, ETH, SOL, etc.`);
+        if (!id) {
+          return interaction.editReply({ embeds:[new EmbedBuilder()
+            .setColor(0xFF4444)
+            .setAuthor({ name:"Konvert", iconURL:IMG.LOGO })
+            .setDescription(`**${coin}** is not a supported coin.
+Try: BTC, ETH, SOL, LTC, BNB, XRP, DOGE and more.`)
+            .setFooter({ text:"Konvert  •  Supported Coins" })] });
+        }
         try {
-          const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd,cad,eur&include_24hr_change=true`);
+          const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd,cad,eur&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`);
           const dat = await res.json();
           const d   = dat[id];
-          if (!d) return interaction.editReply("Could not fetch price. Try again.");
-          const ch  = parseFloat(d.usd_24h_change||0).toFixed(2);
-          const col = Number(ch) >= 0 ? 0x00C896 : 0xFF4444;
-          const arr = Number(ch) >= 0 ? "▲" : "▼";
-          const fmt = n => n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+          if (!d) return interaction.editReply("Could not fetch price. Try again shortly.");
+          const ch   = parseFloat(d.usd_24h_change||0);
+          const col  = ch >= 0 ? 0x7C4DFF : 0xFF4444;
+          const arr  = ch >= 0 ? "▲" : "▼";
+          const fmt  = n => n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+          const mcap = d.usd_market_cap ? `$${(d.usd_market_cap/1e9).toFixed(2)}B` : "—";
+          const vol  = d.usd_24h_vol    ? `$${(d.usd_24h_vol/1e9).toFixed(2)}B`    : "—";
+          // Konvert fee preview at current price
+          const fee  = calcFee(d.usd, "send");
+          const rate = feeRate(d.usd, "send");
           return interaction.editReply({ embeds:[new EmbedBuilder()
             .setColor(col)
-            .setAuthor({ name:`${coin} — Live Price`, iconURL:COIN_LOGO[coin]||IMG.LOGO })
+            .setAuthor({ name:`${coin}  —  Live Price`, iconURL:COIN_LOGO[coin]||IMG.LOGO })
             .setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
+            .setDescription(`**$${fmt(d.usd)}** USD
+${arr} **${ch.toFixed(2)}%** in the last 24 hours
+​`)
             .addFields(
-              { name:"USD",        value:`**$${fmt(d.usd)}**`,  inline:true },
-              { name:"CAD",        value:`CA$${fmt(d.cad)}`,    inline:true },
-              { name:"EUR",        value:`€${fmt(d.eur)}`,      inline:true },
-              { name:"24h Change", value:`${arr} **${ch}%**`,   inline:true },
+              { name:"__CAD__",       value:`CA$${fmt(d.cad)}`,  inline:true },
+              { name:"__EUR__",       value:`€${fmt(d.eur)}`,    inline:true },
+              { name:"__24h Change__",value:`${arr} **${ch.toFixed(2)}%**`, inline:true },
+              { name:"__Market Cap__",value:mcap,                inline:true },
+              { name:"__24h Volume__",value:vol,                 inline:true },
+              { name:"__Konvert Fee__",value:`${rate}% — **${fmtUSD(fee)}**`, inline:true },
             )
-            .setFooter({ text:`Type $${coin} anytime  •  Konvert` })
+            .setFooter({ text:`Konvert  •  Exchange ${coin} — head to the exchange channel to open a ticket` })
             .setTimestamp()] });
-        } catch { return interaction.editReply("Failed to fetch price."); }
+        } catch { return interaction.editReply("Failed to fetch price. Try again."); }
       }
 
       // /review — post a reaction review in the reviews channel
@@ -1240,13 +1300,13 @@ This is your reminder from **${mins} minute${mins!==1?"s":""}** ago.`)
           .setThumbnail(coinL)
           .setDescription("Review your details below before confirming.\n\u200b")
           .addFields(
-            { name:"Method",    value:m.label,                             inline:true },
-            { name:"Crypto",    value:coin,                                inline:true },
-            { name:"Direction", value:direction==="send"?"Fiat → Crypto":"Crypto → Fiat", inline:true },
-            { name:"Sending",   value:sendLabel,                           inline:true },
-            { name:"Receiving", value:recvLabel,                           inline:true },
-            { name:"Est. Fee",  value:`${rate}% — ${fmtUSD(fee)}`,        inline:true },
-            { name:"Your Info", value:`||${walletInf}||`,                 inline:false },
+            { name:"__Method__",    value:`**${m.label}**`,                           inline:true },
+            { name:"__Crypto__",    value:`**${coin}**`,                                   inline:true },
+            { name:"__Direction__", value:`**${direction==="send"?"Fiat → Crypto":"Crypto → Fiat"}**`, inline:true },
+            { name:"__Sending__",   value:sendLabel,                                       inline:true },
+            { name:"__Receiving__", value:recvLabel,                                       inline:true },
+            { name:"__Est. Fee__",  value:`**${rate}%** — ${fmtUSD(fee)}`,                 inline:true },
+            { name:"__Your Info__", value:`||${walletInf}||`,                              inline:false },
           )
           .setFooter({ text:"Fee is an estimate and may vary slightly  •  Konvert" });
 
@@ -1276,25 +1336,38 @@ client.on(Events.MessageCreate, async message => {
   if (!COINS.includes(coin)) return;
   try {
     const id  = GECKO[coin] || coin.toLowerCase();
-    const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd,cad,eur,gbp&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`);
+    const res = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd,cad,eur&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`);
     const dat = await res.json();
     const d   = dat[id];
     if (!d) return;
-    const fmt = n => n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
-    const change = parseFloat(d.usd_24h_change||0).toFixed(2);
-    const embed  = new EmbedBuilder()
-      .setColor(Number(change) >= 0 ? 0x00C896 : 0xFF4444)
-      .setAuthor({ name:`${coin} — Live Price`, iconURL:COIN_LOGO[coin]||IMG.LOGO })
+    const fmt    = n => n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+    const ch     = parseFloat(d.usd_24h_change||0);
+    const chStr  = ch.toFixed(2);
+    const up     = ch >= 0;
+    const arr    = up ? "▲" : "▼";
+    const col    = CONFIG.COLOR; // always Konvert purple — clean and consistent
+    const mcap   = d.usd_market_cap ? `$${(d.usd_market_cap/1e9).toFixed(2)}B` : "—";
+    const vol    = d.usd_24h_vol    ? `$${(d.usd_24h_vol/1e9).toFixed(2)}B`    : "—";
+    const fee    = calcFee(d.usd, "send");
+    const rate   = feeRate(d.usd, "send");
+
+    const embed = new EmbedBuilder()
+      .setColor(col)
+      .setAuthor({ name:"Konvert  •  Live Price", iconURL:IMG.LOGO })
+      .setTitle(`${coin}  —  $${fmt(d.usd)} USD`)
       .setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
+      .setDescription(`${arr} **${chStr}%** in the last 24 hours
+​`)
       .addFields(
-        { name:"USD",        value:`**$${fmt(d.usd)}**`,   inline:true },
-        { name:"CAD",        value:`CA$${fmt(d.cad)}`,     inline:true },
-        { name:"EUR",        value:`€${fmt(d.eur)}`,       inline:true },
-        { name:"24h Change", value:`${Number(change)>=0?"▲":"▼"} **${change}%**`, inline:true },
-        { name:"Market Cap", value:d.usd_market_cap?`$${(d.usd_market_cap/1e9).toFixed(2)}B`:"—", inline:true },
-        { name:"24h Volume", value:d.usd_24h_vol?`$${(d.usd_24h_vol/1e9).toFixed(2)}B`:"—", inline:true },
+        { name:"__USD__",        value:`**$${fmt(d.usd)}**`, inline:true },
+        { name:"__CAD__",        value:`CA$${fmt(d.cad)}`,   inline:true },
+        { name:"__EUR__",        value:`€${fmt(d.eur)}`,     inline:true },
+        { name:"__Market Cap__", value:mcap,                 inline:true },
+        { name:"__24h Volume__", value:vol,                  inline:true },
+        { name:"__Konvert Fee__",value:`${rate}% — **${fmtUSD(fee)}**`, inline:true },
       )
-      .setFooter({ text:`Type $${coin} anytime for a live update  •  Konvert` }).setTimestamp();
+      .setFooter({ text:`$${coin} in any channel for a quick lookup  •  /price ${coin} for full info  •  Konvert` })
+      .setTimestamp();
     await message.reply({ embeds:[embed] });
   } catch {}
 });
