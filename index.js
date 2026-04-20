@@ -578,11 +578,14 @@ client.on(Events.InteractionCreate, async interaction => {
           )
           .addFields(
             { name:"Important", value:"**Do NOT go first** without using Astro MM, unless explicitly advised by an owner in your ticket.", inline:false },
-            { name:"Astro MM",  value:"[discord.gg/astromm](https://discord.gg/astromm)", inline:false },
+            { name:"Astro MM",  value:"Click the button below to join the Astro MM server.", inline:false },
           )
           .setImage(IMG.BANNER)
           .setFooter({ text:"Konvert  •  Official Escrow Partner: Astro MM" });
-        await interaction.channel.send({ embeds:[embed] });
+        const mmBtn = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setLabel("Join Astro MM").setEmoji("🤝").setStyle(ButtonStyle.Link).setURL("https://discord.gg/astromm")
+        );
+        await interaction.channel.send({ embeds:[embed], components:[mmBtn] });
         return interaction.reply({ content:"MM embed posted.", ephemeral:true });
       }
 
@@ -1161,17 +1164,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
       // /postkonvault — Konvault wagering server invite embed
       if (cmd === "postkonvault") {
-        // Create a real invite to this server
-        let inviteUrl = "https://discord.gg/konvert";
-        try {
-          const channel = interaction.guild.channels.cache
-            .filter(c => c.type === ChannelType.GuildText && c.permissionsFor(interaction.guild.roles.everyone)?.has(PermissionFlagsBits.ViewChannel))
-            .first();
-          if (channel) {
-            const invite = await channel.createInvite({ maxAge:0, maxUses:0, unique:false, reason:"Konvault embed invite" });
-            inviteUrl = `https://discord.gg/${invite.code}`;
-          }
-        } catch {}
+        const inviteUrl = "https://discord.gg/jnT63k4UA7";
 
         const embed = new EmbedBuilder()
           .setColor(CONFIG.COLOR)
