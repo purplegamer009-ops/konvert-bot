@@ -97,13 +97,15 @@ async function applyTierRole(guild, userId, volume) {
     const member = await guild.members.fetch(userId).catch(() => null);
     if (!member) return;
     const tier = getTier(volume);
-    // Add new tier role
-    if (tier.role) await member.roles.add(tier.role).catch(() => {});
-    // Remove all lower tier roles (keep higher ones)
+    // Remove ALL tier roles first
     for (const t of TIERS) {
-      if (t.role && t.role !== tier.role && t.min < tier.min) {
+      if (t.role && member.roles.cache.has(t.role) && t.role !== tier.role) {
         await member.roles.remove(t.role).catch(() => {});
       }
+    }
+    // Add correct tier role
+    if (tier.role && !member.roles.cache.has(tier.role)) {
+      await member.roles.add(tier.role).catch(() => {});
     }
   } catch {}
 }
@@ -245,6 +247,7 @@ const COMMANDS = [
   new SlashCommandBuilder().setName("postlinks").setDescription("[Owner] Post the Official Links embed in this channel").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("lookup").setDescription("[Owner] Look up a past ticket by channel name").addStringOption(o=>o.setName("name").setDescription("Ticket channel name").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("uptime").setDescription("Check how long the bot has been running"),
+  new SlashCommandBuilder().setName("postkonvault").setDescription("[Owner] Post the Konvault wagering server invite embed").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 ].map(c => c.toJSON());
 
 async function registerCommands() {
@@ -731,6 +734,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const medals = ["🥇","🥈","🥉"];
         const lines  = ranked.map(([uid, d], i) => {
           const tier = getTier(d.volume);
+          return `${medals[i] || `**${i+1}.**`}  <@${uid}>  ${tier.emoji}  —  **${fmtUSD(d.volume)}**  ·  ${d.trades} trade${d.trades!==1?"s":""}`;
         }).join("\n");
 
 
@@ -1153,6 +1157,45 @@ client.on(Events.InteractionCreate, async interaction => {
             { name:"Uptime",  value:`**${uptimeStr}**`,     inline:true },
             { name:"Latency", value:`**${client.ws.ping}ms**`, inline:true },
           ).setFooter({ text:"Konvert  •  Bot Status" })], ephemeral:true });
+      }
+
+      // /postkonvault — Konvault wagering server invite embed
+      if (cmd === "postkonvault") {
+        // Create a real invite to this server
+        let inviteUrl = "https://discord.gg/konvert";
+        try {
+          const channel = interaction.guild.channels.cache
+            .filter(c => c.type === ChannelType.GuildText && c.permissionsFor(interaction.guild.roles.everyone)?.has(PermissionFlagsBits.ViewChannel))
+            .first();
+          if (channel) {
+            const invite = await channel.createInvite({ maxAge:0, maxUses:0, unique:false, reason:"Konvault embed invite" });
+            inviteUrl = `https://discord.gg/${invite.code}`;
+          }
+        } catch {}
+
+        const embed = new EmbedBuilder()
+          .setColor(CONFIG.COLOR)
+          .setAuthor({ name:"Konvert", iconURL:IMG.LOGO })
+          .setTitle("🚀  Konvault™")
+          .setDescription(
+            "**The Ultimate Crypto Wagering Hub**\n" +
+            "— Owned by Konvert Exchange\n" +
+            "— Free MM service  ·  0% fee\n\n" +
+            "*Flip, win, repeat. It\'s that simple.*\n\u200b"
+          )
+          .addFields(
+            { name:"What We Offer", value:"💰  Choose any amount of crypto to wager\n🪙  Fair coin flips — winner takes all\n🔒  Funds securely held by trusted middlemen\n⚡  Active agents & support 24/7\n🌐  Supports ALL cryptocurrencies\n🔍  Full transparency — proof provided for every wager\n✅  0 fees — tips are always welcome", inline:false },
+            { name:"🎉  Join Now", value:`Click the button below to join Konvault and start flipping!\n${inviteUrl}`, inline:false },
+          )
+          .setImage(IMG.BANNER)
+          .setFooter({ text:"Konvault by Konvert Exchange  •  Free MM  •  0% Fee" })
+          .setTimestamp();
+
+        const joinBtn = new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setLabel("Join Konvault").setEmoji("🚀").setStyle(ButtonStyle.Link).setURL(inviteUrl)
+        );
+        await interaction.channel.send({ embeds:[embed], components:[joinBtn] });
+        return interaction.reply({ content:`Konvault embed posted with invite: ${inviteUrl}`, ephemeral:true });
       }
 
       // /postinfo
