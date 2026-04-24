@@ -574,7 +574,7 @@ client.on(Events.MessageCreate, async message => {
           part: ["snippet", "status"],
           requestBody: {
             snippet: {
-              title: GYM_TITLES[Math.floor(Math.random() * GYM_TITLES.length)],
+              title: `${rawTitle} 💪 #GymMotivation #Shorts`,
               description,
               tags: ["gym motivation","gym life","fitness motivation","workout motivation","bodybuilding","gym shorts","fitness shorts","no excuses","beast mode","grind","gym goals","muscle motivation","train hard","never give up","gym community","fit life","gains","lift heavy","sweat","hustle","gymtok","fitnesstok","gym","workout","fitness"],
               categoryId: "17",
