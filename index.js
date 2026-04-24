@@ -536,9 +536,27 @@ async function doCloseTicket(channel, guild, closedBy, reason) {
   log(guild, `CLOSED: #${channel.name} by ${closedBy.tag} -- ${reason}`);
 }
 
+// ─── GYM MOTIVEZ CAPTIONS ────────────────────────────────────
+const GYM_CAPTIONS = [
+  "No days off. No excuses. Just results. 💪 Subscribe for daily gym motivation!",
+  "Your only competition is who you were yesterday. 🔥 Drop a 💪 if you're grinding!",
+  "Pain is temporary. Glory is forever. Subscribe and stay motivated every day!",
+  "The gym doesn't care about your feelings. Show up anyway. 💯 Subscribe for more!",
+  "Every rep counts. Every set matters. Every day is a chance to be better. 🔥 Subscribe!",
+  "Champions aren't born. They're built in the gym. 💪 Subscribe for daily fire!",
+  "You don't get what you wish for. You get what you work for. Subscribe now! 🔥",
+  "Beast mode activated. 💪 Subscribe to @GymMotivez for daily motivation!",
+  "The pain you feel today is the strength you'll feel tomorrow. 🔥 Subscribe!",
+  "Sweat now. Shine later. 💪 Subscribe to @GymMotivez and never miss a drop!",
+  "Weak people give up. Strong people show up. 💪 Subscribe to @GymMotivez!",
+  "Your body can handle almost anything. It's your mind you have to convince. 🔥 Subscribe!",
+  "One more rep. One more set. One step closer. 💪 Subscribe to @GymMotivez!",
+  "The only bad workout is the one that didn't happen. 🔥 Subscribe for daily fire!",
+  "Fall in love with the process and the results will come. 💪 Subscribe now!",
+];
+
 // ─── YOUTUBE UPLOAD HANDLER ──────────────────────────────────
 client.on(Events.MessageCreate, async message => {
-  // ── YouTube Shorts auto-upload ──
   if (CONFIG.SHORTS_CHANNEL && message.channel.id === CONFIG.SHORTS_CHANNEL && !message.author.bot) {
     const attachment = message.attachments.find(a => a.contentType?.startsWith("video/"));
     if (attachment) {
@@ -549,11 +567,18 @@ client.on(Events.MessageCreate, async message => {
         const response = await axios({ url: attachment.url, method: "GET", responseType: "stream" });
         response.data.pipe(writer);
         await new Promise((resolve, reject) => { writer.on("finish", resolve); writer.on("error", reject); });
-        const title = attachment.name.replace(/\.[^/.]+$/, "");
+        const rawTitle = attachment.name.replace(/\.[^/.]+$/, "");
+        const randomCaption = GYM_CAPTIONS[Math.floor(Math.random() * GYM_CAPTIONS.length)];
+        const description = `${randomCaption}\n\n🔔 Subscribe to @GymMotivez for daily gym motivation!\n👊 Like & Share if this fired you up!\n💪 Comment your workout below!\n\n#GymMotivation #GymLife #Fitness #Workout #FitnessMotivation #GymMotivez #Bodybuilding #GymTok #FitLife #Grind #NoExcuses #BeastMode #WorkoutMotivation #GymShorts #FitnessShorts #Gains #LiftHeavy #GymCommunity #FitnessTok #Sweat #Hustle #GymGoals #MuscleMotivation #TrainHard #NeverGiveUp`;
         const res = await youtube.videos.insert({
           part: ["snippet", "status"],
           requestBody: {
-            snippet: { title, description: "#Shorts", tags: ["Shorts"], categoryId: "22" },
+            snippet: {
+              title: `${rawTitle} 💪 #GymMotivation #Shorts`,
+              description,
+              tags: ["gym motivation","gym life","fitness motivation","workout motivation","bodybuilding","gym shorts","fitness shorts","no excuses","beast mode","grind","gym goals","muscle motivation","train hard","never give up","gym community","fit life","gains","lift heavy","sweat","hustle","gymtok","fitnesstok","gym","workout","fitness"],
+              categoryId: "17",
+            },
             status: { privacyStatus: "public" },
           },
           media: { body: fs.createReadStream(filePath) },
@@ -570,7 +595,6 @@ client.on(Events.MessageCreate, async message => {
     }
   }
 
-  // ── $COIN message lookup ──
   if (message.author.bot) return;
   const match = message.content.trim().match(/^\$([A-Za-z]{2,10})$/i);
   if (!match) return;
@@ -1279,7 +1303,6 @@ client.on(Events.InteractionCreate, async interaction => {
       return;
     }
 
-    // ── SELECT MENUS ──
     if (interaction.isStringSelectMenu()) {
       if (interaction.customId === "select_method") {
         const method=interaction.values[0];
@@ -1325,7 +1348,6 @@ client.on(Events.InteractionCreate, async interaction => {
       }
     }
 
-    // ── BUTTONS ──
     if (interaction.isButton()) {
       if (interaction.customId === "btn_exchange_now") {
         const bl=load("blacklist");
@@ -1538,7 +1560,6 @@ client.on(Events.InteractionCreate, async interaction => {
       }
     }
 
-    // ── MODALS ──
     if (interaction.isModalSubmit()) {
       if (interaction.customId === "modal_support") {
         const issue=interaction.fields.getTextInputValue("sup_issue");
