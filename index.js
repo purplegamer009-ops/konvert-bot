@@ -25,7 +25,7 @@ oauth2Client.setCredentials({ refresh_token: process.env.YOUTUBE_REFRESH_TOKEN }
 const youtube = google.youtube({ version: "v3", auth: oauth2Client });
 
 const IMG = {
-  LOGO:"https://i.imgur.com/GXwsQv0.png", BANNER:"https://i.imgur.com/uVQ6hho.png",
+  LOGO:"https://i.imgur.com/tkhEu37.png", BANNER:"https://i.imgur.com/RKBMVae.png",
   RATES:"https://i.imgur.com/0zbG9Fc.png", FEE:"https://i.imgur.com/o6bi905.png",
   RULES:"https://i.imgur.com/CaBjEFU.png", TICKET:"https://i.imgur.com/GasrfTC.png",
   WELCOME:"https://i.imgur.com/hSYrFai.png", DEAL:"https://i.imgur.com/GuBspYH.png",
@@ -596,13 +596,15 @@ async function doCloseTicket(channel,guild,closedBy,reason){
 // --- COMPLETE TRADE FUNCTION (used by btn_done and modal_done) ---
 async function completeTrade(interaction, ticket, tickets) {
   const m = getMethod(ticket.method);
-  // 1. Save as vouched
-  tickets[interaction.channel.id] = ticket;
+  // 1. Save as vouched -- update _mem directly so leaderboard/stats see it instantly
   ticket.status = "vouched";
   ticket.completedBy = interaction.user.id;
   ticket.completedAt = Date.now();
-  save("tickets", tickets);
-  console.log(`[completeTrade] saved vouched ticket for userId=${ticket.userId} amount=${ticket.amountUSD}`);
+  ticket.amountUSD = parseFloat(ticket.amountUSD)||0;
+  tickets[interaction.channel.id] = ticket;
+  _mem.tickets = tickets; // update in-memory immediately
+  save("tickets", tickets); // write disk + trigger Discord backup
+  console.log(`[completeTrade] saved: userId=${ticket.userId} amount=${ticket.amountUSD} total=${Object.keys(tickets).length}`);
   // 2. Post vouch embed
   await postVouch(interaction.guild, {clientId:ticket.userId, exchangerId:interaction.user.id, method:m?.label||ticket.method, amountUSD:ticket.amountUSD, direction:ticket.direction, coin:ticket.coin, message:null, rating:5});
   // 3. Live feed
@@ -864,48 +866,38 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.editReply({embeds:[embed]});
       }
 
-      // /leaderboard -- reads from in-memory for consistency with stats
+      // /leaderboard -- clean, rank + amount only
       if(cmd==="leaderboard"){
         await interaction.deferReply();
         const DONE_STATUS=["vouched","completed"];
-        // Always read from _mem so it matches stats exactly
-        const allEntries=Object.values(_mem.tickets||load("tickets"));
+        const allEntries=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
         const allT=allEntries.filter(t=>DONE_STATUS.includes(t.status)&&t.amountUSD&&parseFloat(t.amountUSD)>0);
-        console.log(`[leaderboard] total:${allEntries.length} qualified:${allT.length} statuses:${[...new Set(allEntries.map(t=>t.status))].join(",")}`);
         if(!allT.length)return interaction.editReply({embeds:[new EmbedBuilder()
           .setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
-          .setTitle("Client Leaderboard")
-          .setThumbnail(IMG.LOGO)
-          .setDescription("No completed trades on record yet.\n\nComplete a trade or use `/vouch` to appear here.\n\u200b")
+          .setTitle("Client Leaderboard").setThumbnail(IMG.LOGO)
+          .setDescription("No completed trades on record yet.\n\nComplete a trade to appear here.\n\u200b")
           .setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  \u2022  Leaderboard"}).setTimestamp()]});
         const byUser={};
         allT.forEach(t=>{
-          if(!byUser[t.userId])byUser[t.userId]={volume:0,trades:0};
-          byUser[t.userId].volume+=parseFloat(t.amountUSD)||0;
-          byUser[t.userId].trades+=1;
+          if(!byUser[t.userId])byUser[t.userId]=0;
+          byUser[t.userId]+=parseFloat(t.amountUSD)||0;
         });
-        if(state.volumeAdj){for(const [uid,adj] of Object.entries(state.volumeAdj)){if(byUser[uid])byUser[uid].volume=Math.max(0,byUser[uid].volume+adj);}}
-        const ranked=Object.entries(byUser).sort((a,b)=>b[1].volume-a[1].volume).slice(0,10);
-        for(const [uid,d] of ranked){applyTierRole(interaction.guild,uid,d.volume).catch(()=>{});}
-        const lines=ranked.map(([uid,d],i)=>{
-          const tier=getTier(d.volume);
-          const prefix=i===0?"**1.**":i===1?"**2.**":i===2?"**3.**":`**${i+1}.**`;
-          return `${prefix} <@${uid}> ${tier.emoji}  —  **${fmtUSD(d.volume)}** · ${d.trades} trade${d.trades!==1?"s":""}`;
-        }).join("\n");
-        const totalVol=ranked.reduce((s,[,d])=>s+d.volume,0);
+        if(state.volumeAdj){for(const [uid,adj] of Object.entries(state.volumeAdj)){if(byUser[uid]!==undefined)byUser[uid]=Math.max(0,byUser[uid]+adj);}}
+        const ranked=Object.entries(byUser).sort((a,b)=>b[1]-a[1]).slice(0,10);
+        for(const [uid,vol] of ranked){applyTierRole(interaction.guild,uid,vol).catch(()=>{});}
+        const medals=["🥇","🥈","🥉"];
+        const lines=ranked.map(([uid,vol],i)=>
+          `${medals[i]||`**${i+1}.**`}  <@${uid}>  —  **${fmtUSD(vol)}**`
+        ).join("\n");
+        const totalVol=ranked.reduce((s,[,v])=>s+v,0);
         return interaction.editReply({embeds:[new EmbedBuilder()
-          .setColor(CONFIG.COLOR)
-          .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
+          .setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
           .setTitle("Client Leaderboard")
           .setDescription(`The Top ${ranked.length} Client${ranked.length!==1?"s":""} at Konvert\n\u200b`)
           .setThumbnail(IMG.LOGO)
-          .addFields(
-            {name:"\u200b",value:lines,inline:false},
-            {name:"Total Volume",value:`**${fmtUSD(totalVol)}**`,inline:true},
-            {name:"Traders",value:`**${ranked.length}**`,inline:true},
-          )
+          .addFields({name:"\u200b",value:lines,inline:false})
           .setImage(IMG.BANNER)
-          .setFooter({text:`Last Updated: just now  ·  Konvert Exchange`}).setTimestamp()]});
+          .setFooter({text:`Total Volume: ${fmtUSD(totalVol)}  ·  Konvert Exchange`}).setTimestamp()]});
       }
       if(cmd==="market"){
         await interaction.deferReply();
@@ -946,6 +938,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const message=interaction.options.getString("message"),method=interaction.options.getString("method"),amount=interaction.options.getNumber("amount"),rating=interaction.options.getInteger("rating")||5;
         const vt=load("tickets");
         vt["manual_"+Date.now()]={userId:clientUser.id,userTag:clientUser.tag,method,direction:null,coin:null,amountUSD:amount,feeUSD:calcFee(amount,"send"),walletInfo:"manual",notes:"Manual vouch via /vouch",status:"vouched",completedBy:exchUser.id,completedAt:Date.now(),createdAt:Date.now()};
+        _mem.tickets=vt; // update in-memory immediately
         save("tickets",vt);
         await postVouch(interaction.guild,{clientId:clientUser.id,exchangerId:exchUser.id,method,amountUSD:amount,direction:null,coin:null,message,rating});
         const allC=Object.values(load("tickets")).filter(t=>t.userId===clientUser.id&&t.status==="vouched");
