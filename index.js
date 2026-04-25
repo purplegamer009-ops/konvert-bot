@@ -91,13 +91,12 @@ const COINS=["BTC","ETH","SOL","LTC","USDT","USDC","XRP","BNB","ADA","DOGE","MAT
 const GECKO={BTC:"bitcoin",ETH:"ethereum",SOL:"solana",LTC:"litecoin",USDT:"tether",USDC:"usd-coin",XRP:"ripple",BNB:"binancecoin",ADA:"cardano",DOGE:"dogecoin",MATIC:"matic-network",AVAX:"avalanche-2",DOT:"polkadot",LINK:"chainlink",TRX:"tron",SHIB:"shiba-inu",UNI:"uniswap",ATOM:"cosmos",FTM:"fantom",NEAR:"near"};
 const COIN_LOGO={BTC:"https://assets.coingecko.com/coins/images/1/large/bitcoin.png",ETH:"https://assets.coingecko.com/coins/images/279/large/ethereum.png",SOL:"https://assets.coingecko.com/coins/images/4128/large/solana.png",LTC:"https://assets.coingecko.com/coins/images/2/large/litecoin.png",USDT:"https://assets.coingecko.com/coins/images/325/large/Tether.png",USDC:"https://assets.coingecko.com/coins/images/6319/large/usdc.png",XRP:"https://assets.coingecko.com/coins/images/44/large/xrp-symbol-white-128.png",BNB:"https://assets.coingecko.com/coins/images/825/large/binance-coin-logo.png",ADA:"https://assets.coingecko.com/coins/images/975/large/cardano.png",DOGE:"https://assets.coingecko.com/coins/images/5/large/dogecoin.png"};
 
-// Use /data if Railway volume is mounted, otherwise /tmp (survives most restarts)
-const DATA_DIR=(()=>{
-  const preferred="/data";
-  try{fs.mkdirSync(preferred,{recursive:true});fs.accessSync(preferred,fs.constants.W_OK);return preferred;}
-  catch{console.log("[storage] /data not writable, using /tmp");return "/tmp";}
-})();
-const DB={tickets:`${DATA_DIR}/tickets.json`,wallets:`${DATA_DIR}/wallets.json`,blacklist:`${DATA_DIR}/blacklist.json`};
+// /tmp persists across Railway restarts (only clears on new deploys)
+// Set DATA_DIR=/data in Railway Variables if you have a Volume mounted
+const DATA_DIR=process.env.DATA_DIR||"/tmp";
+try{fs.mkdirSync(DATA_DIR,{recursive:true});}catch{}
+console.log(`[storage] using ${DATA_DIR}`);
+const DB={tickets:`${DATA_DIR}/konvert_tickets.json`,wallets:`${DATA_DIR}/konvert_wallets.json`,blacklist:`${DATA_DIR}/konvert_blacklist.json`};
 const load=k=>{try{return JSON.parse(fs.readFileSync(DB[k],"utf8"));}catch(e){console.log(`[load] ${k} -> ${DB[k]}: ${e.message}`);return {};}};
 const save=(k,d)=>{try{fs.writeFileSync(DB[k],JSON.stringify(d,null,2));console.log(`[save] ${k} -> ${DB[k]} (${Object.keys(d).length} entries)`);}catch(e){console.error(`[save ERROR] ${k}: ${e.message}`);}};
 
