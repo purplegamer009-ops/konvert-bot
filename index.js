@@ -101,20 +101,60 @@ function feeRate(usd,dir){let r=usd<150?9:usd<500?7:usd<1000?6:5.5;if(dir==="rec
 const base=title=>new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(title).setTimestamp();
 function log(guild,msg){if(!CONFIG.LOG_CHANNEL||!guild)return;const ch=guild.channels.cache.get(CONFIG.LOG_CHANNEL);if(ch)ch.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setDescription("```"+msg+"```").setTimestamp()]}).catch(()=>{});}
 
-// Price cache + 3 retries -- fixes SOL/BTC intermittent fails when spammed
+// Price cache -- 5 min TTL, dual API sources (CoinGecko + CoinCap fallback), request queue
 const _priceCache={};
+const _inFlight={};
 async function getPrice(coin){
   const id=GECKO[coin];if(!id)return null;
-  if(_priceCache[id]&&Date.now()-_priceCache[id].ts<30000)return _priceCache[id].v;
+  // Return cache if fresh (5 minutes)
+  if(_priceCache[id]&&Date.now()-_priceCache[id].ts<300000)return _priceCache[id].v;
+  // Deduplicate: if a fetch is already in flight for this coin, wait for it
+  if(_inFlight[id])return _inFlight[id];
+  _inFlight[id]=_fetchPrice(id,coin).finally(()=>delete _inFlight[id]);
+  return _inFlight[id];
+}
+async function _fetchPrice(id,coin){
+  // Try CoinGecko first
   for(let i=0;i<3;i++){
     try{
       const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd`,{signal:AbortSignal.timeout(8000)});
+      if(r.status===429){await new Promise(res=>setTimeout(res,2000*(i+1)));continue;}
       if(!r.ok){await new Promise(res=>setTimeout(res,1000*(i+1)));continue;}
       const d=await r.json(),v=d[id]?.usd||null;
       if(v!==null){_priceCache[id]={v,ts:Date.now()};return v;}
     }catch{await new Promise(res=>setTimeout(res,1000*(i+1)));}
   }
+  // Fallback: CoinCap API (no rate limit issues)
+  try{
+    const r=await fetch(`https://api.coincap.io/v2/assets/${id}`,{signal:AbortSignal.timeout(8000)});
+    if(r.ok){const d=await r.json();const v=parseFloat(d?.data?.priceUsd||0)||null;if(v){_priceCache[id]={v,ts:Date.now()};return v;}}
+  }catch{}
+  // Last resort: return stale cache if available rather than null
+  if(_priceCache[id])return _priceCache[id].v;
   return null;
+}
+
+// Fetch multiple coin prices in ONE request (avoids rate limits when spamming)
+async function getPrices(coins){
+  const ids=coins.map(c=>GECKO[c]).filter(Boolean);
+  if(!ids.length)return {};
+  // Check if all cached
+  const now=Date.now(),result={};
+  const needed=ids.filter(id=>!_priceCache[id]||now-_priceCache[id].ts>300000);
+  // Return cached for fresh ones immediately
+  for(const c of coins){const id=GECKO[c];if(id&&_priceCache[id])result[c]=_priceCache[id].v;}
+  if(!needed.length)return result;
+  // Batch fetch the ones we need
+  try{
+    const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${needed.join(",")}&vs_currencies=usd`,{signal:AbortSignal.timeout(10000)});
+    if(r.ok){
+      const d=await r.json();
+      for(const c of coins){const id=GECKO[c];if(id&&d[id]?.usd){_priceCache[id]={v:d[id].usd,ts:now};result[c]=d[id].usd;}}
+    }
+  }catch{}
+  // Fallback stale cache for anything still missing
+  for(const c of coins){if(!result[c]&&GECKO[c]&&_priceCache[GECKO[c]])result[c]=_priceCache[GECKO[c]].v;}
+  return result;
 }
 
 const client=new Client({intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent,GatewayIntentBits.GuildMembers],partials:[Partials.Channel]});
@@ -441,17 +481,23 @@ client.on(Events.MessageCreate, async message => {
   const id=GECKO[coin];if(!id)return;
   let d=null;
   const cKey=id+"_full";
-  if(_priceCache[cKey]&&Date.now()-_priceCache[cKey].ts<30000){d=_priceCache[cKey].v;}
-  else{
+  // 5 minute cache
+  if(_priceCache[cKey]&&Date.now()-_priceCache[cKey].ts<300000){d=_priceCache[cKey].v;}
+  if(!d){
     for(let attempt=0;attempt<3;attempt++){
       try{
         const res=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd,cad,eur&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`,{signal:AbortSignal.timeout(8000)});
+        if(res.status===429){await new Promise(r=>setTimeout(r,3000*(attempt+1)));continue;}
         if(!res.ok){await new Promise(r=>setTimeout(r,1000*(attempt+1)));continue;}
         const json=await res.json();
         if(json[id]?.usd){d=json[id];_priceCache[cKey]={v:d,ts:Date.now()};break;}
       }catch{await new Promise(r=>setTimeout(r,1000*(attempt+1)));}
     }
   }
+  // CoinCap fallback
+  if(!d){try{const r=await fetch(`https://api.coincap.io/v2/assets/${id}`,{signal:AbortSignal.timeout(8000)});if(r.ok){const j=await r.json();const usd=parseFloat(j?.data?.priceUsd||0);if(usd){d={usd,cad:usd*1.37,eur:usd*0.93,usd_24h_change:parseFloat(j?.data?.changePercent24Hr||0),usd_market_cap:parseFloat(j?.data?.marketCapUsd||0),usd_24h_vol:parseFloat(j?.data?.volumeUsd24Hr||0)};_priceCache[cKey]={v:d,ts:Date.now()};}}}catch{}}
+  // Stale cache last resort
+  if(!d&&_priceCache[cKey])d=_priceCache[cKey].v;
   if(!d){await message.reply(`\u274C Could not fetch **${coin}** price right now. Try again in a moment.`).catch(()=>{});return;}
   const fmt=n=>{if(n>=1)return n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});if(n>=0.01)return n.toFixed(4);return n.toFixed(8);};
   const ch2=parseFloat(d.usd_24h_change||0);
@@ -531,8 +577,10 @@ client.on(Events.InteractionCreate, async interaction => {
         if(!id)return interaction.editReply({embeds:[new EmbedBuilder().setColor(0xFF4444).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setDescription(`**${coin}** is not supported. Try BTC, ETH, SOL, LTC, BNB, XRP, DOGE and more.`)]});
         let d=null;
         const cKey=id+"_full";
-        if(_priceCache[cKey]&&Date.now()-_priceCache[cKey].ts<30000){d=_priceCache[cKey].v;}
-        else{for(let i=0;i<3;i++){try{const res=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd,cad,eur&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`,{signal:AbortSignal.timeout(8000)});if(!res.ok){await new Promise(r=>setTimeout(r,1000*(i+1)));continue;}const dat=await res.json();if(dat[id]?.usd){d=dat[id];_priceCache[cKey]={v:d,ts:Date.now()};break;}}catch{await new Promise(r=>setTimeout(r,1000*(i+1)));}}}
+        if(_priceCache[cKey]&&Date.now()-_priceCache[cKey].ts<300000){d=_priceCache[cKey].v;}
+        if(!d){for(let i=0;i<3;i++){try{const res=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd,cad,eur&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`,{signal:AbortSignal.timeout(8000)});if(res.status===429){await new Promise(r=>setTimeout(r,3000*(i+1)));continue;}if(!res.ok){await new Promise(r=>setTimeout(r,1000*(i+1)));continue;}const dat=await res.json();if(dat[id]?.usd){d=dat[id];_priceCache[cKey]={v:d,ts:Date.now()};break;}}catch{await new Promise(r=>setTimeout(r,1000*(i+1)));}}}
+        if(!d){try{const r=await fetch(`https://api.coincap.io/v2/assets/${id}`,{signal:AbortSignal.timeout(8000)});if(r.ok){const j=await r.json();const usd=parseFloat(j?.data?.priceUsd||0);if(usd){d={usd,cad:usd*1.37,eur:usd*0.93,usd_24h_change:parseFloat(j?.data?.changePercent24Hr||0),usd_market_cap:parseFloat(j?.data?.marketCapUsd||0),usd_24h_vol:parseFloat(j?.data?.volumeUsd24Hr||0)};_priceCache[cKey]={v:d,ts:Date.now()};}}}catch{}}
+        if(!d&&_priceCache[cKey])d=_priceCache[cKey].v;
         if(!d)return interaction.editReply("\u274C Could not fetch price right now. Try again in a moment.");
         const ch=parseFloat(d.usd_24h_change||0),isUp=ch>=0;
         const fmt2=n=>n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
