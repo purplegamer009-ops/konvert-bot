@@ -138,17 +138,24 @@ const save=(k,d)=>{
 
 // Backup tickets as a JSON file attachment to a private Discord channel
 async function _backupToDiscord(data){
-  if(!client.isReady())return; // don't try if bot not ready
+  if(!client.isReady())return;
   if(!process.env.BACKUP_CHANNEL_ID)return;
   try{
-    const ch=client.channels.cache.get(process.env.BACKUP_CHANNEL_ID);
+    // Use fetch instead of cache to ensure we get the channel even if not cached
+    const ch=await client.channels.fetch(process.env.BACKUP_CHANNEL_ID).catch(e=>{console.error("[backup] cannot fetch channel:",e.message);return null;});
     if(!ch){console.error("[backup] channel not found:",process.env.BACKUP_CHANNEL_ID);return;}
     const json=JSON.stringify(data,null,2);
     const buf=Buffer.from(json,"utf8");
-    const msgs=await ch.messages.fetch({limit:10}).catch(()=>null);
-    if(msgs){for(const m of msgs.values()){if(m.author?.id===client.user.id)await m.delete().catch(()=>{});}}
-    await ch.send({content:`\uD83D\uDCBE **Backup** \`${new Date().toISOString()}\` — ${Object.keys(data).length} entries`,files:[{attachment:buf,name:"konvert_tickets.json"}]});
-    console.log(`[backup] sent ${Object.keys(data).length} tickets to Discord`);
+    // Delete old backups
+    try{
+      const msgs=await ch.messages.fetch({limit:10});
+      for(const m of msgs.values()){if(m.author?.id===client.user.id)await m.delete().catch(()=>{});}
+    }catch{}
+    await ch.send({
+      content:`**Backup** \`${new Date().toISOString()}\` — ${Object.keys(data).length} entries`,
+      files:[{attachment:buf,name:"konvert_tickets.json"}]
+    });
+    console.log(`[backup] SUCCESS — ${Object.keys(data).length} tickets sent to Discord`);
   }catch(e){console.error("[backup error]",e.message);}
 }
 
@@ -235,28 +242,67 @@ async function fetchFullPrice(coin){
   const cKey=coin+"_full";
   if(_priceCache[cKey]&&Date.now()-_priceCache[cKey].ts<300000)return _priceCache[cKey].v;
   let d=null;
-  // 1. Binance 24hr ticker
+  // 1. Binance 24hr ticker -- fastest, no rate limits
   if(BINANCE[coin]){
     try{
       const r=await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${BINANCE[coin]}`,{signal:AbortSignal.timeout(5000)});
-      if(r.ok){const j=await r.json();const usd=parseFloat(j.lastPrice||0);if(usd>0){d={usd,cad:usd*1.37,eur:usd*0.93,usd_24h_change:parseFloat(j.priceChangePercent||0),usd_market_cap:0,usd_24h_vol:parseFloat(j.quoteVolume||0)};_priceCache[cKey]={v:d,ts:Date.now()};_priceCache[coin]={v:usd,ts:Date.now()};}}
-    }catch{}
+      if(r.ok){
+        const j=await r.json();
+        const usd=parseFloat(j.lastPrice||0);
+        if(usd>0){
+          d={usd,cad:usd*1.37,eur:usd*0.93,usd_24h_change:parseFloat(j.priceChangePercent||0),usd_market_cap:0,usd_24h_vol:parseFloat(j.quoteVolume||0)};
+          _priceCache[cKey]={v:d,ts:Date.now()};
+          _priceCache[coin]={v:usd,ts:Date.now()};
+          return d;
+        }
+      }
+    }catch(e){console.log(`[price] Binance failed for ${coin}: ${e.message}`);}
   }
-  // 2. CoinGecko for full multi-currency data
+  // 2. CoinGecko fallback
   if(!d&&GECKO[coin]){
     const id=GECKO[coin];
-    for(let i=0;i<2;i++){
+    for(let i=0;i<3;i++){
       try{
-        const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd,cad,eur&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`,{signal:AbortSignal.timeout(8000)});
+        const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd,cad,eur&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`,{signal:AbortSignal.timeout(10000)});
         if(r.status===429){await new Promise(res=>setTimeout(res,3000*(i+1)));continue;}
         if(!r.ok){await new Promise(res=>setTimeout(res,1000*(i+1)));continue;}
-        const j=await r.json();if(j[id]?.usd){d=j[id];_priceCache[cKey]={v:d,ts:Date.now()};_priceCache[coin]={v:d.usd,ts:Date.now()};break;}
+        const j=await r.json();
+        if(j[id]?.usd){
+          d=j[id];
+          _priceCache[cKey]={v:d,ts:Date.now()};
+          _priceCache[coin]={v:d.usd,ts:Date.now()};
+          return d;
+        }
       }catch{await new Promise(res=>setTimeout(res,1000*(i+1)));}
     }
   }
-  // 3. Stale cache
-  if(!d&&_priceCache[cKey])d=_priceCache[cKey].v;
-  return d;
+  // 3. Kraken as second fallback (covers LTC and others reliably)
+  if(!d){
+    const KRAKEN={BTC:"XBTUSD",ETH:"ETHUSD",LTC:"LTCUSD",XRP:"XRPUSD",ADA:"ADAUSD",SOL:"SOLUSD",DOGE:"XDGUSD",DOT:"DOTUSD",LINK:"LINKUSD",ATOM:"ATOMUSD"};
+    if(KRAKEN[coin]){
+      try{
+        const r=await fetch(`https://api.kraken.com/0/public/Ticker?pair=${KRAKEN[coin]}`,{signal:AbortSignal.timeout(8000)});
+        if(r.ok){
+          const j=await r.json();
+          const pair=Object.values(j.result||{})[0];
+          const usd=parseFloat(pair?.c?.[0]||0);
+          if(usd>0){
+            d={usd,cad:usd*1.37,eur:usd*0.93,usd_24h_change:0,usd_market_cap:0,usd_24h_vol:0};
+            _priceCache[cKey]={v:d,ts:Date.now()};
+            _priceCache[coin]={v:usd,ts:Date.now()};
+            return d;
+          }
+        }
+      }catch(e){console.log(`[price] Kraken failed for ${coin}: ${e.message}`);}
+    }
+  }
+  // 4. Stale cache last resort -- never return null if we have ANY old data
+  if(_priceCache[cKey]){
+    console.log(`[price] returning stale cache for ${coin}`);
+    return _priceCache[cKey].v;
+  }
+  console.log(`[price] ALL sources failed for ${coin}`);
+  return null;
 }
 
 const client=new Client({intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent,GatewayIntentBits.GuildMembers],partials:[Partials.Channel]});
