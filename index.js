@@ -138,15 +138,16 @@ const save=(k,d)=>{
 
 // Backup tickets as a JSON file attachment to a private Discord channel
 async function _backupToDiscord(data){
-  if(!client.isReady())return;
-  if(!process.env.BACKUP_CHANNEL_ID)return;
+  if(!client.isReady()){console.log("[backup] skipped - client not ready");return;}
+  if(!process.env.BACKUP_CHANNEL_ID){console.log("[backup] skipped - no BACKUP_CHANNEL_ID");return;}
   try{
-    // Use fetch instead of cache to ensure we get the channel even if not cached
-    const ch=await client.channels.fetch(process.env.BACKUP_CHANNEL_ID).catch(e=>{console.error("[backup] cannot fetch channel:",e.message);return null;});
-    if(!ch){console.error("[backup] channel not found:",process.env.BACKUP_CHANNEL_ID);return;}
+    const ch=await client.channels.fetch(process.env.BACKUP_CHANNEL_ID).catch(e=>{
+      console.error("[backup] CANNOT FETCH CHANNEL:",process.env.BACKUP_CHANNEL_ID,"error:",e.message);
+      return null;
+    });
+    if(!ch){return;}
     const json=JSON.stringify(data,null,2);
     const buf=Buffer.from(json,"utf8");
-    // Delete old backups
     try{
       const msgs=await ch.messages.fetch({limit:10});
       for(const m of msgs.values()){if(m.author?.id===client.user.id)await m.delete().catch(()=>{});}
@@ -155,8 +156,10 @@ async function _backupToDiscord(data){
       content:`**Backup** \`${new Date().toISOString()}\` — ${Object.keys(data).length} entries`,
       files:[{attachment:buf,name:"konvert_tickets.json"}]
     });
-    console.log(`[backup] SUCCESS — ${Object.keys(data).length} tickets sent to Discord`);
-  }catch(e){console.error("[backup error]",e.message);}
+    console.log(`[backup] SUCCESS — ${Object.keys(data).length} tickets`);
+  }catch(e){
+    console.error("[backup] FAILED:",e.message,"\nStack:",e.stack?.split("\n")[1]);
+  }
 }
 
 // Restore from Discord backup on startup if disk is empty
@@ -394,7 +397,7 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("postkonvault").setDescription("[Owner] Post the Konvault wagering server invite embed").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("adjuststats").setDescription("[Owner] Add or subtract volume from a user's stats").addUserOption(o=>o.setName("user").setDescription("User").setRequired(true)).addNumberOption(o=>o.setName("amount").setDescription("Amount in USD (use negative to subtract)").setRequired(true)).addStringOption(o=>o.setName("reason").setDescription("Reason for adjustment").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("resetstats").setDescription("[Owner] Reset a user's volume adjustment back to 0").addUserOption(o=>o.setName("user").setDescription("User").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  new SlashCommandBuilder().setName("livefeed").setDescription("[Owner] Toggle live deal feed on/off").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("testbackup").setDescription("[Owner] Test the backup channel right now").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 ].map(c=>c.toJSON());
 
 async function registerCommands(){
@@ -1075,6 +1078,26 @@ client.on(Events.InteractionCreate, async interaction => {
         const rawVol=allT.filter(t=>t.userId===target.id&&DONE_STATUS.includes(t.status)).reduce((s,t)=>s+(t.amountUSD||0),0);
         await applyTierRole(interaction.guild,target.id,rawVol);
         return interaction.reply({content:`Stats adjustment for **${target.tag}** has been reset to $0. Volume is now **${fmtUSD(rawVol)}** from trades only.`,ephemeral:true});
+      }
+
+      if(cmd==="testbackup"){
+        await interaction.deferReply({ephemeral:true});
+        const channelId=process.env.BACKUP_CHANNEL_ID;
+        if(!channelId)return interaction.editReply("❌ `BACKUP_CHANNEL_ID` is not set in Railway Variables.");
+        try{
+          const ch=await client.channels.fetch(channelId).catch(e=>null);
+          if(!ch)return interaction.editReply(`❌ Cannot find channel \`${channelId}\`. Make sure the bot is in the same server and has access to this channel.`);
+          const tickets=_mem.tickets||load("tickets");
+          const json=JSON.stringify(tickets,null,2);
+          const buf=Buffer.from(json,"utf8");
+          await ch.send({
+            content:`**Test Backup** \`${new Date().toISOString()}\` — ${Object.keys(tickets).length} entries`,
+            files:[{attachment:buf,name:"konvert_tickets.json"}]
+          });
+          return interaction.editReply(`✅ Backup sent successfully to <#${channelId}> with **${Object.keys(tickets).length}** entries.`);
+        }catch(e){
+          return interaction.editReply(`❌ Backup failed: \`${e.message}\`\n\nMake sure the bot has **Send Messages** and **Attach Files** permissions in <#${channelId}>.`);
+        }
       }
 
       if(cmd==="setfeedchannel"){const channelId=interaction.options.getString("channel_id"),ch=interaction.guild.channels.cache.get(channelId);if(!ch)return interaction.reply({content:"Channel not found.",ephemeral:true});state.feedChannel=channelId;return interaction.reply({content:`\uD83D\uDCE1 Live deal feed channel set to <#${channelId}>.`,ephemeral:true});}
