@@ -91,14 +91,92 @@ const COINS=["BTC","ETH","SOL","LTC","USDT","USDC","XRP","BNB","ADA","DOGE","MAT
 const GECKO={BTC:"bitcoin",ETH:"ethereum",SOL:"solana",LTC:"litecoin",USDT:"tether",USDC:"usd-coin",XRP:"ripple",BNB:"binancecoin",ADA:"cardano",DOGE:"dogecoin",MATIC:"matic-network",AVAX:"avalanche-2",DOT:"polkadot",LINK:"chainlink",TRX:"tron",SHIB:"shiba-inu",UNI:"uniswap",ATOM:"cosmos",FTM:"fantom",NEAR:"near"};
 const COIN_LOGO={BTC:"https://assets.coingecko.com/coins/images/1/large/bitcoin.png",ETH:"https://assets.coingecko.com/coins/images/279/large/ethereum.png",SOL:"https://assets.coingecko.com/coins/images/4128/large/solana.png",LTC:"https://assets.coingecko.com/coins/images/2/large/litecoin.png",USDT:"https://assets.coingecko.com/coins/images/325/large/Tether.png",USDC:"https://assets.coingecko.com/coins/images/6319/large/usdc.png",XRP:"https://assets.coingecko.com/coins/images/44/large/xrp-symbol-white-128.png",BNB:"https://assets.coingecko.com/coins/images/825/large/binance-coin-logo.png",ADA:"https://assets.coingecko.com/coins/images/975/large/cardano.png",DOGE:"https://assets.coingecko.com/coins/images/5/large/dogecoin.png"};
 
-// /tmp persists across Railway restarts (only clears on new deploys)
-// Set DATA_DIR=/data in Railway Variables if you have a Volume mounted
+// ── PERSISTENT STORAGE ──────────────────────────────────────────────────────
+// Strategy: in-memory primary + write to /tmp + backup to Discord channel on save
+// On startup: load from /tmp, if missing restore from Discord backup channel
 const DATA_DIR=process.env.DATA_DIR||"/tmp";
 try{fs.mkdirSync(DATA_DIR,{recursive:true});}catch{}
 console.log(`[storage] using ${DATA_DIR}`);
-const DB={tickets:`${DATA_DIR}/konvert_tickets.json`,wallets:`${DATA_DIR}/konvert_wallets.json`,blacklist:`${DATA_DIR}/konvert_blacklist.json`};
-const load=k=>{try{return JSON.parse(fs.readFileSync(DB[k],"utf8"));}catch(e){console.log(`[load] ${k} -> ${DB[k]}: ${e.message}`);return {};}};
-const save=(k,d)=>{try{fs.writeFileSync(DB[k],JSON.stringify(d,null,2));console.log(`[save] ${k} -> ${DB[k]} (${Object.keys(d).length} entries)`);}catch(e){console.error(`[save ERROR] ${k}: ${e.message}`);}};
+const DB={
+  tickets:`${DATA_DIR}/konvert_tickets.json`,
+  wallets:`${DATA_DIR}/konvert_wallets.json`,
+  blacklist:`${DATA_DIR}/konvert_blacklist.json`,
+};
+// In-memory store -- always up to date, never lost within a session
+const _mem={tickets:{},wallets:{},blacklist:{}};
+
+const load=k=>{
+  // Always return in-memory first
+  if(Object.keys(_mem[k]||{}).length>0)return _mem[k];
+  // Try disk
+  try{
+    const d=JSON.parse(fs.readFileSync(DB[k],"utf8"));
+    _mem[k]=d;
+    console.log(`[load] ${k} from disk: ${Object.keys(d).length} entries`);
+    return d;
+  }catch(e){
+    console.log(`[load] ${k} not on disk: ${e.message}`);
+    return {};
+  }
+};
+
+const save=(k,d)=>{
+  // Always update in-memory immediately
+  _mem[k]=d;
+  // Write to disk
+  try{
+    fs.writeFileSync(DB[k],JSON.stringify(d,null,2));
+    console.log(`[save] ${k}: ${Object.keys(d).length} entries`);
+  }catch(e){
+    console.error(`[save ERROR] ${k}: ${e.message}`);
+  }
+  // Backup tickets to Discord backup channel (non-blocking)
+  if(k==="tickets"&&process.env.BACKUP_CHANNEL_ID){
+    _backupToDiscord(d).catch(()=>{});
+  }
+};
+
+// Backup tickets as a JSON file attachment to a private Discord channel
+async function _backupToDiscord(data){
+  try{
+    const ch=client.channels.cache.get(process.env.BACKUP_CHANNEL_ID);
+    if(!ch)return;
+    const json=JSON.stringify(data,null,2);
+    const buf=Buffer.from(json,"utf8");
+    // Delete previous backup messages to keep channel clean
+    const msgs=await ch.messages.fetch({limit:5}).catch(()=>null);
+    if(msgs){for(const m of msgs.values()){if(m.author.id===client.user?.id)await m.delete().catch(()=>{});}}
+    await ch.send({content:`Backup \`${new Date().toISOString()}\` — ${Object.keys(data).length} tickets`,files:[{attachment:buf,name:"konvert_tickets.json"}]});
+  }catch(e){console.error("[backup]",e.message);}
+}
+
+// Restore from Discord backup on startup if disk is empty
+async function restoreFromDiscord(){
+  if(!process.env.BACKUP_CHANNEL_ID)return;
+  try{
+    const tickets=load("tickets");
+    if(Object.keys(tickets).length>0){console.log("[restore] disk has data, skipping");return;}
+    const ch=client.channels.cache.get(process.env.BACKUP_CHANNEL_ID);
+    if(!ch){console.log("[restore] backup channel not found");return;}
+    const msgs=await ch.messages.fetch({limit:10});
+    for(const msg of msgs.values()){
+      if(msg.author.id===client.user?.id&&msg.attachments.size>0){
+        const att=msg.attachments.first();
+        if(att.name==="konvert_tickets.json"){
+          const res=await fetch(att.url,{signal:AbortSignal.timeout(10000)});
+          if(res.ok){
+            const data=await res.json();
+            _mem.tickets=data;
+            fs.writeFileSync(DB.tickets,JSON.stringify(data,null,2));
+            console.log(`[restore] SUCCESS: restored ${Object.keys(data).length} tickets from Discord backup`);
+          }
+          return;
+        }
+      }
+    }
+    console.log("[restore] no backup found in channel");
+  }catch(e){console.error("[restore error]",e.message);}
+}
 
 
 const fmtUSD=n=>{if(n>=1)return`$${n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`;if(n>=0.01)return`$${n.toFixed(4)}`;return`$${n.toFixed(8)}`;};
@@ -1229,10 +1307,14 @@ client.once(Events.ClientReady, async () => {
   console.log(`Konvert Bot online -- ${client.user.tag}`);
   client.user.setPresence({activities:[{name:"Konvert",type:3}],status:"online"});
   const guild=client.guilds.cache.get(CONFIG.GUILD_ID);
+  // Restore data from Discord backup if disk is empty
+  await restoreFromDiscord();
   if(guild){
     await autoRates(guild);
     setInterval(()=>autoRates(guild),10*60*1000);
     setInterval(()=>checkAlerts(),5*60*1000);
+    // Auto-backup every 30 minutes as extra safety
+    setInterval(()=>{const t=load("tickets");if(Object.keys(t).length>0)_backupToDiscord(t).catch(()=>{});},30*60*1000);
   }
 });
 
