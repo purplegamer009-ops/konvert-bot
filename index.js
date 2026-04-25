@@ -138,16 +138,18 @@ const save=(k,d)=>{
 
 // Backup tickets as a JSON file attachment to a private Discord channel
 async function _backupToDiscord(data){
+  if(!client.isReady())return; // don't try if bot not ready
+  if(!process.env.BACKUP_CHANNEL_ID)return;
   try{
     const ch=client.channels.cache.get(process.env.BACKUP_CHANNEL_ID);
-    if(!ch)return;
+    if(!ch){console.error("[backup] channel not found:",process.env.BACKUP_CHANNEL_ID);return;}
     const json=JSON.stringify(data,null,2);
     const buf=Buffer.from(json,"utf8");
-    // Delete previous backup messages to keep channel clean
-    const msgs=await ch.messages.fetch({limit:5}).catch(()=>null);
-    if(msgs){for(const m of msgs.values()){if(m.author.id===client.user?.id)await m.delete().catch(()=>{});}}
-    await ch.send({content:`Backup \`${new Date().toISOString()}\` — ${Object.keys(data).length} tickets`,files:[{attachment:buf,name:"konvert_tickets.json"}]});
-  }catch(e){console.error("[backup]",e.message);}
+    const msgs=await ch.messages.fetch({limit:10}).catch(()=>null);
+    if(msgs){for(const m of msgs.values()){if(m.author?.id===client.user.id)await m.delete().catch(()=>{});}}
+    await ch.send({content:`\uD83D\uDCBE **Backup** \`${new Date().toISOString()}\` — ${Object.keys(data).length} entries`,files:[{attachment:buf,name:"konvert_tickets.json"}]});
+    console.log(`[backup] sent ${Object.keys(data).length} tickets to Discord`);
+  }catch(e){console.error("[backup error]",e.message);}
 }
 
 // Restore from Discord backup on startup if disk is empty
@@ -769,16 +771,16 @@ client.on(Events.InteractionCreate, async interaction => {
           .setTimestamp()]});
       }
 
-      // /stats -- clean minimal embed, no progress bar, no exchanger stats
+      // /stats -- professional clean embed
       if(cmd==="stats"){
         await interaction.deferReply();
         const target=interaction.options.getUser("user")||interaction.user;
         const isSelf=target.id===interaction.user.id;
         const DONE_STATUS=["vouched","completed"];
-        const allT=Object.values(load("tickets"));
-        const done=allT.filter(t=>t.userId===target.id&&DONE_STATUS.includes(t.status));
+        const allT=Object.values(_mem.tickets||load("tickets"));
+        const done=allT.filter(t=>t.userId===target.id&&DONE_STATUS.includes(t.status)&&t.amountUSD);
         const adj=state.volumeAdj?.[target.id]||0;
-        const rawVol=done.reduce((s,t)=>s+(t.amountUSD||0),0);
+        const rawVol=done.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
         const volume=Math.max(0,rawVol+adj);
         const avg=done.length>0?rawVol/done.length:0;
         const methods={};done.forEach(t=>{if(t.method)methods[t.method]=(methods[t.method]||0)+1;});
@@ -789,45 +791,48 @@ client.on(Events.InteractionCreate, async interaction => {
         const needed=nextTier?Math.max(nextTier.min-volume,0):0;
         await applyTierRole(interaction.guild,target.id,volume);
         const last=done.length>0?[...done].sort((a,b)=>(b.completedAt||0)-(a.completedAt||0))[0]:null;
-        const adjNote=adj!==0?`\n*Adjusted ${adj>0?"+":""}${fmtUSD(adj)} by staff*`:"";
+        const adjNote=adj!==0?`\n> *Volume adjusted ${adj>0?"+":""}${fmtUSD(adj)} by staff*`:"";
+        const tierStatus=nextTier
+          ? `${tier.emoji} **${tier.label}** — ${fmtUSD(needed)} away from ${nextTier.emoji} **${nextTier.label}**`
+          : `${tier.emoji} **${tier.label}** — Maximum tier reached`;
         const embed=new EmbedBuilder()
-          .setColor(CONFIG.COLOR)
+          .setColor(tier.min>=1000?0xFFD700:CONFIG.COLOR)
           .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
-          .setTitle(`${tier.emoji}  ${isSelf?"Your Stats":`${target.username}'s Stats`}`)
+          .setTitle(isSelf?"Your Exchange Stats":`${target.username}'s Stats`)
           .setThumbnail(target.displayAvatarURL({size:256}))
-          .setDescription(`${tier.emoji} **${tier.label}**${nextTier?`  →  Need **${fmtUSD(needed)}** more for ${nextTier.emoji} **${nextTier.label}**`:"  ·  **Max Tier**"}${adjNote}\n\u200b`)
+          .setDescription(`${tierStatus}${adjNote}\n\u200b`)
           .addFields(
-            {name:"Trades",      value:`**${done.length}**`,                                   inline:true},
-            {name:"Volume",      value:`**${volume>0?fmtUSD(volume):"$0.00"}**`,               inline:true},
-            {name:"Avg Deal",    value:`**${avg>0?fmtUSD(avg):"--"}**`,                        inline:true},
-            {name:"Top Method",  value:topM?`**${getMethod(topM[0])?.label||topM[0]}**`:"--",  inline:true},
-            {name:"Top Coin",    value:topC?`**${topC[0]}**`:"--",                             inline:true},
-            {name:"Last Trade",  value:last?.completedAt?`<t:${Math.floor(last.completedAt/1000)}:R>`:"--", inline:true},
+            {name:"Completed Trades", value:`**${done.length}**`,                                          inline:true},
+            {name:"Total Volume",     value:`**${volume>0?fmtUSD(volume):"$0.00"}**`,                      inline:true},
+            {name:"Average Deal",     value:`**${avg>0?fmtUSD(avg):"—"}**`,                               inline:true},
+            {name:"Top Method",       value:topM?`**${getMethod(topM[0])?.label||topM[0]}**`:"—",         inline:true},
+            {name:"Top Coin",         value:topC?`**${topC[0]}**`:"—",                                    inline:true},
+            {name:"Last Trade",       value:last?.completedAt?`<t:${Math.floor(last.completedAt/1000)}:R>`:"—",inline:true},
           )
-          .setFooter({text:`${tier.emoji} ${tier.label}  •  Konvert Exchange`})
+          .setImage(IMG.BANNER)
+          .setFooter({text:`${tier.emoji} ${tier.label}  ·  Konvert Exchange`})
           .setTimestamp();
         return interaction.editReply({embeds:[embed]});
       }
 
-      // /leaderboard -- styled like reference image
+      // /leaderboard -- reads from in-memory for consistency with stats
       if(cmd==="leaderboard"){
         await interaction.deferReply();
         const DONE_STATUS=["vouched","completed"];
-        const raw=load("tickets");
-        const allEntries=Object.values(raw);
-        console.log(`[leaderboard] total entries: ${allEntries.length}, statuses: ${[...new Set(allEntries.map(t=>t.status))].join(", ")||"none"}`);
-        const allT=allEntries.filter(t=>DONE_STATUS.includes(t.status)&&t.amountUSD);
-        console.log(`[leaderboard] qualified entries: ${allT.length}`);
+        // Always read from _mem so it matches stats exactly
+        const allEntries=Object.values(_mem.tickets||load("tickets"));
+        const allT=allEntries.filter(t=>DONE_STATUS.includes(t.status)&&t.amountUSD&&parseFloat(t.amountUSD)>0);
+        console.log(`[leaderboard] total:${allEntries.length} qualified:${allT.length} statuses:${[...new Set(allEntries.map(t=>t.status))].join(",")}`);
         if(!allT.length)return interaction.editReply({embeds:[new EmbedBuilder()
           .setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
           .setTitle("Client Leaderboard")
           .setThumbnail(IMG.LOGO)
-          .setDescription("No completed trades yet.\n\nUse `/vouch` to record a trade and appear here.\n\u200b")
-          .setFooter({text:"Konvert Exchange  \u2022  Leaderboard"}).setTimestamp()]});
+          .setDescription("No completed trades on record yet.\n\nComplete a trade or use `/vouch` to appear here.\n\u200b")
+          .setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  \u2022  Leaderboard"}).setTimestamp()]});
         const byUser={};
         allT.forEach(t=>{
           if(!byUser[t.userId])byUser[t.userId]={volume:0,trades:0};
-          byUser[t.userId].volume+=(t.amountUSD||0);
+          byUser[t.userId].volume+=parseFloat(t.amountUSD)||0;
           byUser[t.userId].trades+=1;
         });
         if(state.volumeAdj){for(const [uid,adj] of Object.entries(state.volumeAdj)){if(byUser[uid])byUser[uid].volume=Math.max(0,byUser[uid].volume+adj);}}
@@ -835,23 +840,24 @@ client.on(Events.InteractionCreate, async interaction => {
         for(const [uid,d] of ranked){applyTierRole(interaction.guild,uid,d.volume).catch(()=>{});}
         const lines=ranked.map(([uid,d],i)=>{
           const tier=getTier(d.volume);
-          return `**${i+1}.** <@${uid}> ${tier.emoji} has exchanged **${fmtUSD(d.volume)}**`;
+          const prefix=i===0?"**1.**":i===1?"**2.**":i===2?"**3.**":`**${i+1}.**`;
+          return `${prefix} <@${uid}> ${tier.emoji}  —  **${fmtUSD(d.volume)}** · ${d.trades} trade${d.trades!==1?"s":""}`;
         }).join("\n");
         const totalVol=ranked.reduce((s,[,d])=>s+d.volume,0);
         return interaction.editReply({embeds:[new EmbedBuilder()
           .setColor(CONFIG.COLOR)
           .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
           .setTitle("Client Leaderboard")
-          .setDescription(`The Top ${ranked.length} Clients at Konvert!\n\u200b`)
+          .setDescription(`The Top ${ranked.length} Client${ranked.length!==1?"s":""} at Konvert\n\u200b`)
           .setThumbnail(IMG.LOGO)
-          .addFields({name:"\u200b",value:lines,inline:false})
           .addFields(
-            {name:"\uD83D\uDCB0  Total Volume",value:`**${fmtUSD(totalVol)}**`,inline:true},
-            {name:"\uD83D\uDC65  Traders",value:`**${ranked.length}**`,inline:true},
+            {name:"\u200b",value:lines,inline:false},
+            {name:"Total Volume",value:`**${fmtUSD(totalVol)}**`,inline:true},
+            {name:"Traders",value:`**${ranked.length}**`,inline:true},
           )
-          .setFooter({text:`Last Updated: just now  \u2022  Konvert Exchange`}).setTimestamp()]});
+          .setImage(IMG.BANNER)
+          .setFooter({text:`Last Updated: just now  ·  Konvert Exchange`}).setTimestamp()]});
       }
-
       if(cmd==="market"){
         await interaction.deferReply();
         const ids=COINS.map(c=>GECKO[c]||c.toLowerCase()).join(",");
