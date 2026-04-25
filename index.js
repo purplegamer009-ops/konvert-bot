@@ -92,8 +92,9 @@ const GECKO={BTC:"bitcoin",ETH:"ethereum",SOL:"solana",LTC:"litecoin",USDT:"teth
 const COIN_LOGO={BTC:"https://assets.coingecko.com/coins/images/1/large/bitcoin.png",ETH:"https://assets.coingecko.com/coins/images/279/large/ethereum.png",SOL:"https://assets.coingecko.com/coins/images/4128/large/solana.png",LTC:"https://assets.coingecko.com/coins/images/2/large/litecoin.png",USDT:"https://assets.coingecko.com/coins/images/325/large/Tether.png",USDC:"https://assets.coingecko.com/coins/images/6319/large/usdc.png",XRP:"https://assets.coingecko.com/coins/images/44/large/xrp-symbol-white-128.png",BNB:"https://assets.coingecko.com/coins/images/825/large/binance-coin-logo.png",ADA:"https://assets.coingecko.com/coins/images/975/large/cardano.png",DOGE:"https://assets.coingecko.com/coins/images/5/large/dogecoin.png"};
 
 const DB={tickets:"./tickets.json",wallets:"./wallets.json",blacklist:"./blacklist.json"};
-const load=k=>{try{return JSON.parse(fs.readFileSync(DB[k],"utf8"));}catch{return {};}};
-const save=(k,d)=>{try{fs.writeFileSync(DB[k],JSON.stringify(d,null,2));}catch{}};
+const load=k=>{try{return JSON.parse(fs.readFileSync(DB[k],"utf8"));}catch(e){console.log(`[load] ${k} -> ${DB[k]}: ${e.message}`);return {};}};
+const save=(k,d)=>{try{fs.writeFileSync(DB[k],JSON.stringify(d,null,2));console.log(`[save] ${k} -> ${DB[k]} (${Object.keys(d).length} entries)`);}catch(e){console.error(`[save ERROR] ${k}: ${e.message}`);}};
+
 
 const fmtUSD=n=>{if(n>=1)return`$${n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`;if(n>=0.01)return`$${n.toFixed(4)}`;return`$${n.toFixed(8)}`;};
 function calcFee(usd,dir){let r=usd<150?9:usd<500?7:usd<1000?6:5.5;if(dir==="receive")r=Math.max(r-1,0);return Math.max(usd*r/100,CONFIG.MIN_FEE);}
@@ -652,52 +653,43 @@ client.on(Events.InteractionCreate, async interaction => {
           .setTimestamp()]});
       }
 
-      // /stats -- accepts vouched OR completed status, auto-applies tier role
+      // /stats -- clean minimal embed, no progress bar, no exchanger stats
       if(cmd==="stats"){
         await interaction.deferReply();
-        const target=interaction.options.getUser("user")||interaction.user,isSelf=target.id===interaction.user.id;
-        const allT=Object.values(load("tickets"));
-        // Accept both "vouched" and "completed" for backwards compat
+        const target=interaction.options.getUser("user")||interaction.user;
+        const isSelf=target.id===interaction.user.id;
         const DONE_STATUS=["vouched","completed"];
+        const allT=Object.values(load("tickets"));
         const done=allT.filter(t=>t.userId===target.id&&DONE_STATUS.includes(t.status));
-        // Also add any manual volume adjustments from state
         const adj=state.volumeAdj?.[target.id]||0;
-        const rawVolume=done.reduce((s,t)=>s+(t.amountUSD||0),0);
-        const volume=Math.max(0,rawVolume+adj);
-        const avg=done.length>0?rawVolume/done.length:0;
+        const rawVol=done.reduce((s,t)=>s+(t.amountUSD||0),0);
+        const volume=Math.max(0,rawVol+adj);
+        const avg=done.length>0?rawVol/done.length:0;
         const methods={};done.forEach(t=>{if(t.method)methods[t.method]=(methods[t.method]||0)+1;});
         const topM=Object.entries(methods).sort((a,b)=>b[1]-a[1])[0];
         const coins={};done.forEach(t=>{if(t.coin)coins[t.coin]=(coins[t.coin]||0)+1;});
         const topC=Object.entries(coins).sort((a,b)=>b[1]-a[1])[0];
         const tier=getTier(volume),nextTier=getNextTier(volume);
-        const bar=nextTier?progressBar(volume,tier.min,nextTier.min):"\u2593".repeat(12)+" MAX";
         const needed=nextTier?Math.max(nextTier.min-volume,0):0;
-        // Always auto-apply the correct tier role
         await applyTierRole(interaction.guild,target.id,volume);
-        const exDone=allT.filter(t=>t.completedBy===target.id&&DONE_STATUS.includes(t.status));
-        const exVol=exDone.reduce((s,t)=>s+(t.amountUSD||0),0);
-        const tierLine=`${tier.emoji} **${tier.label}**`+(nextTier?`  \u2192  ${nextTier.emoji} **${nextTier.label}**`:"  \u00b7  **\u2B50 Max Tier**");
-        const nextLine=nextTier?`Need **${fmtUSD(needed)}** more to reach ${nextTier.emoji} **${nextTier.label}**`:"You have reached the highest tier!";
-        const adjLine=adj!==0?`\n*Volume adjusted by ${adj>0?"+":""}${fmtUSD(adj)} by staff*`:"";
-        const embed=new EmbedBuilder().setColor(tier.role?CONFIG.COLOR:0x5865F2)
+        const last=done.length>0?[...done].sort((a,b)=>(b.completedAt||0)-(a.completedAt||0))[0]:null;
+        const adjNote=adj!==0?`\n*Adjusted ${adj>0?"+":""}${fmtUSD(adj)} by staff*`:"";
+        const embed=new EmbedBuilder()
+          .setColor(CONFIG.COLOR)
           .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
-          .setTitle(isSelf?`${tier.emoji}  Your Exchange Stats`:`${tier.emoji}  ${target.username}'s Stats`)
+          .setTitle(`${tier.emoji}  ${isSelf?"Your Stats":`${target.username}'s Stats`}`)
           .setThumbnail(target.displayAvatarURL({size:256}))
-          .setDescription(`${tierLine}\n\`${bar}\`\n${nextLine}${adjLine}\n\u200b`)
+          .setDescription(`${tier.emoji} **${tier.label}**${nextTier?`  →  Need **${fmtUSD(needed)}** more for ${nextTier.emoji} **${nextTier.label}**`:"  ·  **Max Tier**"}${adjNote}\n\u200b`)
           .addFields(
-            {name:"\uD83E\uDDFE  Trades",    value:`**${done.length}**`,                                     inline:true},
-            {name:"\uD83D\uDCB0  Volume",    value:volume>0?`**${fmtUSD(volume)}**`:"**$0.00**",             inline:true},
-            {name:"\uD83D\uDCCA  Avg Deal",  value:avg>0?`**${fmtUSD(avg)}**`:"**--**",                      inline:true},
-            {name:"\uD83D\uDCB3  Top Method",value:topM?`**${getMethod(topM[0])?.label||topM[0]}**`:"--",    inline:true},
-            {name:"\uD83E\uDE99  Top Coin",  value:topC?`**${topC[0]}**`:"--",                               inline:true},
-            {name:"\uD83C\uDFC6  Tier",      value:`${tier.emoji} **${tier.label}**`,                        inline:true},
-          );
-        if(done.length>0){
-          const last=[...done].sort((a,b)=>(b.completedAt||0)-(a.completedAt||0))[0];
-          embed.addFields({name:"\u23F0  Last Trade",value:last.completedAt?`<t:${Math.floor(last.completedAt/1000)}:R>`:"--",inline:false});
-        }
-        if(exDone.length>0)embed.addFields({name:"\u200b",value:"**\u2500\u2500 Exchanger Activity \u2500\u2500**",inline:false},{name:"Deals Handled",value:`**${exDone.length}**`,inline:true},{name:"Vol. Handled",value:`**${fmtUSD(exVol)}**`,inline:true});
-        embed.setImage(IMG.BANNER).setFooter({text:done.length===0?"No completed trades yet  \u2022  Konvert Exchange":`${done.length} verified trade${done.length!==1?"s":""} on Konvert Exchange`}).setTimestamp();
+            {name:"Trades",      value:`**${done.length}**`,                                   inline:true},
+            {name:"Volume",      value:`**${volume>0?fmtUSD(volume):"$0.00"}**`,               inline:true},
+            {name:"Avg Deal",    value:`**${avg>0?fmtUSD(avg):"--"}**`,                        inline:true},
+            {name:"Top Method",  value:topM?`**${getMethod(topM[0])?.label||topM[0]}**`:"--",  inline:true},
+            {name:"Top Coin",    value:topC?`**${topC[0]}**`:"--",                             inline:true},
+            {name:"Last Trade",  value:last?.completedAt?`<t:${Math.floor(last.completedAt/1000)}:R>`:"--", inline:true},
+          )
+          .setFooter({text:`${tier.emoji} ${tier.label}  •  Konvert Exchange`})
+          .setTimestamp();
         return interaction.editReply({embeds:[embed]});
       }
 
@@ -705,25 +697,27 @@ client.on(Events.InteractionCreate, async interaction => {
       if(cmd==="leaderboard"){
         await interaction.deferReply();
         const DONE_STATUS=["vouched","completed"];
-        const allT=Object.values(load("tickets")).filter(t=>DONE_STATUS.includes(t.status)&&t.amountUSD);
-        if(!allT.length)return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("\uD83C\uDFC6  Top Traders").setThumbnail(IMG.LOGO).setDescription("No completed trades yet.\n\nBe the first to make a deal and claim the top spot!\n\u200b").setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  \u2022  Leaderboard"}).setTimestamp()]});
+        const raw=load("tickets");
+        const allEntries=Object.values(raw);
+        console.log(`[leaderboard] tickets.json has ${allEntries.length} total entries`);
+        console.log(`[leaderboard] statuses: ${[...new Set(allEntries.map(t=>t.status))].join(", ")||"none"}`);
+        const allT=allEntries.filter(t=>DONE_STATUS.includes(t.status)&&t.amountUSD);
+        console.log(`[leaderboard] vouched/completed with amountUSD: ${allT.length}`);
+        if(!allT.length)return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("\uD83C\uDFC6  Top Traders").setThumbnail(IMG.LOGO).setDescription("No completed trades yet.\n\nUse `/vouch` to record trades, or complete a ticket with the **Mark Trade Complete** button.\n\u200b").setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  \u2022  Leaderboard"}).setTimestamp()]});
         const byUser={};
         allT.forEach(t=>{
           if(!byUser[t.userId])byUser[t.userId]={volume:0,trades:0};
           byUser[t.userId].volume+=(t.amountUSD||0);
           byUser[t.userId].trades+=1;
         });
-        // Add volume adjustments
         if(state.volumeAdj){for(const [uid,adj] of Object.entries(state.volumeAdj)){if(byUser[uid])byUser[uid].volume=Math.max(0,byUser[uid].volume+adj);}}
         const ranked=Object.entries(byUser).sort((a,b)=>b[1].volume-a[1].volume).slice(0,10);
         const totalVol=ranked.reduce((s,[,d])=>s+d.volume,0);
         const medals=["\uD83E\uDD47","\uD83E\uDD48","\uD83E\uDD49"];
-        // Auto-apply tier roles to all ranked users
         for(const [uid,d] of ranked){applyTierRole(interaction.guild,uid,d.volume).catch(()=>{});}
         const lines=ranked.map(([uid,d],i)=>{
           const tier=getTier(d.volume),share=totalVol>0?Math.round((d.volume/totalVol)*100):0;
-          const medal=medals[i]||`**#${i+1}**`;
-          return `${medal}  <@${uid}>  ${tier.emoji}  \u2014  **${fmtUSD(d.volume)}** \u00b7 ${share}%  \u00b7  ${d.trades} deal${d.trades!==1?"s":""}`;
+          return `${medals[i]||`**#${i+1}**`}  <@${uid}>  ${tier.emoji}  \u2014  **${fmtUSD(d.volume)}**  \u00b7  ${share}%  \u00b7  ${d.trades} deal${d.trades!==1?"s":""}`;
         }).join("\n");
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR)
           .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
@@ -731,13 +725,13 @@ client.on(Events.InteractionCreate, async interaction => {
           .setThumbnail(IMG.LOGO)
           .setDescription("Ranked by total USD volume exchanged on Konvert.\n\u200b")
           .addFields(
-            {name:"Rankings",value:lines||"No traders yet.",inline:false},
+            {name:"Rankings",value:lines,inline:false},
             {name:"\uD83D\uDCB0  Total Volume",value:`**${fmtUSD(totalVol)}**`,inline:true},
             {name:"\uD83D\uDCCA  Traders",value:`**${ranked.length}**`,inline:true},
             {name:"\uD83D\uDCB9  Avg Volume",value:`**${fmtUSD(Math.round(totalVol/Math.max(ranked.length,1)))}**`,inline:true},
           )
           .setImage(IMG.BANNER)
-          .setFooter({text:`${ranked.length} trader${ranked.length!==1?"s":""}  \u2022  Konvert Exchange Leaderboard`}).setTimestamp()]});
+          .setFooter({text:`${ranked.length} trader${ranked.length!==1?"s":""}  \u2022  Konvert Exchange`}).setTimestamp()]});
       }
 
       if(cmd==="market"){
