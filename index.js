@@ -25,7 +25,7 @@ oauth2Client.setCredentials({ refresh_token: process.env.YOUTUBE_REFRESH_TOKEN }
 const youtube = google.youtube({ version: "v3", auth: oauth2Client });
 
 const IMG = {
-  LOGO:"https://i.imgur.com/tkhEu37.png", BANNER:"https://i.imgur.com/RKBMVae.png",
+  LOGO:"https://i.imgur.com/cQyBq33.png", BANNER:"https://i.imgur.com/MfyoLHC.png",
   RATES:"https://i.imgur.com/0zbG9Fc.png", FEE:"https://i.imgur.com/o6bi905.png",
   RULES:"https://i.imgur.com/CaBjEFU.png", TICKET:"https://i.imgur.com/GasrfTC.png",
   WELCOME:"https://i.imgur.com/hSYrFai.png", DEAL:"https://i.imgur.com/GuBspYH.png",
@@ -445,31 +445,38 @@ function step2Embed(method){
     .setFooter({text:"Step 2 of 3  \u2022  Konvert"});
 }
 
+const RATES_CHANNEL_ID="1494914461452996719";
+
 async function buildRatesEmbed(){
   const ids=COINS.map(c=>GECKO[c]||c.toLowerCase()).join(",");
   let p={};
   try{
     const res=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd,cad&include_24hr_change=true`,{signal:AbortSignal.timeout(10000)});
     if(res.ok)p=await res.json();
-  }catch(e){console.error("buildRatesEmbed fetch:",e.message);}
+  }catch(e){console.error("buildRatesEmbed:",e.message);}
   const lines=COINS.map(coin=>{
-    const d=p[GECKO[coin]||coin.toLowerCase()];
-    if(!d||!d.usd||!d.cad)return null;
-    const usd=Number(d.usd).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
-    const cad=Number(d.cad).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
-    const ch=parseFloat(d.usd_24h_change||0).toFixed(2);
-    return `\`${coin.padEnd(5)}\` **$${usd}**  \u00b7  CA$${cad}  \u00b7  ${Number(ch)>=0?"\u25B2":"\u25BC"} ${ch}%`;
+    const geckoId=GECKO[coin]||coin.toLowerCase();
+    let usdNum=p[geckoId]?.usd;
+    let cadNum=p[geckoId]?.cad;
+    let ch=parseFloat(p[geckoId]?.usd_24h_change||0);
+    if(!usdNum&&_priceCache[coin]){usdNum=_priceCache[coin].v;cadNum=usdNum*1.37;}
+    if(!usdNum)return null;
+    const usd=Number(usdNum).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+    const cad=Number(cadNum||usdNum*1.37).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+    return `\`${coin.padEnd(5)}\` **$${usd}**  \u00b7  CA$${cad}  \u00b7  ${ch>=0?"\u25B2":"\u25BC"} ${ch.toFixed(2)}%`;
   }).filter(Boolean).join("\n");
-  if(!lines)throw new Error("No price data available");
-  return new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO})
+  const now=new Date(),next=new Date(now.getTime()+30*60*1000);
+  return new EmbedBuilder()
+    .setColor(CONFIG.COLOR)
+    .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
     .setTitle("Live Rates").setThumbnail(IMG.LOGO)
-    .setDescription(lines+"\n\u200b")
+    .setDescription((lines||"Unable to fetch rates right now.")+"\n\u200b")
     .addFields(
       {name:"Exchange",value:`Open a ticket in <#${CONFIG.EXCHANGE_CHANNEL}>`,inline:true},
-      {name:"Tip",value:"Type **$BTC**, **$ETH** etc. for a quick lookup",inline:true},
+      {name:"Tip",value:"Type **$BTC**, **$ETH** etc. for live price",inline:true},
     )
-    .setImage(IMG.RATES)
-    .setFooter({text:"Updates every 10 min  \u2022  Use /calc to post now  \u2022  Konvert"})
+    .setImage(IMG.BANNER)
+    .setFooter({text:`Updates every 30 min  \u00b7  Next: ${next.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"})}  \u00b7  Konvert Exchange`})
     .setTimestamp();
 }
 
@@ -1126,8 +1133,16 @@ client.on(Events.InteractionCreate, async interaction => {
     if(interaction.isButton()){
       if(interaction.customId==="btn_exchange_now"){const bl=load("blacklist");if(bl[interaction.user.id])return interaction.reply({content:"You are blacklisted from Konvert.",ephemeral:true});return interaction.reply({embeds:[step1Embed()],components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("select_method").setPlaceholder("Select your payment method...").addOptions(METHODS.map(m=>new StringSelectMenuOptionBuilder().setLabel(m.label).setValue(m.value).setDescription(`Exchange crypto with ${m.label}`))))],ephemeral:true});}
       if(interaction.customId==="btn_fee_calc"){const modal=new ModalBuilder().setCustomId("modal_fee").setTitle("Fee Calculator");modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("fee_amt").setLabel("Trade amount in USD").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 250").setRequired(true)));return interaction.showModal(modal);}
-      if(interaction.customId==="btn_rates_quick"){await interaction.deferReply({ephemeral:true});return interaction.editReply({embeds:[await buildRatesEmbed()]});}
-      if(interaction.customId==="btn_refresh_rates"){await interaction.deferUpdate();return interaction.editReply({embeds:[await buildRatesEmbed()],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_refresh_rates").setLabel("Refresh").setStyle(ButtonStyle.Secondary))]});}
+      if(interaction.customId==="btn_rates_quick"){
+        await interaction.deferReply({ephemeral:true});
+        try{return interaction.editReply({embeds:[await buildRatesEmbed()]});}
+        catch(e){return interaction.editReply("Could not fetch rates right now. Try again in a moment.");}
+      }
+      if(interaction.customId==="btn_refresh_rates"){
+        await interaction.deferUpdate();
+        try{return interaction.editReply({embeds:[await buildRatesEmbed()],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_refresh_rates").setLabel("Refresh").setStyle(ButtonStyle.Secondary))]});}
+        catch(e){return interaction.editReply({content:"Could not fetch rates right now. Try again in a moment."});}
+      }
 
       if(interaction.customId==="btn_c2c_confirm"){
         const c2cData=state.c2cSelections?.[interaction.user.id];
@@ -1320,9 +1335,22 @@ client.on(Events.InteractionCreate, async interaction => {
 
 let ratesMsgId=null;
 async function autoRates(guild){
-  if(!CONFIG.RATES_CHANNEL||!guild)return;
-  const ch=guild.channels.cache.get(CONFIG.RATES_CHANNEL);if(!ch)return;
-  try{const embed=await buildRatesEmbed();if(ratesMsgId){const msg=await ch.messages.fetch(ratesMsgId).catch(()=>null);if(msg){await msg.edit({embeds:[embed]});return;}}const sent=await ch.send({embeds:[embed]});ratesMsgId=sent.id;}catch(e){console.error("Auto rates:",e.message);}
+  if(!guild)return;
+  // Use hardcoded channel ID, fall back to env var
+  const channelId=RATES_CHANNEL_ID||CONFIG.RATES_CHANNEL;
+  if(!channelId)return;
+  const ch=guild.channels.cache.get(channelId)||await guild.channels.fetch(channelId).catch(()=>null);
+  if(!ch){console.error("[autoRates] channel not found:",channelId);return;}
+  try{
+    const embed=await buildRatesEmbed();
+    if(ratesMsgId){
+      const msg=await ch.messages.fetch(ratesMsgId).catch(()=>null);
+      if(msg){await msg.edit({embeds:[embed]});console.log("[autoRates] updated existing message");return;}
+    }
+    const sent=await ch.send({embeds:[embed]});
+    ratesMsgId=sent.id;
+    console.log("[autoRates] posted new rates message");
+  }catch(e){console.error("Auto rates:",e.message);}
 }
 
 async function checkAlerts(){
@@ -1379,7 +1407,7 @@ client.once(Events.ClientReady, async () => {
   await restoreFromDiscord();
   if(guild){
     await autoRates(guild);
-    setInterval(()=>autoRates(guild),10*60*1000);
+    setInterval(()=>autoRates(guild),30*60*1000); // every 30 minutes exactly
     setInterval(()=>checkAlerts(),5*60*1000);
     // Auto-backup every 30 minutes as extra safety
     setInterval(()=>{const t=load("tickets");if(Object.keys(t).length>0)_backupToDiscord(t).catch(()=>{});},30*60*1000);
