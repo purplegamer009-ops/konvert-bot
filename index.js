@@ -297,15 +297,20 @@ function step2Embed(method){
 
 async function buildRatesEmbed(){
   const ids=COINS.map(c=>GECKO[c]||c.toLowerCase()).join(",");
-  const res=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd,cad&include_24hr_change=true`,{signal:AbortSignal.timeout(10000)});
-  const p=await res.json();
+  let p={};
+  try{
+    const res=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd,cad&include_24hr_change=true`,{signal:AbortSignal.timeout(10000)});
+    if(res.ok)p=await res.json();
+  }catch(e){console.error("buildRatesEmbed fetch:",e.message);}
   const lines=COINS.map(coin=>{
-    const d=p[GECKO[coin]||coin.toLowerCase()];if(!d)return null;
-    const usd=d.usd.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
-    const cad=d.cad.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+    const d=p[GECKO[coin]||coin.toLowerCase()];
+    if(!d||!d.usd||!d.cad)return null;
+    const usd=Number(d.usd).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+    const cad=Number(d.cad).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
     const ch=parseFloat(d.usd_24h_change||0).toFixed(2);
     return `\`${coin.padEnd(5)}\` **$${usd}**  \u00b7  CA$${cad}  \u00b7  ${Number(ch)>=0?"\u25B2":"\u25BC"} ${ch}%`;
   }).filter(Boolean).join("\n");
+  if(!lines)throw new Error("No price data available");
   return new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO})
     .setTitle("Live Rates").setThumbnail(IMG.LOGO)
     .setDescription(lines+"\n\u200b")
