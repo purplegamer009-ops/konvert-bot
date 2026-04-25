@@ -91,7 +91,13 @@ const COINS=["BTC","ETH","SOL","LTC","USDT","USDC","XRP","BNB","ADA","DOGE","MAT
 const GECKO={BTC:"bitcoin",ETH:"ethereum",SOL:"solana",LTC:"litecoin",USDT:"tether",USDC:"usd-coin",XRP:"ripple",BNB:"binancecoin",ADA:"cardano",DOGE:"dogecoin",MATIC:"matic-network",AVAX:"avalanche-2",DOT:"polkadot",LINK:"chainlink",TRX:"tron",SHIB:"shiba-inu",UNI:"uniswap",ATOM:"cosmos",FTM:"fantom",NEAR:"near"};
 const COIN_LOGO={BTC:"https://assets.coingecko.com/coins/images/1/large/bitcoin.png",ETH:"https://assets.coingecko.com/coins/images/279/large/ethereum.png",SOL:"https://assets.coingecko.com/coins/images/4128/large/solana.png",LTC:"https://assets.coingecko.com/coins/images/2/large/litecoin.png",USDT:"https://assets.coingecko.com/coins/images/325/large/Tether.png",USDC:"https://assets.coingecko.com/coins/images/6319/large/usdc.png",XRP:"https://assets.coingecko.com/coins/images/44/large/xrp-symbol-white-128.png",BNB:"https://assets.coingecko.com/coins/images/825/large/binance-coin-logo.png",ADA:"https://assets.coingecko.com/coins/images/975/large/cardano.png",DOGE:"https://assets.coingecko.com/coins/images/5/large/dogecoin.png"};
 
-const DB={tickets:"./tickets.json",wallets:"./wallets.json",blacklist:"./blacklist.json"};
+// Use /data if Railway volume is mounted, otherwise /tmp (survives most restarts)
+const DATA_DIR=(()=>{
+  const preferred="/data";
+  try{fs.mkdirSync(preferred,{recursive:true});fs.accessSync(preferred,fs.constants.W_OK);return preferred;}
+  catch{console.log("[storage] /data not writable, using /tmp");return "/tmp";}
+})();
+const DB={tickets:`${DATA_DIR}/tickets.json`,wallets:`${DATA_DIR}/wallets.json`,blacklist:`${DATA_DIR}/blacklist.json`};
 const load=k=>{try{return JSON.parse(fs.readFileSync(DB[k],"utf8"));}catch(e){console.log(`[load] ${k} -> ${DB[k]}: ${e.message}`);return {};}};
 const save=(k,d)=>{try{fs.writeFileSync(DB[k],JSON.stringify(d,null,2));console.log(`[save] ${k} -> ${DB[k]} (${Object.keys(d).length} entries)`);}catch(e){console.error(`[save ERROR] ${k}: ${e.message}`);}};
 
@@ -698,17 +704,21 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.editReply({embeds:[embed]});
       }
 
-      // /leaderboard -- accepts vouched OR completed, applies tier roles
+      // /leaderboard -- styled like reference image
       if(cmd==="leaderboard"){
         await interaction.deferReply();
         const DONE_STATUS=["vouched","completed"];
         const raw=load("tickets");
         const allEntries=Object.values(raw);
-        console.log(`[leaderboard] tickets.json has ${allEntries.length} total entries`);
-        console.log(`[leaderboard] statuses: ${[...new Set(allEntries.map(t=>t.status))].join(", ")||"none"}`);
+        console.log(`[leaderboard] total entries: ${allEntries.length}, statuses: ${[...new Set(allEntries.map(t=>t.status))].join(", ")||"none"}`);
         const allT=allEntries.filter(t=>DONE_STATUS.includes(t.status)&&t.amountUSD);
-        console.log(`[leaderboard] vouched/completed with amountUSD: ${allT.length}`);
-        if(!allT.length)return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("\uD83C\uDFC6  Top Traders").setThumbnail(IMG.LOGO).setDescription("No completed trades yet.\n\nUse `/vouch` to record trades, or complete a ticket with the **Mark Trade Complete** button.\n\u200b").setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  \u2022  Leaderboard"}).setTimestamp()]});
+        console.log(`[leaderboard] qualified entries: ${allT.length}`);
+        if(!allT.length)return interaction.editReply({embeds:[new EmbedBuilder()
+          .setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
+          .setTitle("Client Leaderboard")
+          .setThumbnail(IMG.LOGO)
+          .setDescription("No completed trades yet.\n\nUse `/vouch` to record a trade and appear here.\n\u200b")
+          .setFooter({text:"Konvert Exchange  \u2022  Leaderboard"}).setTimestamp()]});
         const byUser={};
         allT.forEach(t=>{
           if(!byUser[t.userId])byUser[t.userId]={volume:0,trades:0};
@@ -717,26 +727,24 @@ client.on(Events.InteractionCreate, async interaction => {
         });
         if(state.volumeAdj){for(const [uid,adj] of Object.entries(state.volumeAdj)){if(byUser[uid])byUser[uid].volume=Math.max(0,byUser[uid].volume+adj);}}
         const ranked=Object.entries(byUser).sort((a,b)=>b[1].volume-a[1].volume).slice(0,10);
-        const totalVol=ranked.reduce((s,[,d])=>s+d.volume,0);
-        const medals=["\uD83E\uDD47","\uD83E\uDD48","\uD83E\uDD49"];
         for(const [uid,d] of ranked){applyTierRole(interaction.guild,uid,d.volume).catch(()=>{});}
         const lines=ranked.map(([uid,d],i)=>{
-          const tier=getTier(d.volume),share=totalVol>0?Math.round((d.volume/totalVol)*100):0;
-          return `${medals[i]||`**#${i+1}**`}  <@${uid}>  ${tier.emoji}  \u2014  **${fmtUSD(d.volume)}**  \u00b7  ${share}%  \u00b7  ${d.trades} deal${d.trades!==1?"s":""}`;
+          const tier=getTier(d.volume);
+          return `**${i+1}.** <@${uid}> ${tier.emoji} has exchanged **${fmtUSD(d.volume)}**`;
         }).join("\n");
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR)
+        const totalVol=ranked.reduce((s,[,d])=>s+d.volume,0);
+        return interaction.editReply({embeds:[new EmbedBuilder()
+          .setColor(CONFIG.COLOR)
           .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
-          .setTitle("\uD83C\uDFC6  Top Traders")
+          .setTitle("Client Leaderboard")
+          .setDescription(`The Top ${ranked.length} Clients at Konvert!\n\u200b`)
           .setThumbnail(IMG.LOGO)
-          .setDescription("Ranked by total USD volume exchanged on Konvert.\n\u200b")
+          .addFields({name:"\u200b",value:lines,inline:false})
           .addFields(
-            {name:"Rankings",value:lines,inline:false},
             {name:"\uD83D\uDCB0  Total Volume",value:`**${fmtUSD(totalVol)}**`,inline:true},
-            {name:"\uD83D\uDCCA  Traders",value:`**${ranked.length}**`,inline:true},
-            {name:"\uD83D\uDCB9  Avg Volume",value:`**${fmtUSD(Math.round(totalVol/Math.max(ranked.length,1)))}**`,inline:true},
+            {name:"\uD83D\uDC65  Traders",value:`**${ranked.length}**`,inline:true},
           )
-          .setImage(IMG.BANNER)
-          .setFooter({text:`${ranked.length} trader${ranked.length!==1?"s":""}  \u2022  Konvert Exchange`}).setTimestamp()]});
+          .setFooter({text:`Last Updated: just now  \u2022  Konvert Exchange`}).setTimestamp()]});
       }
 
       if(cmd==="market"){
