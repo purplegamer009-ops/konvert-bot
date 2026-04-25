@@ -118,7 +118,7 @@ async function getPrice(coin){
 }
 
 const client=new Client({intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent,GatewayIntentBits.GuildMembers],partials:[Partials.Channel]});
-const state={pending:{},mineGames:{},cooldowns:{},alerts:[],passes:{},c2cSelections:{},feedChannel:null,feedEnabled:false};
+const state={pending:{},mineGames:{},cooldowns:{},alerts:[],passes:{},c2cSelections:{},feedChannel:null,feedEnabled:false,volumeAdj:{}};
 
 // YouTube titles -- clean, punchy, emotional, matching the channel style exactly
 const YT_TITLES=[
@@ -204,7 +204,8 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("postlinks").setDescription("[Owner] Post the Official Links embed").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("lookup").setDescription("[Owner] Look up a past ticket by channel name").addStringOption(o=>o.setName("name").setDescription("Ticket channel name").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("postkonvault").setDescription("[Owner] Post the Konvault wagering server invite embed").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  new SlashCommandBuilder().setName("setfeedchannel").setDescription("[Owner] Set the live deal feed channel").addStringOption(o=>o.setName("channel_id").setDescription("Channel ID").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("adjuststats").setDescription("[Owner] Add or subtract volume from a user's stats").addUserOption(o=>o.setName("user").setDescription("User").setRequired(true)).addNumberOption(o=>o.setName("amount").setDescription("Amount in USD (use negative to subtract)").setRequired(true)).addStringOption(o=>o.setName("reason").setDescription("Reason for adjustment").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("resetstats").setDescription("[Owner] Reset a user's volume adjustment back to 0").addUserOption(o=>o.setName("user").setDescription("User").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("livefeed").setDescription("[Owner] Toggle live deal feed on/off").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 ].map(c=>c.toJSON());
 
@@ -451,24 +452,30 @@ client.on(Events.MessageCreate, async message => {
       }catch{await new Promise(r=>setTimeout(r,1000*(attempt+1)));}
     }
   }
-  if(!d)return;
+  if(!d){await message.reply(`\u274C Could not fetch **${coin}** price right now. Try again in a moment.`).catch(()=>{});return;}
   const fmt=n=>{if(n>=1)return n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});if(n>=0.01)return n.toFixed(4);return n.toFixed(8);};
   const ch2=parseFloat(d.usd_24h_change||0);
+  const isUp=ch2>=0;
   const mcap=d.usd_market_cap?`$${(d.usd_market_cap/1e9).toFixed(2)}B`:"--";
   const vol=d.usd_24h_vol?`$${(d.usd_24h_vol/1e9).toFixed(2)}B`:"--";
   const fee=calcFee(Math.max(d.usd,1),"send"),rate=feeRate(Math.max(d.usd,1),"send");
-  await message.reply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR)
-    .setAuthor({name:"Konvert  \u2022  Live Price",iconURL:IMG.LOGO})
-    .setTitle(`${coin}  --  $${fmt(d.usd)}`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
-    .setDescription(`${ch2>=0?"\u25B2":"\u25BC"} **${ch2.toFixed(2)}%** in the last 24 hours\n\u200b`)
+  const color=isUp?0x00C853:0xFF1744;
+  await message.reply({embeds:[new EmbedBuilder().setColor(color)
+    .setAuthor({name:"Konvert Exchange  \u2022  Live Price",iconURL:IMG.LOGO})
+    .setTitle(`${isUp?"\u25B2":"\u25BC"}  ${coin}  \u2014  $${fmt(d.usd)}`)
+    .setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
+    .setDescription(`**${isUp?"+":""}${ch2.toFixed(2)}%** in the last 24 hours\n\u200b`)
     .addFields(
-      {name:"USD",        value:`**$${fmt(d.usd)}**`,           inline:true},
-      {name:"CAD",        value:`CA$${fmt(d.cad)}`,             inline:true},
-      {name:"EUR",        value:`\u20AC${fmt(d.eur)}`,          inline:true},
-      {name:"Market Cap", value:mcap,                           inline:true},
-      {name:"24h Volume", value:vol,                            inline:true},
-      {name:"Konvert Fee",value:`${rate}%  --  **${fmtUSD(fee)}**`,inline:true},
-    ).setFooter({text:`Konvert  \u2022  /price ${coin} for full details`}).setTimestamp()]}).catch(()=>{});
+      {name:"\uD83C\uDDFA\uD83C\uDDF8  USD",   value:`**$${fmt(d.usd)}**`,                        inline:true},
+      {name:"\uD83C\uDDE8\uD83C\uDDE6  CAD",   value:`**CA$${fmt(d.cad)}**`,                      inline:true},
+      {name:"\uD83C\uDDEA\uD83C\uDDFA  EUR",   value:`**\u20AC${fmt(d.eur)}**`,                   inline:true},
+      {name:"\uD83D\uDCCA  Market Cap",         value:mcap,                                        inline:true},
+      {name:"\uD83D\uDCB9  24h Volume",         value:vol,                                         inline:true},
+      {name:"\uD83D\uDCB8  Konvert Fee",        value:`**${rate}%** \u2014 ${fmtUSD(fee)}`,        inline:true},
+    )
+    .setImage(IMG.BANNER)
+    .setFooter({text:`Konvert Exchange  \u2022  Type /price ${coin} for more details`})
+    .setTimestamp()]}).catch(()=>{});
 });
 
 // --- INTERACTION HANDLER ---
@@ -526,21 +533,28 @@ client.on(Events.InteractionCreate, async interaction => {
         const cKey=id+"_full";
         if(_priceCache[cKey]&&Date.now()-_priceCache[cKey].ts<30000){d=_priceCache[cKey].v;}
         else{for(let i=0;i<3;i++){try{const res=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd,cad,eur&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`,{signal:AbortSignal.timeout(8000)});if(!res.ok){await new Promise(r=>setTimeout(r,1000*(i+1)));continue;}const dat=await res.json();if(dat[id]?.usd){d=dat[id];_priceCache[cKey]={v:d,ts:Date.now()};break;}}catch{await new Promise(r=>setTimeout(r,1000*(i+1)));}}}
-        if(!d)return interaction.editReply("Could not fetch price. Try again in a moment.");
-        const ch=parseFloat(d.usd_24h_change||0),fmt2=n=>n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+        if(!d)return interaction.editReply("\u274C Could not fetch price right now. Try again in a moment.");
+        const ch=parseFloat(d.usd_24h_change||0),isUp=ch>=0;
+        const fmt2=n=>n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
         const mcap=d.usd_market_cap?`$${(d.usd_market_cap/1e9).toFixed(2)}B`:"--",vol=d.usd_24h_vol?`$${(d.usd_24h_vol/1e9).toFixed(2)}B`:"--";
         const fee=calcFee(Math.max(d.usd,1),"send"),rate=feeRate(Math.max(d.usd,1),"send");
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert  \u2022  Live Price",iconURL:IMG.LOGO})
-          .setTitle(`${coin}  --  $${fmt2(d.usd)}`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
-          .setDescription(`${ch>=0?"\u25B2":"\u25BC"} **${ch.toFixed(2)}%** in the last 24 hours\n\u200b`)
+        const color2=isUp?0x00C853:0xFF1744;
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(color2)
+          .setAuthor({name:"Konvert Exchange  \u2022  Live Price",iconURL:IMG.LOGO})
+          .setTitle(`${isUp?"\u25B2":"\u25BC"}  ${coin}  \u2014  $${fmt2(d.usd)}`)
+          .setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
+          .setDescription(`**${isUp?"+":""}${ch.toFixed(2)}%** in the last 24 hours\n\u200b`)
           .addFields(
-            {name:"USD",        value:`**$${fmt2(d.usd)}**`,inline:true},
-            {name:"CAD",        value:`CA$${fmt2(d.cad)}`, inline:true},
-            {name:"EUR",        value:`\u20AC${fmt2(d.eur)}`,inline:true},
-            {name:"Market Cap", value:mcap,inline:true},
-            {name:"24h Volume", value:vol, inline:true},
-            {name:"Konvert Fee",value:`${rate}%  --  **${fmtUSD(fee)}**`,inline:true},
-          ).setFooter({text:`Konvert  \u2022  /price ${coin}`}).setTimestamp()]});
+            {name:"\uD83C\uDDFA\uD83C\uDDF8  USD",   value:`**$${fmt2(d.usd)}**`,                  inline:true},
+            {name:"\uD83C\uDDE8\uD83C\uDDE6  CAD",   value:`**CA$${fmt2(d.cad)}**`,                inline:true},
+            {name:"\uD83C\uDDEA\uD83C\uDDFA  EUR",   value:`**\u20AC${fmt2(d.eur)}**`,             inline:true},
+            {name:"\uD83D\uDCCA  Market Cap",         value:mcap,                                    inline:true},
+            {name:"\uD83D\uDCB9  24h Volume",         value:vol,                                     inline:true},
+            {name:"\uD83D\uDCB8  Konvert Fee",        value:`**${rate}%** \u2014 ${fmtUSD(fee)}`,    inline:true},
+          )
+          .setImage(IMG.BANNER)
+          .setFooter({text:"Konvert Exchange  \u2022  Open a ticket to start trading"})
+          .setTimestamp()]});
       }
 
       // /convert -- shows both coin amount AND USD value
@@ -549,34 +563,60 @@ client.on(Events.InteractionCreate, async interaction => {
         const amount=interaction.options.getNumber("amount"),from=interaction.options.getString("from").toUpperCase(),to=interaction.options.getString("to").toUpperCase();
         if(!amount||amount<=0)return interaction.editReply("Please enter a valid amount greater than 0.");
         const FIAT={USD:1,CAD:1.37,EUR:0.93,GBP:0.79};
-        // Normalize: if it's not a fiat currency, treat as coin and uppercase it
-        const fromNorm=from.toUpperCase(), toNorm=to.toUpperCase();
+        const fromNorm=from.trim().toUpperCase(), toNorm=to.trim().toUpperCase();
+        // Validate coins exist in GECKO if not fiat
+        if(!FIAT[fromNorm]&&!GECKO[fromNorm])return interaction.editReply(`\u274C **${fromNorm}** not recognised. Use coins like BTC, ETH, SOL or fiat like USD, CAD, EUR.`);
+        if(!FIAT[toNorm]&&!GECKO[toNorm])return interaction.editReply(`\u274C **${toNorm}** not recognised. Use coins like BTC, ETH, SOL or fiat like USD, CAD, EUR.`);
         let amtUSD;
-        if(FIAT[fromNorm])amtUSD=amount/FIAT[fromNorm];
-        else{const p=await getPrice(fromNorm);if(!p)return interaction.editReply(`Can't find price for **${fromNorm}**. Use coin symbols like BTC, ETH, SOL or fiat like USD, CAD.`);amtUSD=amount*p;}
+        if(FIAT[fromNorm]){amtUSD=amount/FIAT[fromNorm];}
+        else{
+          const p=await getPrice(fromNorm);
+          if(!p)return interaction.editReply(`\u274C Could not fetch price for **${fromNorm}** right now. Try again in a moment.`);
+          amtUSD=amount*p;
+        }
         let result;
-        if(FIAT[toNorm])result=amtUSD*FIAT[toNorm];
-        else{const p=await getPrice(toNorm);if(!p)return interaction.editReply(`Can't find price for **${toNorm}**. Use coin symbols like BTC, ETH, SOL or fiat like USD, CAD.`);result=amtUSD/p;}
-        const fee=calcFee(amtUSD,"send"),p2=FIAT[toNorm]?1/FIAT[toNorm]:(await getPrice(toNorm)||1),youGet=result-(fee/p2);
-        const isToFiat=!!FIAT[toNorm],receiveUSD=isToFiat?youGet:youGet*(await getPrice(toNorm)||1);
+        if(FIAT[toNorm]){result=amtUSD*FIAT[toNorm];}
+        else{
+          const p=await getPrice(toNorm);
+          if(!p)return interaction.editReply(`\u274C Could not fetch price for **${toNorm}** right now. Try again in a moment.`);
+          result=amtUSD/p;
+        }
+        const fee=calcFee(amtUSD,"send");
+        const toPrice=FIAT[toNorm]?(1/FIAT[toNorm]):(await getPrice(toNorm)||1);
+        const youGet=result-(fee/toPrice);
+        const isToFiat=!!FIAT[toNorm];
+        const receiveUSD=isToFiat?youGet:youGet*(await getPrice(toNorm)||1);
         const youGetDisplay=isToFiat?fmtUSD(youGet):`${youGet.toFixed(6)} ${toNorm}`;
-        return interaction.editReply({embeds:[base("Conversion").setThumbnail(IMG.LOGO)
+        const usdDisplay=isToFiat?fmtUSD(youGet):`\u2248${fmtUSD(receiveUSD)}`;
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR)
+          .setAuthor({name:"Konvert Exchange  \u2022  Conversion",iconURL:IMG.LOGO})
+          .setTitle(`${fromNorm} \u2192 ${toNorm}`)
+          .setThumbnail(COIN_LOGO[fromNorm]||COIN_LOGO[toNorm]||IMG.LOGO)
+          .setDescription(`Estimated conversion for **${amount} ${fromNorm}** to **${toNorm}**\n\u200b`)
           .addFields(
-            {name:"You Send",      value:`**${amount} ${fromNorm}**`,                                       inline:true},
-            {name:"Est. Fee",      value:`**\u2248${fmtUSD(fee)}**`,                                        inline:true},
-            {name:"\u200b",        value:"\u200b",                                                          inline:true},
-            {name:"You Receive",   value:`**${youGetDisplay}**`,                                            inline:true},
-            {name:"Est. USD Value",value:isToFiat?`**${fmtUSD(youGet)}**`:`**\u2248${fmtUSD(receiveUSD)}**`,inline:true},
-          ).setFooter({text:"Estimate only  \u2022  Konvert  \u2022  Open a ticket to begin"})]});
+            {name:"\uD83D\uDCE4  You Send",    value:`**${amount} ${fromNorm}**`,  inline:true},
+            {name:"\uD83D\uDCB8  Est. Fee",    value:`**${fmtUSD(fee)}**`,         inline:true},
+            {name:"\uD83D\uDCE5  You Receive", value:`**${youGetDisplay}**`,       inline:true},
+            {name:"\uD83D\uDCB5  USD Value",   value:`**${usdDisplay}**`,          inline:true},
+          )
+          .setImage(IMG.BANNER)
+          .setFooter({text:"Estimate only  \u2022  Konvert Exchange  \u2022  Open a ticket to begin"})
+          .setTimestamp()]});
       }
 
-      // /stats -- deferred, reads vouched tickets, nice UI with progress bar + %
+      // /stats -- accepts vouched OR completed status, auto-applies tier role
       if(cmd==="stats"){
         await interaction.deferReply();
         const target=interaction.options.getUser("user")||interaction.user,isSelf=target.id===interaction.user.id;
         const allT=Object.values(load("tickets"));
-        const done=allT.filter(t=>t.userId===target.id&&t.status==="vouched");
-        const volume=done.reduce((s,t)=>s+(t.amountUSD||0),0),avg=done.length>0?volume/done.length:0;
+        // Accept both "vouched" and "completed" for backwards compat
+        const DONE_STATUS=["vouched","completed"];
+        const done=allT.filter(t=>t.userId===target.id&&DONE_STATUS.includes(t.status));
+        // Also add any manual volume adjustments from state
+        const adj=state.volumeAdj?.[target.id]||0;
+        const rawVolume=done.reduce((s,t)=>s+(t.amountUSD||0),0);
+        const volume=Math.max(0,rawVolume+adj);
+        const avg=done.length>0?rawVolume/done.length:0;
         const methods={};done.forEach(t=>{if(t.method)methods[t.method]=(methods[t.method]||0)+1;});
         const topM=Object.entries(methods).sort((a,b)=>b[1]-a[1])[0];
         const coins={};done.forEach(t=>{if(t.coin)coins[t.coin]=(coins[t.coin]||0)+1;});
@@ -584,52 +624,72 @@ client.on(Events.InteractionCreate, async interaction => {
         const tier=getTier(volume),nextTier=getNextTier(volume);
         const bar=nextTier?progressBar(volume,tier.min,nextTier.min):"\u2593".repeat(12)+" MAX";
         const needed=nextTier?Math.max(nextTier.min-volume,0):0;
+        // Always auto-apply the correct tier role
         await applyTierRole(interaction.guild,target.id,volume);
-        const exDone=allT.filter(t=>t.completedBy===target.id&&t.status==="vouched"),exVol=exDone.reduce((s,t)=>s+(t.amountUSD||0),0);
+        const exDone=allT.filter(t=>t.completedBy===target.id&&DONE_STATUS.includes(t.status));
+        const exVol=exDone.reduce((s,t)=>s+(t.amountUSD||0),0);
         const tierLine=`${tier.emoji} **${tier.label}**`+(nextTier?`  \u2192  ${nextTier.emoji} **${nextTier.label}**`:"  \u00b7  **\u2B50 Max Tier**");
         const nextLine=nextTier?`Need **${fmtUSD(needed)}** more to reach ${nextTier.emoji} **${nextTier.label}**`:"You have reached the highest tier!";
-        const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO})
-          .setTitle(isSelf?"\uD83D\uDCCA Your Exchange Stats":`\uD83D\uDCCA ${target.username}'s Stats`)
-          .setThumbnail(target.displayAvatarURL({size:128}))
-          .setDescription(`${tierLine}\n\`${bar}\`\n${nextLine}\n\u200b`)
+        const adjLine=adj!==0?`\n*Volume adjusted by ${adj>0?"+":""}${fmtUSD(adj)} by staff*`:"";
+        const embed=new EmbedBuilder().setColor(tier.role?CONFIG.COLOR:0x5865F2)
+          .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
+          .setTitle(isSelf?`${tier.emoji}  Your Exchange Stats`:`${tier.emoji}  ${target.username}'s Stats`)
+          .setThumbnail(target.displayAvatarURL({size:256}))
+          .setDescription(`${tierLine}\n\`${bar}\`\n${nextLine}${adjLine}\n\u200b`)
           .addFields(
-            {name:"\uD83E\uDDFE  Trades",    value:`**${done.length}** completed`,                           inline:true},
-            {name:"\uD83D\uDCB0  Volume",    value:volume>0?`**${fmtUSD(volume)}**`:"No trades yet",         inline:true},
-            {name:"\uD83D\uDCCA  Avg Deal",  value:avg>0?`**${fmtUSD(avg)}**`:"--",                          inline:true},
-            {name:"\uD83D\uDCB3  Top Method",value:topM?`**${getMethod(topM[0])?.label||topM[0]}** (${topM[1]}x)`:"--",inline:true},
-            {name:"\uD83E\uDE99  Top Coin",  value:topC?`**${topC[0]}** (${topC[1]}x)`:"--",                 inline:true},
-            {name:"\u2B50  Tier",           value:`${tier.emoji} **${tier.label}**`,                         inline:true},
+            {name:"\uD83E\uDDFE  Trades",    value:`**${done.length}**`,                                     inline:true},
+            {name:"\uD83D\uDCB0  Volume",    value:volume>0?`**${fmtUSD(volume)}**`:"**$0.00**",             inline:true},
+            {name:"\uD83D\uDCCA  Avg Deal",  value:avg>0?`**${fmtUSD(avg)}**`:"**--**",                      inline:true},
+            {name:"\uD83D\uDCB3  Top Method",value:topM?`**${getMethod(topM[0])?.label||topM[0]}**`:"--",    inline:true},
+            {name:"\uD83E\uDE99  Top Coin",  value:topC?`**${topC[0]}**`:"--",                               inline:true},
+            {name:"\uD83C\uDFC6  Tier",      value:`${tier.emoji} **${tier.label}**`,                        inline:true},
           );
-        if(done.length>0){const last=done.sort((a,b)=>(b.completedAt||0)-(a.completedAt||0))[0];embed.addFields({name:"\u23F0  Last Trade",value:last.completedAt?`<t:${Math.floor(last.completedAt/1000)}:R>`:"--",inline:false});}
-        if(exDone.length>0)embed.addFields({name:"\u200b",value:"**\u2014\u2014 Exchanger Stats \u2014\u2014**",inline:false},{name:"Deals Handled",value:`**${exDone.length}**`,inline:true},{name:"Vol. Handled",value:`**${fmtUSD(exVol)}**`,inline:true});
-        embed.setFooter({text:done.length===0?"No completed trades yet  \u2022  Konvert":`${done.length} verified trade${done.length!==1?"s":""} on Konvert`});
+        if(done.length>0){
+          const last=[...done].sort((a,b)=>(b.completedAt||0)-(a.completedAt||0))[0];
+          embed.addFields({name:"\u23F0  Last Trade",value:last.completedAt?`<t:${Math.floor(last.completedAt/1000)}:R>`:"--",inline:false});
+        }
+        if(exDone.length>0)embed.addFields({name:"\u200b",value:"**\u2500\u2500 Exchanger Activity \u2500\u2500**",inline:false},{name:"Deals Handled",value:`**${exDone.length}**`,inline:true},{name:"Vol. Handled",value:`**${fmtUSD(exVol)}**`,inline:true});
+        embed.setImage(IMG.BANNER).setFooter({text:done.length===0?"No completed trades yet  \u2022  Konvert Exchange":`${done.length} verified trade${done.length!==1?"s":""} on Konvert Exchange`}).setTimestamp();
         return interaction.editReply({embeds:[embed]});
       }
 
-      // /leaderboard -- deferred, shows % share of total volume
+      // /leaderboard -- accepts vouched OR completed, applies tier roles
       if(cmd==="leaderboard"){
         await interaction.deferReply();
-        const allT=Object.values(load("tickets")).filter(t=>t.status==="vouched"&&t.amountUSD);
-        if(!allT.length)return interaction.editReply({embeds:[base("Top Traders").setThumbnail(IMG.LOGO).setDescription("No completed trades yet -- be the first!").setFooter({text:"Konvert  \u2022  Leaderboard"})]});
+        const DONE_STATUS=["vouched","completed"];
+        const allT=Object.values(load("tickets")).filter(t=>DONE_STATUS.includes(t.status)&&t.amountUSD);
+        if(!allT.length)return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("\uD83C\uDFC6  Top Traders").setThumbnail(IMG.LOGO).setDescription("No completed trades yet.\n\nBe the first to make a deal and claim the top spot!\n\u200b").setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  \u2022  Leaderboard"}).setTimestamp()]});
         const byUser={};
-        allT.forEach(t=>{if(!byUser[t.userId])byUser[t.userId]={volume:0,trades:0};byUser[t.userId].volume+=(t.amountUSD||0);byUser[t.userId].trades+=1;});
+        allT.forEach(t=>{
+          if(!byUser[t.userId])byUser[t.userId]={volume:0,trades:0};
+          byUser[t.userId].volume+=(t.amountUSD||0);
+          byUser[t.userId].trades+=1;
+        });
+        // Add volume adjustments
+        if(state.volumeAdj){for(const [uid,adj] of Object.entries(state.volumeAdj)){if(byUser[uid])byUser[uid].volume=Math.max(0,byUser[uid].volume+adj);}}
         const ranked=Object.entries(byUser).sort((a,b)=>b[1].volume-a[1].volume).slice(0,10);
         const totalVol=ranked.reduce((s,[,d])=>s+d.volume,0);
         const medals=["\uD83E\uDD47","\uD83E\uDD48","\uD83E\uDD49"];
+        // Auto-apply tier roles to all ranked users
+        for(const [uid,d] of ranked){applyTierRole(interaction.guild,uid,d.volume).catch(()=>{});}
         const lines=ranked.map(([uid,d],i)=>{
           const tier=getTier(d.volume),share=totalVol>0?Math.round((d.volume/totalVol)*100):0;
-          return `${medals[i]||`**${i+1}.**`}  <@${uid}>  ${tier.emoji}  \u2014  **${fmtUSD(d.volume)}** (${share}%)  \u00b7  ${d.trades} deal${d.trades!==1?"s":""}`;
+          const medal=medals[i]||`**#${i+1}**`;
+          return `${medal}  <@${uid}>  ${tier.emoji}  \u2014  **${fmtUSD(d.volume)}** \u00b7 ${share}%  \u00b7  ${d.trades} deal${d.trades!==1?"s":""}`;
         }).join("\n");
-        const linesValue = lines.length > 0 ? lines : "No traders yet.";
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO})
-          .setTitle("\uD83C\uDFC6  Top Traders").setThumbnail(IMG.LOGO)
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR)
+          .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
+          .setTitle("\uD83C\uDFC6  Top Traders")
+          .setThumbnail(IMG.LOGO)
           .setDescription("Ranked by total USD volume exchanged on Konvert.\n\u200b")
           .addFields(
-            {name:"Rankings",      value:linesValue,                                                  inline:false},
-            {name:"Total Volume",  value:`**${fmtUSD(totalVol)}** across all traders`,               inline:true},
-            {name:"Avg Per Trader",value:`**${fmtUSD(Math.round(totalVol/ranked.length))}**`,        inline:true},
+            {name:"Rankings",value:lines||"No traders yet.",inline:false},
+            {name:"\uD83D\uDCB0  Total Volume",value:`**${fmtUSD(totalVol)}**`,inline:true},
+            {name:"\uD83D\uDCCA  Traders",value:`**${ranked.length}**`,inline:true},
+            {name:"\uD83D\uDCB9  Avg Volume",value:`**${fmtUSD(Math.round(totalVol/Math.max(ranked.length,1)))}**`,inline:true},
           )
-          .setFooter({text:`${ranked.length} traders  \u2022  Konvert Leaderboard`}).setTimestamp()]});
+          .setImage(IMG.BANNER)
+          .setFooter({text:`${ranked.length} trader${ranked.length!==1?"s":""}  \u2022  Konvert Exchange Leaderboard`}).setTimestamp()]});
       }
 
       if(cmd==="market"){
@@ -772,6 +832,38 @@ client.on(Events.InteractionCreate, async interaction => {
       if(cmd==="posttos"){const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Terms of Service").setThumbnail(IMG.LOGO).setDescription("**Konvert -- Exchange Policies**\n\u200b").addFields({name:"1. Lawful Use",value:"Konvert strictly prohibits the use of its services for any unlawful activity, including but not limited to fraud, scams, chargebacks, or abuse of payment systems. Transactions deemed suspicious, unauthorized, or high-risk can be rejected and denied.",inline:false},{name:"2. Fees & Pricing",value:"All exchanges are subject to a minimum service fee of **$5 USD**, and a tiered % for larger deals.\n\nFees are **non-refundable** if:\n- The exchange is confirmed completed by both parties\n- Payment details provided are inaccurate or unverifiable\n- The client withdraws after the exchange process has begun\n\nRefunds only in cases of verified error, reported within 24 hours.",inline:false},{name:"3. On-Platform Transactions Only",value:"All exchanges must be conducted exclusively through the Konvert server and official ticket system. Transactions arranged outside of Konvert are **strictly prohibited**.\n\nKonvert will not provide support or refund for any off-platform transactions.",inline:false},{name:"4. Accepted Payment Methods",value:"PayPal  \u00b7  Cash App  \u00b7  Venmo  \u00b7  Interac e-Transfer  \u00b7  Zelle  \u00b7  IBAN  \u00b7  Bank Transfer  \u00b7  Crypto\n\nAdditional fees may apply for card or bank-based payments. All fees will be clearly disclosed before deal is taken.",inline:false},{name:"5. Disputes & Enforcement",value:"Any attempt to chargeback, make false claims, abuse staff, or bypass policies will result in an **immediate ban** from the server.",inline:false}).setFooter({text:"Konvert  \u2022  By using our services you agree to these terms"});await interaction.channel.send({embeds:[embed]});return interaction.reply({content:"Terms of Service embed posted.",ephemeral:true});}
 
       if(cmd==="postlinks"){const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Official Links for Konvert").setThumbnail(IMG.LOGO).setDescription("All official Konvert social media. Follow us for updates, announcements, and giveaways.\n\u200b").addFields({name:"\uD835\uDD4F  Twitter / X",value:"[**@KonvertNow**](https://x.com/konvertnow)",inline:true},{name:"\uD83D\uDCF8  Instagram",value:"[**@KonvertNow**](https://www.instagram.com/konvertnow/)",inline:true},{name:"\u26A0\uFE0F  Stay Safe",value:"Only interact with accounts listed here. Any other account claiming to be Konvert is an impersonator.",inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert  \u2022  Official Links  \u2022  Follow us for updates"});await interaction.channel.send({embeds:[embed]});return interaction.reply({content:"Official links embed posted.",ephemeral:true});}
+
+      if(cmd==="adjuststats"){
+        const target=interaction.options.getUser("user"),amount=interaction.options.getNumber("amount"),reason=interaction.options.getString("reason")||"No reason given";
+        if(!state.volumeAdj)state.volumeAdj={};
+        state.volumeAdj[target.id]=(state.volumeAdj[target.id]||0)+amount;
+        const allT=Object.values(load("tickets"));
+        const DONE_STATUS=["vouched","completed"];
+        const rawVol=allT.filter(t=>t.userId===target.id&&DONE_STATUS.includes(t.status)).reduce((s,t)=>s+(t.amountUSD||0),0);
+        const newVol=Math.max(0,rawVol+(state.volumeAdj[target.id]||0));
+        await applyTierRole(interaction.guild,target.id,newVol);
+        const tier=getTier(newVol);
+        log(interaction.guild,`ADJUSTSTATS: ${interaction.user.tag} adjusted ${target.tag} by ${amount>0?"+":""}${fmtUSD(amount)} | New total: ${fmtUSD(newVol)} | Reason: ${reason}`);
+        return interaction.reply({embeds:[base("Stats Adjusted").setThumbnail(target.displayAvatarURL({size:128}))
+          .setDescription(`Stats updated for <@${target.id}>.\n\u200b`)
+          .addFields(
+            {name:"Adjustment",value:`**${amount>0?"+":""}${fmtUSD(amount)}**`,inline:true},
+            {name:"New Volume",value:`**${fmtUSD(newVol)}**`,inline:true},
+            {name:"New Tier",value:`${tier.emoji} **${tier.label}**`,inline:true},
+            {name:"Reason",value:reason,inline:false},
+          ).setFooter({text:`Adjusted by ${interaction.user.tag}  \u2022  Konvert`})],ephemeral:true});
+      }
+
+      if(cmd==="resetstats"){
+        const target=interaction.options.getUser("user");
+        if(!state.volumeAdj)state.volumeAdj={};
+        state.volumeAdj[target.id]=0;
+        const allT=Object.values(load("tickets"));
+        const DONE_STATUS=["vouched","completed"];
+        const rawVol=allT.filter(t=>t.userId===target.id&&DONE_STATUS.includes(t.status)).reduce((s,t)=>s+(t.amountUSD||0),0);
+        await applyTierRole(interaction.guild,target.id,rawVol);
+        return interaction.reply({content:`Stats adjustment for **${target.tag}** has been reset to $0. Volume is now **${fmtUSD(rawVol)}** from trades only.`,ephemeral:true});
+      }
 
       if(cmd==="setfeedchannel"){const channelId=interaction.options.getString("channel_id"),ch=interaction.guild.channels.cache.get(channelId);if(!ch)return interaction.reply({content:"Channel not found.",ephemeral:true});state.feedChannel=channelId;return interaction.reply({content:`\uD83D\uDCE1 Live deal feed channel set to <#${channelId}>.`,ephemeral:true});}
       if(cmd==="livefeed"){state.feedEnabled=!state.feedEnabled;return interaction.reply({content:`Live deal feed is now **${state.feedEnabled?"\u2705 ON":"\u274C OFF"}**${state.feedChannel?` in <#${state.feedChannel}>`:" (set a channel with /setfeedchannel first)"}.`,ephemeral:true});}
