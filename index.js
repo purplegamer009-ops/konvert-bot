@@ -448,6 +448,42 @@ async function doCloseTicket(channel,guild,closedBy,reason){
   log(guild,`CLOSED: #${channel.name} by ${closedBy.tag} -- ${reason}`);
 }
 
+// --- COMPLETE TRADE FUNCTION (used by btn_done and modal_done) ---
+async function completeTrade(interaction, ticket, tickets) {
+  const m = getMethod(ticket.method);
+  // 1. Save as vouched
+  tickets[interaction.channel.id] = ticket;
+  ticket.status = "vouched";
+  ticket.completedBy = interaction.user.id;
+  ticket.completedAt = Date.now();
+  save("tickets", tickets);
+  console.log(`[completeTrade] saved vouched ticket for userId=${ticket.userId} amount=${ticket.amountUSD}`);
+  // 2. Post vouch embed
+  await postVouch(interaction.guild, {clientId:ticket.userId, exchangerId:interaction.user.id, method:m?.label||ticket.method, amountUSD:ticket.amountUSD, direction:ticket.direction, coin:ticket.coin, message:null, rating:5});
+  // 3. Live feed
+  if(state.feedEnabled&&state.feedChannel){try{const feedCh=interaction.guild.channels.cache.get(state.feedChannel);if(feedCh){const _all=Object.values(load("tickets")).filter(t=>t.userId===ticket.userId&&t.status==="vouched"),_tier=getTier(_all.reduce((s,t)=>s+(t.amountUSD||0),0));await feedCh.send(`\u2705  **${m?.label||ticket.method}**  \u00b7  **${fmtUSD(ticket.amountUSD)}**  \u00b7  ${_tier.emoji}  \u2014  just now`);}}catch{}}
+  // 4. Tier role
+  try{const allR=Object.values(load("tickets")).filter(t=>t.userId===ticket.userId&&t.status==="vouched");await applyTierRole(interaction.guild,ticket.userId,allR.reduce((s,t)=>s+(t.amountUSD||0),0));}catch{}
+  // 5. Thank-you DM
+  try{
+    const allC=Object.values(load("tickets")).filter(t=>t.userId===ticket.userId&&t.status==="vouched"),totalVol=allC.reduce((s,t)=>s+(t.amountUSD||0),0),tradeCount=allC.length,tier=getTier(totalVol);
+    const clientUser=await client.users.fetch(ticket.userId);
+    await clientUser.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Thank You for Trading with Us").setThumbnail(IMG.LOGO)
+      .setDescription(`Hey <@${ticket.userId}> -- your trade has been completed successfully.\n\nWe appreciate your trust in **Konvert Exchange**.\n\u200b`)
+      .addFields(
+        {name:"Your Tier",       value:`${tier.emoji} **${tier.label}**`,inline:true},
+        {name:"Trades With Us",  value:`**${tradeCount}** completed`,   inline:true},
+        {name:"Total Exchanged", value:`**${fmtUSD(totalVol)}**`,       inline:true},
+        {name:"This Trade",      value:`**${fmtUSD(ticket.amountUSD)}** via ${m?.label||ticket.method}`,inline:false},
+      ).setImage(IMG.DEAL).setTimestamp().setFooter({text:"Konvert Exchange  \u2022  Thank you for your business"})]});
+  }catch{}
+  // 6. Reply and close
+  const completionEmbed=buildDealEmbed({clientId:ticket.userId,exchangerId:interaction.user.id,method:m?.label||ticket.method,amountUSD:ticket.amountUSD,direction:ticket.direction,coin:ticket.coin,message:null,rating:5});
+  const replyEmbed=new EmbedBuilder(completionEmbed.data).setDescription("Vouch posted. Thank-you DM sent.\nThis ticket closes in **15 seconds**.");
+  await interaction.editReply({embeds:[replyEmbed]});
+  setTimeout(async()=>{await doCloseTicket(interaction.channel,interaction.guild,interaction.user,"Trade completed");interaction.channel.delete().catch(()=>{});},15000);
+}
+
 // --- MESSAGE HANDLER ($COIN + YouTube) ---
 client.on(Events.MessageCreate, async message => {
   // YouTube Shorts upload
@@ -982,47 +1018,32 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.showModal(modal);
       }
 
-      // btn_done -- CORRECT ORDER: save -> vouch -> live feed -> tier role -> DM client
+      // btn_done -- shows modal to get amount if ticket not in storage
       if(interaction.customId==="btn_done"){
-        const tickets=load("tickets"),ticket=tickets[interaction.channel.id];
-        const isOwner=CONFIG.OWNER_IDS.includes(interaction.user.id),isStaff=CONFIG.STAFF_ROLE?interaction.member.roles.cache.has(CONFIG.STAFF_ROLE):false;
-        const mRoleId=ticket?.method?CONFIG.ROLES[ticket.method]:null,isHandler=mRoleId?interaction.member.roles.cache.has(mRoleId):false;
+        const tickets=load("tickets");
+        const ticket=tickets[interaction.channel.id];
+        const isOwner=CONFIG.OWNER_IDS.includes(interaction.user.id);
+        const isStaff=CONFIG.STAFF_ROLE?interaction.member.roles.cache.has(CONFIG.STAFF_ROLE):false;
+        const mRoleId=ticket?.method?CONFIG.ROLES[ticket.method]:null;
+        const isHandler=mRoleId?interaction.member.roles.cache.has(mRoleId):false;
         if(!isOwner&&!isStaff&&!isHandler)return interaction.reply({content:"Only staff or the assigned handler can mark a trade complete.",ephemeral:true});
         if(ticket?.status==="vouched"||ticket?.status==="closed")return interaction.reply({content:"This ticket has already been completed.",ephemeral:true});
-        await interaction.deferReply();
-        const m=ticket?getMethod(ticket.method):null;
-        if(ticket){
-          // 1. Save as vouched FIRST
-          tickets[interaction.channel.id].status="vouched";tickets[interaction.channel.id].completedBy=interaction.user.id;tickets[interaction.channel.id].completedAt=Date.now();save("tickets",tickets);
-          // 2. Post vouch embed to vouch channel
-          await postVouch(interaction.guild,{clientId:ticket.userId,exchangerId:interaction.user.id,method:m?.label||ticket.method,amountUSD:ticket.amountUSD,direction:ticket.direction,coin:ticket.coin,message:null,rating:5});
-          // 3. Post to live deal feed if enabled
-          if(state.feedEnabled&&state.feedChannel){try{const feedCh=interaction.guild.channels.cache.get(state.feedChannel);if(feedCh){const _all=Object.values(load("tickets")).filter(t=>t.userId===ticket.userId&&t.status==="vouched"),_tier=getTier(_all.reduce((s,t)=>s+(t.amountUSD||0),0));await feedCh.send(`\u2705  **${m?.label||ticket.method}**  \u00b7  **${fmtUSD(ticket.amountUSD)}**  \u00b7  ${_tier.emoji}  \u2014  just now`);}}catch{}}
-          // 4. Apply tier role
-          try{const allR=Object.values(load("tickets")).filter(t=>t.userId===ticket.userId&&t.status==="vouched");await applyTierRole(interaction.guild,ticket.userId,allR.reduce((s,t)=>s+(t.amountUSD||0),0));}catch{}
-          // 5. Auto thank-you DM to client
-          try{
-            const allC=Object.values(load("tickets")).filter(t=>t.userId===ticket.userId&&t.status==="vouched"),totalVol=allC.reduce((s,t)=>s+(t.amountUSD||0),0),tradeCount=allC.length,tier=getTier(totalVol);
-            const clientUser=await client.users.fetch(ticket.userId);
-            await clientUser.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Thank You for Trading with Us").setThumbnail(IMG.LOGO)
-              .setDescription(`Hey <@${ticket.userId}> -- your trade has been completed successfully.\n\nWe appreciate your trust in **Konvert Exchange**. Every deal matters to us and we look forward to trading with you again.\n\u200b`)
-              .addFields(
-                {name:"Your Tier",        value:`${tier.emoji} **${tier.label}**`,              inline:true},
-                {name:"Trades With Us",   value:`**${tradeCount}** completed`,                  inline:true},
-                {name:"Total Exchanged",  value:`**${fmtUSD(totalVol)}**`,                      inline:true},
-                {name:"This Trade",       value:`**${fmtUSD(ticket.amountUSD)}** via ${m?.label||ticket.method}`,inline:false},
-                {name:"Come Back Anytime",value:`Head to our exchange channel anytime to open a new ticket.\n**Fast  \u00b7  Safe  \u00b7  Simple  \u00b7  Private**`,inline:false},
-              ).setImage(IMG.DEAL).setTimestamp().setFooter({text:"Konvert Exchange  \u2022  Thank you for your business"})]});
-          }catch{}
+        // If ticket has no amountUSD, show modal to collect it
+        if(!ticket?.amountUSD){
+          const modal=new ModalBuilder().setCustomId(`modal_done__${interaction.channel.id}`).setTitle("Complete Trade");
+          modal.addComponents(
+            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("done_amount").setLabel("Trade amount in USD").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 250").setRequired(true)),
+            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("done_client").setLabel("Client's Discord ID or @mention").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 123456789012345678").setRequired(true)),
+            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("done_method").setLabel("Payment method (e.g. PayPal, Zelle)").setStyle(TextInputStyle.Short).setPlaceholder("e.g. PayPal").setRequired(true)),
+          );
+          return interaction.showModal(modal);
         }
-        const completionEmbed=ticket?buildDealEmbed({clientId:ticket.userId,exchangerId:interaction.user.id,method:m?.label||ticket.method,amountUSD:ticket.amountUSD,direction:ticket.direction,coin:ticket.coin,message:null,rating:5}):new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Trade Complete").setDescription("Trade marked complete by staff.").setImage(IMG.DEAL).setTimestamp().setFooter({text:"Konvert"});
-        const replyEmbed=new EmbedBuilder(completionEmbed.data).setDescription("Vouch posted. Thank-you card sent to client.\nThis ticket closes in **15 seconds**.");
-        await interaction.editReply({embeds:[replyEmbed]});
-        setTimeout(async()=>{await doCloseTicket(interaction.channel,interaction.guild,interaction.user,"Trade completed");interaction.channel.delete().catch(()=>{});},15000);
+        await interaction.deferReply();
+        await completeTrade(interaction, ticket, tickets);
         return;
       }
-
       if(interaction.customId==="btn_close"){
+
         if(!CONFIG.OWNER_IDS.includes(interaction.user.id)&&!(CONFIG.STAFF_ROLE&&interaction.member.roles.cache.has(CONFIG.STAFF_ROLE)))return interaction.reply({content:"Only owners or staff can close tickets.",ephemeral:true});
         await interaction.deferReply();
         await doCloseTicket(interaction.channel,interaction.guild,interaction.user,"Closed by staff");
@@ -1055,6 +1076,29 @@ client.on(Events.InteractionCreate, async interaction => {
 
     // --- MODALS ---
     if(interaction.isModalSubmit()){
+      if(interaction.customId.startsWith("modal_done__")){
+        await interaction.deferReply();
+        const channelId=interaction.customId.replace("modal_done__","");
+        const rawAmt=parseFloat(interaction.fields.getTextInputValue("done_amount"));
+        const clientRaw=interaction.fields.getTextInputValue("done_client").trim().replace(/[<@!>]/g,"");
+        const method=interaction.fields.getTextInputValue("done_method").trim();
+        if(isNaN(rawAmt)||rawAmt<=0)return interaction.editReply("Please enter a valid amount.");
+        // Resolve client user
+        let clientId=clientRaw;
+        try{const u=await client.users.fetch(clientRaw);clientId=u.id;}catch{}
+        const tickets=load("tickets");
+        // Create or update ticket entry
+        if(!tickets[channelId]){
+          tickets[channelId]={userId:clientId,userTag:clientRaw,method:method.toLowerCase(),direction:null,coin:null,amountUSD:rawAmt,feeUSD:calcFee(rawAmt,"send"),walletInfo:"manual",notes:"Completed via btn_done modal",status:"open",createdAt:Date.now()};
+        } else {
+          if(!tickets[channelId].amountUSD)tickets[channelId].amountUSD=rawAmt;
+          if(!tickets[channelId].userId)tickets[channelId].userId=clientId;
+          if(!tickets[channelId].method)tickets[channelId].method=method.toLowerCase();
+        }
+        await completeTrade(interaction, tickets[channelId], tickets);
+        return;
+      }
+
       if(interaction.customId==="modal_support"){
         const issue=interaction.fields.getTextInputValue("sup_issue"),tried=interaction.fields.getTextInputValue("sup_tried")||"Not specified",user=interaction.user,guild=interaction.guild;
         let ch;
@@ -1158,6 +1202,36 @@ async function checkAlerts(){
     state.alerts=state.alerts.filter(a=>!fired.includes(a));
   }catch{}
 }
+
+const WELCOME_CHANNEL="1477787759799435344";
+
+client.on(Events.GuildMemberAdd, async member => {
+  try {
+    const ch = member.guild.channels.cache.get(WELCOME_CHANNEL);
+    if (!ch) return;
+    const memberCount = member.guild.memberCount;
+    const embed = new EmbedBuilder()
+      .setColor(CONFIG.COLOR)
+      .setAuthor({ name: "Konvert Exchange", iconURL: IMG.LOGO })
+      .setTitle(`Welcome to Konvert! \uD83D\uDC4B`)
+      .setThumbnail(member.user.displayAvatarURL({ size: 256 }))
+      .setDescription(
+        `Hey <@${member.id}>, welcome to **Konvert Exchange**!\n\n` +
+        `You're member **#${memberCount}** \u2014 glad to have you here.\n\u200b`
+      )
+      .addFields(
+        { name: "\uD83D\uDCB8  Exchange",  value: `Open a ticket in <#${CONFIG.EXCHANGE_CHANNEL}> to start trading`, inline: false },
+        { name: "\u26A1  Fast",            value: "Usually under 10 minutes",   inline: true },
+        { name: "\uD83D\uDD12  Safe",      value: "MM required on all trades",  inline: true },
+        { name: "\uD83E\uDD1D  Support",   value: "24/7 agents available",      inline: true },
+      )
+      .setImage(IMG.BANNER)
+      .setFooter({ text: "Konvert Exchange  \u2022  Fast  \u00b7  Safe  \u00b7  Simple" })
+      .setTimestamp();
+    await ch.send({ content: `<@${member.id}>`, embeds: [embed] });
+  } catch(e) { console.error("Welcome error:", e.message); }
+});
+
 
 client.once(Events.ClientReady, async () => {
   console.log(`Konvert Bot online -- ${client.user.tag}`);
