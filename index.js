@@ -549,20 +549,23 @@ client.on(Events.InteractionCreate, async interaction => {
         const amount=interaction.options.getNumber("amount"),from=interaction.options.getString("from").toUpperCase(),to=interaction.options.getString("to").toUpperCase();
         if(!amount||amount<=0)return interaction.editReply("Please enter a valid amount greater than 0.");
         const FIAT={USD:1,CAD:1.37,EUR:0.93,GBP:0.79};
+        // Normalize: if it's not a fiat currency, treat as coin and uppercase it
+        const fromNorm=from.toUpperCase(), toNorm=to.toUpperCase();
         let amtUSD;
-        if(FIAT[from])amtUSD=amount/FIAT[from];
-        else{const p=await getPrice(from);if(!p)return interaction.editReply(`Unknown: ${from}. Use a coin like BTC or fiat like USD.`);amtUSD=amount*p;}
+        if(FIAT[fromNorm])amtUSD=amount/FIAT[fromNorm];
+        else{const p=await getPrice(fromNorm);if(!p)return interaction.editReply(`Can't find price for **${fromNorm}**. Use coin symbols like BTC, ETH, SOL or fiat like USD, CAD.`);amtUSD=amount*p;}
         let result;
-        if(FIAT[to])result=amtUSD*FIAT[to];
-        else{const p=await getPrice(to);if(!p)return interaction.editReply(`Unknown: ${to}.`);result=amtUSD/p;}
-        const fee=calcFee(amtUSD,"send"),p2=FIAT[to]?1/FIAT[to]:(await getPrice(to)||1),youGet=result-(fee/p2);
-        const isToFiat=!!FIAT[to],receiveUSD=isToFiat?youGet:youGet*(await getPrice(to)||1);
+        if(FIAT[toNorm])result=amtUSD*FIAT[toNorm];
+        else{const p=await getPrice(toNorm);if(!p)return interaction.editReply(`Can't find price for **${toNorm}**. Use coin symbols like BTC, ETH, SOL or fiat like USD, CAD.`);result=amtUSD/p;}
+        const fee=calcFee(amtUSD,"send"),p2=FIAT[toNorm]?1/FIAT[toNorm]:(await getPrice(toNorm)||1),youGet=result-(fee/p2);
+        const isToFiat=!!FIAT[toNorm],receiveUSD=isToFiat?youGet:youGet*(await getPrice(toNorm)||1);
+        const youGetDisplay=isToFiat?fmtUSD(youGet):`${youGet.toFixed(6)} ${toNorm}`;
         return interaction.editReply({embeds:[base("Conversion").setThumbnail(IMG.LOGO)
           .addFields(
-            {name:"You Send",      value:`**${amount} ${from}**`,                                          inline:true},
-            {name:"Est. Fee",      value:`**\u2248${fmtUSD(fee)}**`,                                       inline:true},
-            {name:"\u200b",        value:"\u200b",                                                         inline:true},
-            {name:"You Receive",   value:`**${youGet.toFixed(6)} ${to}**`,                                 inline:true},
+            {name:"You Send",      value:`**${amount} ${fromNorm}**`,                                       inline:true},
+            {name:"Est. Fee",      value:`**\u2248${fmtUSD(fee)}**`,                                        inline:true},
+            {name:"\u200b",        value:"\u200b",                                                          inline:true},
+            {name:"You Receive",   value:`**${youGetDisplay}**`,                                            inline:true},
             {name:"Est. USD Value",value:isToFiat?`**${fmtUSD(youGet)}**`:`**\u2248${fmtUSD(receiveUSD)}**`,inline:true},
           ).setFooter({text:"Estimate only  \u2022  Konvert  \u2022  Open a ticket to begin"})]});
       }
@@ -580,14 +583,15 @@ client.on(Events.InteractionCreate, async interaction => {
         const topC=Object.entries(coins).sort((a,b)=>b[1]-a[1])[0];
         const tier=getTier(volume),nextTier=getNextTier(volume);
         const bar=nextTier?progressBar(volume,tier.min,nextTier.min):"\u2593".repeat(12)+" MAX";
-        const pct=nextTier?Math.round(Math.min((volume-tier.min)/(nextTier.min-tier.min),1)*100):100;
+        const needed=nextTier?Math.max(nextTier.min-volume,0):0;
         await applyTierRole(interaction.guild,target.id,volume);
         const exDone=allT.filter(t=>t.completedBy===target.id&&t.status==="vouched"),exVol=exDone.reduce((s,t)=>s+(t.amountUSD||0),0);
-        const tierLine=`${tier.emoji} **${tier.label}**`+(nextTier?`  \u2192  ${nextTier.emoji} **${nextTier.label}** at ${fmtUSD(nextTier.min)}`:"  \u00b7  **\u2B50 Max Tier**");
+        const tierLine=`${tier.emoji} **${tier.label}**`+(nextTier?`  \u2192  ${nextTier.emoji} **${nextTier.label}**`:"  \u00b7  **\u2B50 Max Tier**");
+        const nextLine=nextTier?`Need **${fmtUSD(needed)}** more to reach ${nextTier.emoji} **${nextTier.label}**`:"You have reached the highest tier!";
         const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO})
           .setTitle(isSelf?"\uD83D\uDCCA Your Exchange Stats":`\uD83D\uDCCA ${target.username}'s Stats`)
           .setThumbnail(target.displayAvatarURL({size:128}))
-          .setDescription(`${tierLine}\n\`${bar}\`  **${pct}%** to next tier\n\u200b`)
+          .setDescription(`${tierLine}\n\`${bar}\`\n${nextLine}\n\u200b`)
           .addFields(
             {name:"\uD83E\uDDFE  Trades",    value:`**${done.length}** completed`,                           inline:true},
             {name:"\uD83D\uDCB0  Volume",    value:volume>0?`**${fmtUSD(volume)}**`:"No trades yet",         inline:true},
@@ -616,11 +620,12 @@ client.on(Events.InteractionCreate, async interaction => {
           const tier=getTier(d.volume),share=totalVol>0?Math.round((d.volume/totalVol)*100):0;
           return `${medals[i]||`**${i+1}.**`}  <@${uid}>  ${tier.emoji}  \u2014  **${fmtUSD(d.volume)}** (${share}%)  \u00b7  ${d.trades} deal${d.trades!==1?"s":""}`;
         }).join("\n");
+        const linesValue = lines.length > 0 ? lines : "No traders yet.";
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO})
           .setTitle("\uD83C\uDFC6  Top Traders").setThumbnail(IMG.LOGO)
           .setDescription("Ranked by total USD volume exchanged on Konvert.\n\u200b")
           .addFields(
-            {name:"Rankings",      value:lines,                                                      inline:false},
+            {name:"Rankings",      value:linesValue,                                                  inline:false},
             {name:"Total Volume",  value:`**${fmtUSD(totalVol)}** across all traders`,               inline:true},
             {name:"Avg Per Trader",value:`**${fmtUSD(Math.round(totalVol/ranked.length))}**`,        inline:true},
           )
