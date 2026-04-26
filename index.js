@@ -397,7 +397,7 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("postkonvault").setDescription("[Owner] Post the Konvault wagering server invite embed").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("adjuststats").setDescription("[Owner] Add or subtract volume from a user's stats").addUserOption(o=>o.setName("user").setDescription("User").setRequired(true)).addNumberOption(o=>o.setName("amount").setDescription("Amount in USD (use negative to subtract)").setRequired(true)).addStringOption(o=>o.setName("reason").setDescription("Reason for adjustment").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("resetstats").setDescription("[Owner] Reset a user's volume adjustment back to 0").addUserOption(o=>o.setName("user").setDescription("User").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  new SlashCommandBuilder().setName("testbackup").setDescription("[Owner] Test the backup channel right now").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("clearleaderboard").setDescription("[Owner] Wipe all trade data from leaderboard and stats").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 ].map(c=>c.toJSON());
 
 async function registerCommands(){
@@ -575,16 +575,17 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   if(mRoleId)pings.push(`<@&${mRoleId}>`);
   if(CONFIG.STAFF_ROLE&&CONFIG.STAFF_ROLE!==mRoleId)pings.push(`<@&${CONFIG.STAFF_ROLE}>`);
   if(pings.length)await ch.send(`${pings.join(" ")} -- New **${m.label}** ticket!`);
-  const t=load("tickets");
+  const t=Object.keys(_mem.tickets||{}).length>0?{..._mem.tickets}:load("tickets");
   t[ch.id]={userId:user.id,userTag:user.tag,method,direction,coin,amountUSD,feeUSD,walletInfo,notes:notes||"",status:"open",createdAt:Date.now()};
+  _mem.tickets=t;
   save("tickets",t);
   log(guild,`TICKET: #${ch.name} | ${user.tag} | ${m.label} | ${fmtUSD(amountUSD)} | ${coin}`);
   return ch;
 }
 
 async function doCloseTicket(channel,guild,closedBy,reason){
-  const tickets=load("tickets");
-  if(tickets[channel.id]){tickets[channel.id].status="closed";tickets[channel.id].closedAt=Date.now();save("tickets",tickets);}
+  const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
+  if(tickets[channel.id]){tickets[channel.id].status="closed";tickets[channel.id].closedAt=Date.now();_mem.tickets=tickets;save("tickets",tickets);}
   try{
     const msgs=await channel.messages.fetch({limit:100});
     const lines=[...msgs.values()].reverse().map(m=>`[${new Date(m.createdTimestamp).toISOString()}] ${m.author.tag}: ${m.content||"[embed]"}`).join("\n");
@@ -1080,6 +1081,14 @@ client.on(Events.InteractionCreate, async interaction => {
         const rawVol=allT.filter(t=>t.userId===target.id&&DONE_STATUS.includes(t.status)).reduce((s,t)=>s+(t.amountUSD||0),0);
         await applyTierRole(interaction.guild,target.id,rawVol);
         return interaction.reply({content:`Stats adjustment for **${target.tag}** has been reset to $0. Volume is now **${fmtUSD(rawVol)}** from trades only.`,ephemeral:true});
+      }
+
+      if(cmd==="clearleaderboard"){
+        await interaction.deferReply({ephemeral:true});
+        _mem.tickets={};
+        save("tickets",{});
+        state.volumeAdj={};
+        return interaction.editReply("✅ Leaderboard and stats have been cleared. All trade data wiped.");
       }
 
       if(cmd==="testbackup"){
