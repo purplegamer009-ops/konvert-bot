@@ -585,7 +585,15 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
 
 async function doCloseTicket(channel,guild,closedBy,reason){
   const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
-  if(tickets[channel.id]){tickets[channel.id].status="closed";tickets[channel.id].closedAt=Date.now();_mem.tickets=tickets;save("tickets",tickets);}
+  if(tickets[channel.id]){
+    // NEVER overwrite vouched status - only close if not already vouched
+    if(tickets[channel.id].status!=="vouched"){
+      tickets[channel.id].status="closed";
+    }
+    tickets[channel.id].closedAt=Date.now();
+    _mem.tickets=tickets;
+    save("tickets",tickets);
+  }
   try{
     const msgs=await channel.messages.fetch({limit:100});
     const lines=[...msgs.values()].reverse().map(m=>`[${new Date(m.createdTimestamp).toISOString()}] ${m.author.tag}: ${m.content||"[embed]"}`).join("\n");
