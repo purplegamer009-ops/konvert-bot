@@ -956,12 +956,12 @@ client.on(Events.InteractionCreate, async interaction => {
         const message=interaction.options.getString("message"),method=interaction.options.getString("method"),amount=interaction.options.getNumber("amount"),rating=interaction.options.getInteger("rating")||5;
         const vt=load("tickets");
         vt["manual_"+Date.now()]={userId:clientUser.id,userTag:clientUser.tag,method,direction:null,coin:null,amountUSD:amount,feeUSD:calcFee(amount,"send"),walletInfo:"manual",notes:"Manual vouch via /vouch",status:"vouched",completedBy:exchUser.id,completedAt:Date.now(),createdAt:Date.now()};
-        _mem.tickets=vt; // update in-memory immediately
+        _mem.tickets=vt;
         save("tickets",vt);
         await postVouch(interaction.guild,{clientId:clientUser.id,exchangerId:exchUser.id,method,amountUSD:amount,direction:null,coin:null,message,rating});
-        const allC=Object.values(load("tickets")).filter(t=>t.userId===clientUser.id&&t.status==="vouched");
-        await applyTierRole(interaction.guild,clientUser.id,allC.reduce((s,t)=>s+(t.amountUSD||0),0));
-        return interaction.reply({content:`Vouch recorded -- <@${clientUser.id}> exchanged with <@${exchUser.id}>.`,ephemeral:true});
+        const allC=Object.values(_mem.tickets).filter(t=>t.userId===clientUser.id&&["vouched","completed"].includes(t.status));
+        await applyTierRole(interaction.guild,clientUser.id,allC.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0));
+        return interaction.reply({content:`Vouch recorded — <@${clientUser.id}> exchanged with <@${exchUser.id}>.`,ephemeral:true});
       }
 
       if(cmd==="alert"){const coin=interaction.options.getString("coin").toUpperCase(),price=interaction.options.getNumber("price"),dir=interaction.options.getString("direction");if(!COINS.includes(coin))return interaction.reply({content:`Unsupported coin: ${coin}`,ephemeral:true});state.alerts.push({userId:interaction.user.id,coin,target:price,direction:dir});return interaction.reply({embeds:[base("Price Alert Set").setThumbnail(COIN_LOGO[coin]||IMG.LOGO).setDescription(`You will be DM'd when **${coin}** goes **${dir}** **$${price.toLocaleString("en-US")}**.`).setFooter({text:"Konvert  \u2022  Price Alerts"})],ephemeral:true});}
@@ -1060,16 +1060,42 @@ client.on(Events.InteractionCreate, async interaction => {
       if(cmd==="postlinks"){const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Official Links for Konvert").setThumbnail(IMG.LOGO).setDescription("All official Konvert social media. Follow us for updates, announcements, and giveaways.\n\u200b").addFields({name:"\uD835\uDD4F  Twitter / X",value:"[**@KonvertNow**](https://x.com/konvertnow)",inline:true},{name:"\uD83D\uDCF8  Instagram",value:"[**@KonvertNow**](https://www.instagram.com/konvertnow/)",inline:true},{name:"\u26A0\uFE0F  Stay Safe",value:"Only interact with accounts listed here. Any other account claiming to be Konvert is an impersonator.",inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert  \u2022  Official Links  \u2022  Follow us for updates"});await interaction.channel.send({embeds:[embed]});return interaction.reply({content:"Official links embed posted.",ephemeral:true});}
 
       if(cmd==="adjuststats"){
-        const target=interaction.options.getUser("user"),amount=interaction.options.getNumber("amount"),reason=interaction.options.getString("reason")||"No reason given";
-        if(!state.volumeAdj)state.volumeAdj={};
-        state.volumeAdj[target.id]=(state.volumeAdj[target.id]||0)+amount;
-        const allT=Object.values(load("tickets"));
+        const target=interaction.options.getUser("user"),amount=interaction.options.getNumber("amount"),reason=interaction.options.getString("reason")||"Staff adjustment";
+        if(amount===0)return interaction.reply({content:"Amount cannot be 0.",ephemeral:true});
+        // Save as a real ticket entry so leaderboard picks it up
+        const tickets=Object.keys(_mem.tickets||{}).length>0?{..._mem.tickets}:load("tickets");
+        if(amount>0){
+          // Add a real vouched ticket entry
+          const key=`adj_${target.id}_${Date.now()}`;
+          tickets[key]={
+            userId:target.id,userTag:target.tag||target.username,
+            method:"adjustment",direction:null,coin:null,
+            amountUSD:Math.abs(amount),feeUSD:0,walletInfo:"staff",
+            notes:reason,status:"vouched",
+            completedBy:interaction.user.id,
+            completedAt:Date.now(),createdAt:Date.now(),
+          };
+        } else {
+          // Subtract: find and reduce existing adjustment entries or mark negative
+          const key=`adj_${target.id}_${Date.now()}`;
+          tickets[key]={
+            userId:target.id,userTag:target.tag||target.username,
+            method:"adjustment",direction:null,coin:null,
+            amountUSD:amount, // negative value
+            feeUSD:0,walletInfo:"staff",
+            notes:reason,status:"vouched",
+            completedBy:interaction.user.id,
+            completedAt:Date.now(),createdAt:Date.now(),
+          };
+        }
+        _mem.tickets=tickets;
+        save("tickets",tickets);
         const DONE_STATUS=["vouched","completed"];
-        const rawVol=allT.filter(t=>t.userId===target.id&&DONE_STATUS.includes(t.status)).reduce((s,t)=>s+(t.amountUSD||0),0);
-        const newVol=Math.max(0,rawVol+(state.volumeAdj[target.id]||0));
+        const allT=Object.values(_mem.tickets).filter(t=>t.userId===target.id&&DONE_STATUS.includes(t.status));
+        const newVol=Math.max(0,allT.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0));
         await applyTierRole(interaction.guild,target.id,newVol);
         const tier=getTier(newVol);
-        log(interaction.guild,`ADJUSTSTATS: ${interaction.user.tag} adjusted ${target.tag} by ${amount>0?"+":""}${fmtUSD(amount)} | New total: ${fmtUSD(newVol)} | Reason: ${reason}`);
+        log(interaction.guild,`ADJUSTSTATS: ${interaction.user.tag} adjusted ${target.tag||target.username} by ${amount>0?"+":""}${fmtUSD(amount)} | New total: ${fmtUSD(newVol)} | Reason: ${reason}`);
         return interaction.reply({embeds:[base("Stats Adjusted").setThumbnail(target.displayAvatarURL({size:128}))
           .setDescription(`Stats updated for <@${target.id}>.\n\u200b`)
           .addFields(
