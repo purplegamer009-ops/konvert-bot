@@ -600,35 +600,37 @@ async function doCloseTicket(channel,guild,closedBy,reason){
   log(guild,`CLOSED: #${channel.name} by ${closedBy.tag} -- ${reason}`);
 }
 
-// --- COMPLETE TRADE FUNCTION (used by btn_done and modal_done) ---
+// --- COMPLETE TRADE FUNCTION ---
 async function completeTrade(interaction, ticket, tickets) {
   const m = getMethod(ticket.method);
-  // 1. Save as vouched -- update _mem directly so leaderboard/stats see it instantly
+  // 1. Save as vouched -- _mem is always the source of truth
   ticket.status = "vouched";
   ticket.completedBy = interaction.user.id;
   ticket.completedAt = Date.now();
   ticket.amountUSD = parseFloat(ticket.amountUSD)||0;
-  tickets[interaction.channel.id] = ticket;
-  _mem.tickets = tickets; // update in-memory immediately
-  save("tickets", tickets); // write disk + trigger Discord backup
-  console.log(`[completeTrade] saved: userId=${ticket.userId} amount=${ticket.amountUSD} total=${Object.keys(tickets).length}`);
+  const ticketKey = interaction.channel.id;
+  tickets[ticketKey] = ticket;
+  _mem.tickets = {...(_mem.tickets||{}), ...tickets};
+  save("tickets", _mem.tickets);
+  console.log(`[completeTrade] userId=${ticket.userId} amount=${ticket.amountUSD} total=${Object.keys(_mem.tickets).length}`);
   // 2. Post vouch embed
-  await postVouch(interaction.guild, {clientId:ticket.userId, exchangerId:interaction.user.id, method:m?.label||ticket.method, amountUSD:ticket.amountUSD, direction:ticket.direction, coin:ticket.coin, message:null, rating:5});
-  // 3. Live feed
-  if(state.feedEnabled&&state.feedChannel){try{const feedCh=interaction.guild.channels.cache.get(state.feedChannel);if(feedCh){const _all=Object.values(load("tickets")).filter(t=>t.userId===ticket.userId&&t.status==="vouched"),_tier=getTier(_all.reduce((s,t)=>s+(t.amountUSD||0),0));await feedCh.send(`\u2705  **${m?.label||ticket.method}**  \u00b7  **${fmtUSD(ticket.amountUSD)}**  \u00b7  ${_tier.emoji}  \u2014  just now`);}}catch{}}
-  // 4. Tier role
-  try{const allR=Object.values(load("tickets")).filter(t=>t.userId===ticket.userId&&t.status==="vouched");await applyTierRole(interaction.guild,ticket.userId,allR.reduce((s,t)=>s+(t.amountUSD||0),0));}catch{}
-  // 5. Thank-you DM
+  await postVouch(interaction.guild,{clientId:ticket.userId,exchangerId:interaction.user.id,method:m?.label||ticket.method,amountUSD:ticket.amountUSD,direction:ticket.direction,coin:ticket.coin,message:null,rating:5});
+  // 3. Live feed -- read from _mem
+  if(state.feedEnabled&&state.feedChannel){try{const feedCh=interaction.guild.channels.cache.get(state.feedChannel);if(feedCh){const _allMem=Object.values(_mem.tickets).filter(t=>t.userId===ticket.userId&&t.status==="vouched"),_tier=getTier(_allMem.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0));await feedCh.send(`\u2705  **${m?.label||ticket.method}**  \u00b7  **${fmtUSD(ticket.amountUSD)}**  \u00b7  ${_tier.emoji}  \u2014  just now`);}}catch{}}
+  // 4. Tier role -- read from _mem
+  try{const allR=Object.values(_mem.tickets).filter(t=>t.userId===ticket.userId&&t.status==="vouched");await applyTierRole(interaction.guild,ticket.userId,allR.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0));}catch{}
+  // 5. Thank-you DM -- read from _mem
   try{
-    const allC=Object.values(load("tickets")).filter(t=>t.userId===ticket.userId&&t.status==="vouched"),totalVol=allC.reduce((s,t)=>s+(t.amountUSD||0),0),tradeCount=allC.length,tier=getTier(totalVol);
+    const allC=Object.values(_mem.tickets).filter(t=>t.userId===ticket.userId&&t.status==="vouched");
+    const totalVol=allC.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0),tradeCount=allC.length,tier=getTier(totalVol);
     const clientUser=await client.users.fetch(ticket.userId);
     await clientUser.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Thank You for Trading with Us").setThumbnail(IMG.LOGO)
       .setDescription(`Hey <@${ticket.userId}> -- your trade has been completed successfully.\n\nWe appreciate your trust in **Konvert Exchange**.\n\u200b`)
       .addFields(
-        {name:"Your Tier",       value:`${tier.emoji} **${tier.label}**`,inline:true},
-        {name:"Trades With Us",  value:`**${tradeCount}** completed`,   inline:true},
-        {name:"Total Exchanged", value:`**${fmtUSD(totalVol)}**`,       inline:true},
-        {name:"This Trade",      value:`**${fmtUSD(ticket.amountUSD)}** via ${m?.label||ticket.method}`,inline:false},
+        {name:"Your Tier",      value:`${tier.emoji} **${tier.label}**`,inline:true},
+        {name:"Trades With Us", value:`**${tradeCount}** completed`,    inline:true},
+        {name:"Total Exchanged",value:`**${fmtUSD(totalVol)}**`,        inline:true},
+        {name:"This Trade",     value:`**${fmtUSD(ticket.amountUSD)}** via ${m?.label||ticket.method}`,inline:false},
       ).setImage(IMG.DEAL).setTimestamp().setFooter({text:"Konvert Exchange  \u2022  Thank you for your business"})]});
   }catch{}
   // 6. Reply and close
@@ -1171,9 +1173,10 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.showModal(modal);
       }
 
-      // btn_done -- shows modal to get amount if ticket not in storage
+      // btn_done -- reads from _mem (always current), falls back to disk
       if(interaction.customId==="btn_done"){
-        const tickets=load("tickets");
+        // Always use _mem as source of truth
+        const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
         const ticket=tickets[interaction.channel.id];
         const isOwner=CONFIG.OWNER_IDS.includes(interaction.user.id);
         const isStaff=CONFIG.STAFF_ROLE?interaction.member.roles.cache.has(CONFIG.STAFF_ROLE):false;
@@ -1236,19 +1239,18 @@ client.on(Events.InteractionCreate, async interaction => {
         const clientRaw=interaction.fields.getTextInputValue("done_client").trim().replace(/[<@!>]/g,"");
         const method=interaction.fields.getTextInputValue("done_method").trim();
         if(isNaN(rawAmt)||rawAmt<=0)return interaction.editReply("Please enter a valid amount.");
-        // Resolve client user
         let clientId=clientRaw;
         try{const u=await client.users.fetch(clientRaw);clientId=u.id;}catch{}
-        const tickets=load("tickets");
-        // Create or update ticket entry
+        // Always use _mem as source of truth
+        const tickets=Object.keys(_mem.tickets||{}).length>0?{..._mem.tickets}:load("tickets");
         if(!tickets[channelId]){
-          tickets[channelId]={userId:clientId,userTag:clientRaw,method:method.toLowerCase(),direction:null,coin:null,amountUSD:rawAmt,feeUSD:calcFee(rawAmt,"send"),walletInfo:"manual",notes:"Completed via btn_done modal",status:"open",createdAt:Date.now()};
-        } else {
-          if(!tickets[channelId].amountUSD)tickets[channelId].amountUSD=rawAmt;
+          tickets[channelId]={userId:clientId,userTag:clientRaw,method:method.toLowerCase(),direction:null,coin:null,amountUSD:rawAmt,feeUSD:calcFee(rawAmt,"send"),walletInfo:"manual",notes:"Completed via modal",status:"open",createdAt:Date.now()};
+        }else{
+          if(!tickets[channelId].amountUSD||tickets[channelId].amountUSD===0)tickets[channelId].amountUSD=rawAmt;
           if(!tickets[channelId].userId)tickets[channelId].userId=clientId;
           if(!tickets[channelId].method)tickets[channelId].method=method.toLowerCase();
         }
-        await completeTrade(interaction, tickets[channelId], tickets);
+        await completeTrade(interaction,tickets[channelId],tickets);
         return;
       }
 
