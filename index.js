@@ -743,9 +743,20 @@ async function completeTrade(interaction, ticket, tickets) {
         {name:"This Trade",     value:`**${fmtUSD(ticket.amountUSD)}** via ${m?.label||ticket.method}`,inline:false},
       ).setImage(IMG.DEAL).setTimestamp().setFooter({text:"Konvert Exchange  \u2022  Thank you for your business"})]});
   }catch{}
+  // Check referral status for ticket close message
+  const _ref=getReferrals();
+  const _referrerId=_ref.referred[ticket.userId];
+  let _referralLine="";
+  if(_referrerId&&_referrerId!==ticket.userId){
+    const _ptsEarned=calcReferralPoints(ticket.amountUSD);
+    try{const _rUser=await client.users.fetch(_referrerId);_referralLine=`\n\n🔗 **Referral deal** — referred by <@${_referrerId}> · **+${_ptsEarned} pts** credited`;}
+    catch{_referralLine=`\n\n🔗 **Referral deal** — referral points credited`;}
+  } else {
+    _referralLine="\n\n❌ **No referral** on this trade";
+  }
   // Reply and close
   const completionEmbed=buildDealEmbed({clientId:ticket.userId,exchangerId:interaction.user.id,method:m?.label||ticket.method,amountUSD:ticket.amountUSD,direction:ticket.direction,coin:ticket.coin,message:null,rating:5});
-  const replyEmbed=new EmbedBuilder(completionEmbed.data).setDescription("Vouch posted. Thank-you DM sent.\nThis ticket closes in **15 seconds**.");
+  const replyEmbed=new EmbedBuilder(completionEmbed.data).setDescription("Vouch posted. Thank-you DM sent.\nThis ticket closes in **15 seconds**."+_referralLine);
   await interaction.editReply({embeds:[replyEmbed]});
   setTimeout(async()=>{await doCloseTicket(interaction.channel,interaction.guild,interaction.user,"Trade completed");interaction.channel.delete().catch(()=>{});},15000);
 }
@@ -1163,7 +1174,7 @@ client.on(Events.InteractionCreate, async interaction => {
         // Check for existing valid invite
         let existingInvite=null;
         const existing=ref.inviteCodes[userId];
-        if(existing&&existing.expiresAt>Date.now()){
+        if(existing&&existing.code){
           // Verify invite still exists on Discord
           try{
             const guild=interaction.guild;
@@ -1178,9 +1189,9 @@ client.on(Events.InteractionCreate, async interaction => {
           try{
             const guild=interaction.guild;
             const ch=guild.channels.cache.get(CONFIG.EXCHANGE_CHANNEL)||guild.channels.cache.first();
-            invite=await ch.createInvite({maxAge:7*24*60*60,maxUses:0,unique:true,reason:`Konvert referral link for ${interaction.user.tag}`});
+            invite=await ch.createInvite({maxAge:0,maxUses:0,unique:true,reason:`Konvert referral link for ${interaction.user.tag}`});
             ref.invites[invite.code]=userId;
-            ref.inviteCodes[userId]={code:invite.code,expiresAt:Date.now()+(7*24*60*60*1000),uses:0};
+            ref.inviteCodes[userId]={code:invite.code,expiresAt:0,uses:0};
             saveReferrals(ref);
             _inviteCache.set(invite.code,invite.uses);
           }catch(e){
@@ -1197,7 +1208,7 @@ client.on(Events.InteractionCreate, async interaction => {
           .setDescription(`Share your link below. When someone joins through it and completes a trade, you earn points automatically.\n\u200b`)
           .addFields(
             {name:"Your Invite",value:`**https://discord.gg/${invite.code}**`,inline:false},
-            {name:"Expires",value:`<t:${expiresTimestamp}:R>`,inline:true},
+            {name:"Link",value:"**Permanent** \u2014 never expires",inline:true},
             {name:"People Referred",value:`**${referredCount}**`,inline:true},
             {name:"\u200b",value:"\u200b",inline:true},
             {name:"Your Balance",value:`**${pts} pts**`,inline:true},
@@ -1607,16 +1618,16 @@ client.on(Events.InteractionCreate, async interaction => {
         const pts=ref.points[userId]?.balance||0;
         let existingInvite=null;
         const existing=ref.inviteCodes[userId];
-        if(existing&&existing.expiresAt>Date.now()){
+        if(existing&&existing.code){
           try{const invites=await interaction.guild.invites.fetch();const found=invites.find(i=>i.code===existing.code);if(found)existingInvite=found;}catch{}
         }
         let invite=existingInvite;
         if(!invite){
           try{
             const ch=interaction.guild.channels.cache.get(CONFIG.EXCHANGE_CHANNEL)||interaction.guild.channels.cache.first();
-            invite=await ch.createInvite({maxAge:7*24*60*60,maxUses:0,unique:true,reason:`Konvert referral for ${interaction.user.tag}`});
+            invite=await ch.createInvite({maxAge:0,maxUses:0,unique:true,reason:`Konvert referral for ${interaction.user.tag}`});
             ref.invites[invite.code]=userId;
-            ref.inviteCodes[userId]={code:invite.code,expiresAt:Date.now()+(7*24*60*60*1000),uses:0};
+            ref.inviteCodes[userId]={code:invite.code,expiresAt:0,uses:0};
             saveReferrals(ref);
             _inviteCache.set(invite.code,invite.uses);
           }catch(e){return interaction.editReply({content:`❌ Could not create invite: ${e.message}`});}
@@ -1629,7 +1640,7 @@ client.on(Events.InteractionCreate, async interaction => {
           .setDescription("Share this link. Every trade your referrals complete earns you points.\n\u200b")
           .addFields(
             {name:"Your Invite",value:`**https://discord.gg/${invite.code}**`,inline:false},
-            {name:"Expires",value:`<t:${expiresTs}:R>`,inline:true},
+            {name:"Link",value:"**Permanent**",inline:true},
             {name:"Referred",value:`**${referredCount}** people`,inline:true},
             {name:"Balance",value:`**${pts} pts** (${pointsToDollars(pts)})`,inline:true},
           )
