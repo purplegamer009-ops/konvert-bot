@@ -31,6 +31,9 @@ const IMG = {
   WELCOME:"https://i.imgur.com/hSYrFai.png", DEAL:"https://i.imgur.com/GuBspYH.png",
 };
 
+const PTS_IMG="https://i.imgur.com/6eAi4jc.png";
+const SUPPORT_CH="1477230600959299605";
+
 const CONFIG = {
   TOKEN:process.env.DISCORD_TOKEN, CLIENT_ID:process.env.CLIENT_ID, GUILD_ID:process.env.GUILD_ID,
   OWNER_IDS:(process.env.OWNER_IDS||"").split(",").map(s=>s.trim()).filter(Boolean),
@@ -273,18 +276,19 @@ async function handleReferralTrade(guild, clientUserId, amountUSD){
       const newBal=ref.points[referrerId].balance;
       const embed=new EmbedBuilder()
         .setColor(0x7C4DFF)
-        .setAuthor({name:"Konvert Referrals",iconURL:IMG.LOGO})
-        .setTitle("💰  Referral Points Earned")
-        .setDescription(`Someone you referred just completed a trade — and you just earned points for it.\n\u200b`)
+        .setAuthor({name:"Konvert  ·  Referral Program",iconURL:PTS_IMG})
+        .setTitle("Points Earned")
+        .setThumbnail(PTS_IMG)
+        .setDescription(`<@${referrerId}>, a trade just completed through your referral link.\n\u200b`)
         .addFields(
-          {name:"Referred User",value:referred?`**${referred.username}**`:"A referred client",inline:true},
+          {name:"Referred User",value:referred?`<@${referred.id}>`:"A referred client",inline:true},
           {name:"Trade Amount",value:`**${fmtUSD(amountUSD)}**`,inline:true},
-          {name:"Points Earned",value:`**+${pts} pts**`,inline:true},
-          {name:"USD Value",value:`**+$${dollarVal}**`,inline:true},
-          {name:"New Balance",value:`**${newBal} pts** ($${pointsToDollars(newBal)})`,inline:true},
-          {name:"Withdraw",value:newBal>=MIN_WITHDRAW_POINTS?"✅ Ready to withdraw — use `/mypoints`":`Need **${MIN_WITHDRAW_POINTS-newBal}** more pts to withdraw`,inline:true},
+          {name:"Points Earned",value:`**+${pts} pts  (+${dollarVal})**`,inline:true},
+          {name:"Your Balance",value:`**${newBal} pts**  ·  **${pointsToDollars(newBal)}**`,inline:true},
+          {name:"Status",value:newBal>=MIN_WITHDRAW_POINTS?`✅ **Ready to withdraw** — open a ticket in <#${SUPPORT_CH}>`:`${MIN_WITHDRAW_POINTS-newBal} more pts until withdrawal`,inline:true},
         )
-        .setFooter({text:"Konvert Referrals  •  Keep referring, keep earning"})
+        .setImage(IMG.BANNER)
+        .setFooter({text:"Konvert Referral Program  ·  10 pts = $1"})
         .setTimestamp();
       await referrer.send({embeds:[embed]});
     }catch{}
@@ -863,16 +867,16 @@ client.on(Events.GuildMemberAdd, async member => {
             const referrer=await client.users.fetch(referrerId);
             const embed=new EmbedBuilder()
               .setColor(0x7C4DFF)
-              .setAuthor({name:"Konvert Referrals",iconURL:IMG.LOGO})
-              .setTitle("🔗  New Referral Joined")
-              .setDescription(`Someone just joined Konvert using your invite link.\n\u200b`)
-              .addFields(
-                {name:"New Member",value:`**${member.user.username}**`,inline:true},
-                {name:"Next Step",value:"They need to complete a trade for you to earn points.",inline:true},
-                {name:"Points per $100",value:`**${POINTS_PER_100} pts** ($${(POINTS_PER_100/POINTS_PER_DOLLAR).toFixed(2)})`,inline:true},
-              )
+              .setAuthor({name:"Konvert  ·  Referral Program",iconURL:PTS_IMG})
+              .setTitle("New Referral")
               .setThumbnail(member.user.displayAvatarURL({size:128}))
-              .setFooter({text:"Konvert Referrals  •  Points are earned on every trade they complete"})
+              .setDescription(`**${member.user.username}** just joined Konvert using your invite link.\n\nYou'll earn **${POINTS_PER_100} pts** for every **$100** they exchange — automatically, every time.\n\u200b`)
+              .addFields(
+                {name:"How to Earn",value:`Every trade they complete sends points straight to your balance.`,inline:false},
+                {name:"Rate",value:`**${POINTS_PER_100} pts** per $100 traded  ·  **${POINTS_PER_DOLLAR} pts = $1**`,inline:false},
+              )
+              .setImage(IMG.BANNER)
+              .setFooter({text:"Konvert Referral Program  ·  Earn on every trade they make"})
               .setTimestamp();
             await referrer.send({embeds:[embed]});
           }catch{}
@@ -1202,7 +1206,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const referredCount=Object.values(ref.referred).filter(r=>r===userId).length;
         const embed=new EmbedBuilder()
           .setColor(0x7C4DFF)
-          .setAuthor({name:"Konvert Referrals",iconURL:IMG.LOGO})
+          .setAuthor({name:"Konvert  ·  Referral Program",iconURL:PTS_IMG})
           .setTitle("🔗  Your Referral Link")
           .setThumbnail(IMG.LOGO)
           .setDescription(`Share your link below. When someone joins through it and completes a trade, you earn points automatically.\n\u200b`)
@@ -1242,23 +1246,26 @@ client.on(Events.InteractionCreate, async interaction => {
           }).join("\n");
         }
 
+        const withdrawStatusMp=data.pendingPayout
+          ?"⏳  Payout requested — staff will process shortly"
+          :readyToWithdraw
+            ?`✅  **Ready to withdraw** — open a ticket in <#${SUPPORT_CH}>`
+            :`**${MIN_WITHDRAW_POINTS-bal} pts** to go  (${bal}/${MIN_WITHDRAW_POINTS} pts)`;
         const embed=new EmbedBuilder()
-          .setColor(bal>=MIN_WITHDRAW_POINTS?0x00C853:0x7C4DFF)
-          .setAuthor({name:"Konvert Referrals",iconURL:IMG.LOGO})
-          .setTitle("💰  My Referral Points")
-          .setThumbnail(interaction.user.displayAvatarURL({size:128}))
-          .setDescription(`Here's your referral breakdown, ${interaction.user.username}.\n\u200b`)
+          .setColor(bal>=MIN_WITHDRAW_POINTS?0x22c55e:0x7C4DFF)
+          .setAuthor({name:"Konvert  ·  Referral Program",iconURL:PTS_IMG})
+          .setTitle("My Points")
+          .setThumbnail(PTS_IMG)
+          .setDescription(`**${interaction.user.username}**, here's a full breakdown of your referral earnings.\n\u200b`)
           .addFields(
-            {name:"Current Balance",value:`**${bal} pts**`,inline:true},
-            {name:"USD Value",value:`**$${pointsToDollars(bal)}**`,inline:true},
-            {name:"Total Paid Out",value:`**$${pointsToDollars(paid)}**`,inline:true},
-            {name:"People Referred",value:`**${referredCount}**`,inline:true},
-            {name:"Withdraw Status",value:data.pendingPayout?"⏳ **Payout pending** — owner has been notified":readyToWithdraw?"✅ **Ready to withdraw** — contact staff":`**${MIN_WITHDRAW_POINTS-bal}** more pts needed (min ${MIN_WITHDRAW_POINTS} pts)`,inline:true},
-            {name:"\u200b",value:"\u200b",inline:true},
-            {name:"Recent Activity",value:historyText,inline:false},
+            {name:"💰  Balance",value:`**${bal} pts**  ·  **${pointsToDollars(bal)}**`,inline:true},
+            {name:"👥  Referred",value:`**${referredCount}** member${referredCount!==1?"s":""}`,inline:true},
+            {name:"💵  All-Time Paid",value:`**${pointsToDollars(paid)}**`,inline:true},
+            {name:"📬  Withdraw Status",value:withdrawStatusMp,inline:false},
+            {name:"📋  Recent Activity",value:historyText,inline:false},
           )
           .setImage(IMG.BANNER)
-          .setFooter({text:"Konvert Referrals  •  10 pts = $1  •  Min withdrawal: 50 pts"})
+          .setFooter({text:"Konvert Referral Program  ·  10 pts = $1  ·  Min: 50 pts"})
           .setTimestamp();
         const components=[];
         if(readyToWithdraw){
@@ -1308,10 +1315,10 @@ client.on(Events.InteractionCreate, async interaction => {
 
         if(!entries.length){
           return interaction.editReply({embeds:[new EmbedBuilder()
-            .setColor(CONFIG.COLOR).setAuthor({name:"Konvert Referrals",iconURL:IMG.LOGO})
-            .setTitle("🏆  Referral Leaderboard").setThumbnail(IMG.LOGO)
-            .setDescription("No referral activity yet.\n\nShare your link from `/referral` to start earning.\n\u200b")
-            .setImage(IMG.BANNER).setFooter({text:"Konvert Referrals  •  Top Referrers"}).setTimestamp()]});
+            .setColor(0x7C4DFF).setAuthor({name:"Konvert  ·  Referral Program",iconURL:PTS_IMG})
+            .setTitle("Referral Leaderboard").setThumbnail(PTS_IMG)
+            .setDescription("No referral activity yet. Be the first to refer someone and start earning.\n\nUse `/referral` to get your personal invite link.\n\u200b")
+            .setImage(IMG.BANNER).setFooter({text:"Konvert Referral Program  ·  Top referrers by lifetime points"}).setTimestamp()]});
         }
 
         const medals=["🥇","🥈","🥉"];
@@ -1322,13 +1329,13 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const totalPts=entries.reduce((s,e)=>s+e.total,0);
         return interaction.editReply({embeds:[new EmbedBuilder()
-          .setColor(CONFIG.COLOR).setAuthor({name:"Konvert Referrals",iconURL:IMG.LOGO})
-          .setTitle("🏆  Referral Leaderboard")
-          .setDescription(`The top referrers at Konvert — ranked by lifetime points.\n\u200b`)
-          .setThumbnail(IMG.LOGO)
-          .addFields({name:"\u200b",value:lines,inline:false})
+          .setColor(0x7C4DFF).setAuthor({name:"Konvert  ·  Referral Program",iconURL:PTS_IMG})
+          .setTitle("Referral Leaderboard")
+          .setDescription(`Ranked by lifetime points earned. Top ${entries.length} referrers at Konvert.\n\u200b`)
+          .setThumbnail(PTS_IMG)
+          .addFields({name:"Rankings",value:lines,inline:false})
           .setImage(IMG.BANNER)
-          .setFooter({text:`${totalPts} total pts earned  ·  Konvert Referrals`}).setTimestamp()]});
+          .setFooter({text:`${totalPts} total pts earned across all referrers  ·  Konvert Referral Program`}).setTimestamp()]});
       }
 
       if(cmd==="referraladmin"){
@@ -1339,9 +1346,11 @@ client.on(Events.InteractionCreate, async interaction => {
           .sort((a,b)=>(b[1].balance||0)-(a[1].balance||0));
 
         if(!pending.length){
-          return interaction.editReply({embeds:[base("Referral Admin — Pending Payouts").setThumbnail(IMG.LOGO)
-            .setDescription("No pending payouts at this time.\n\nAll referrers are either below the minimum balance or already paid.\n\u200b")
-            .setFooter({text:"Konvert Referrals  •  Admin"})
+          return interaction.editReply({embeds:[new EmbedBuilder()
+            .setColor(0x7C4DFF).setAuthor({name:"Konvert  ·  Referral Admin",iconURL:PTS_IMG})
+            .setTitle("Pending Payouts").setThumbnail(PTS_IMG)
+            .setDescription("No pending payouts at this time.\n\nAll referrers are either below the **"+MIN_WITHDRAW_POINTS+" pt** minimum or already paid out.\n\u200b")
+            .setFooter({text:"Konvert Referral Program  ·  Admin Panel"}).setTimestamp()
           ]});
         }
 
@@ -1352,11 +1361,12 @@ client.on(Events.InteractionCreate, async interaction => {
         }).join("\n");
 
         return interaction.editReply({embeds:[new EmbedBuilder()
-          .setColor(0xFFB347).setAuthor({name:"Konvert Referrals — Admin",iconURL:IMG.LOGO})
-          .setTitle("💸  Pending Referral Payouts")
-          .setDescription(`Users with **${MIN_WITHDRAW_POINTS}+ pts** ready for payout.\nUse \`/paypoints @user\` to mark as paid.\n\u200b`)
-          .addFields({name:"Pending",value:lines,inline:false})
-          .setFooter({text:`${pending.length} user${pending.length!==1?"s":""} pending  ·  Konvert Referrals`}).setTimestamp()
+          .setColor(0xf59e0b).setAuthor({name:"Konvert  ·  Referral Admin",iconURL:PTS_IMG})
+          .setTitle("Pending Payouts").setThumbnail(PTS_IMG)
+          .setDescription(`**${pending.length}** referrer${pending.length!==1?"s":""} with **${MIN_WITHDRAW_POINTS}+ pts** ready for payout.\nUse \`/paypoints @user\` to mark as paid and notify them.\n\u200b`)
+          .addFields({name:"Queue",value:lines,inline:false})
+          .setImage(IMG.BANNER)
+          .setFooter({text:`Konvert Referral Program  ·  Admin Panel  ·  ${pending.length} pending`}).setTimestamp()
         ]});
       }
 
@@ -1381,29 +1391,32 @@ client.on(Events.InteractionCreate, async interaction => {
         try{
           const embed=new EmbedBuilder()
             .setColor(0x00C853)
-            .setAuthor({name:"Konvert Referrals",iconURL:IMG.LOGO})
-            .setTitle("💵  Referral Payout Sent")
-            .setDescription(`Your referral points have been paid out by staff. Thank you for referring people to Konvert!\n\u200b`)
+            .setAuthor({name:"Konvert  ·  Referral Program",iconURL:PTS_IMG})
+            .setTitle("Payout Complete")
+            .setThumbnail(PTS_IMG)
+            .setDescription(`Your referral points have been paid out. Thank you for growing the Konvert community!\n\u200b`)
             .addFields(
-              {name:"Points Paid",value:`**${paidPts} pts**`,inline:true},
-              {name:"USD Value",value:`**$${paidUSD}**`,inline:true},
-              {name:"Paid By",value:`<@${interaction.user.id}>`,inline:true},
-              {name:"New Balance",value:"**0 pts**",inline:true},
-              {name:"Total Earned (All Time)",value:`**$${pointsToDollars(data.paid)}**`,inline:true},
+              {name:"💰  Points Paid",value:`**${paidPts} pts**`,inline:true},
+              {name:"💵  USD Value",value:`**${paidUSD}**`,inline:true},
+              {name:"💳  Processed By",value:`<@${interaction.user.id}>`,inline:true},
+              {name:"📊  New Balance",value:"**0 pts**",inline:true},
+              {name:"🏆  All-Time Earned",value:`**${pointsToDollars(data.paid)}**`,inline:true},
             )
             .setImage(IMG.BANNER)
-            .setFooter({text:"Konvert Referrals  •  Keep sharing your link to earn more"})
+            .setFooter({text:"Konvert Referral Program  ·  Keep sharing your link to keep earning"})
             .setTimestamp();
           await target.send({embeds:[embed]});
         }catch{}
-        return interaction.editReply({embeds:[base("Payout Recorded").setThumbnail(target.displayAvatarURL({size:128}))
-          .setDescription(`Payout recorded for <@${target.id}>.\n\u200b`)
+        return interaction.editReply({embeds:[new EmbedBuilder()
+          .setColor(0x22c55e).setAuthor({name:"Konvert  ·  Referral Admin",iconURL:PTS_IMG})
+          .setTitle("Payout Recorded").setThumbnail(target.displayAvatarURL({size:128}))
+          .setDescription(`Payout confirmed for <@${target.id}>. They have been notified via DM.\n\u200b`)
           .addFields(
-            {name:"User",value:`**${target.username}**`,inline:true},
-            {name:"Paid Out",value:`**${paidPts} pts** ($${paidUSD})`,inline:true},
-            {name:"New Balance",value:"**0 pts**",inline:true},
+            {name:"💰  Paid Out",value:`**${paidPts} pts** (${paidUSD})`,inline:true},
+            {name:"📊  New Balance",value:"**0 pts**",inline:true},
+            {name:"🏆  All-Time",value:`**${pointsToDollars(data.paid)}**`,inline:true},
           )
-          .setFooter({text:`Paid by ${interaction.user.tag}  ·  Konvert Referrals`})
+          .setFooter({text:`Processed by ${interaction.user.tag}  ·  Konvert Referral Program`}).setTimestamp()
         ]});
       }
 
@@ -1635,7 +1648,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const expiresTs=Math.floor((ref.inviteCodes[userId]?.expiresAt||Date.now())/1000);
         const referredCount=Object.values(ref.referred).filter(r=>r===userId).length;
         return interaction.editReply({embeds:[new EmbedBuilder()
-          .setColor(0x7C4DFF).setAuthor({name:"Konvert Referrals",iconURL:IMG.LOGO})
+          .setColor(0x7C4DFF).setAuthor({name:"Konvert  ·  Referral Program",iconURL:PTS_IMG})
           .setTitle("🔗  Your Referral Link")
           .setDescription("Share this link. Every trade your referrals complete earns you points.\n\u200b")
           .addFields(
@@ -1658,7 +1671,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const readyToWithdraw=bal>=MIN_WITHDRAW_POINTS&&!data.pendingPayout;
         const embed=new EmbedBuilder()
           .setColor(bal>=MIN_WITHDRAW_POINTS?0x00C853:0x7C4DFF)
-          .setAuthor({name:"Konvert Referrals",iconURL:IMG.LOGO})
+          .setAuthor({name:"Konvert  ·  Referral Program",iconURL:PTS_IMG})
           .setTitle("💰  My Points")
           .addFields(
             {name:"Balance",value:`**${bal} pts** (${pointsToDollars(bal)})`,inline:true},
@@ -1692,19 +1705,30 @@ client.on(Events.InteractionCreate, async interaction => {
             const owner=await client.users.fetch(oid);
             await owner.send({embeds:[new EmbedBuilder()
               .setColor(0xFFB347)
-              .setAuthor({name:"Konvert Referrals — Payout Request",iconURL:IMG.LOGO})
-              .setTitle("💸  Payout Request")
-              .setDescription(`<@${userId}> (**${interaction.user.username}**) has requested a referral payout.\n\u200b`)
+              .setColor(0xf59e0b)
+              .setAuthor({name:"Konvert  ·  Referral Admin",iconURL:PTS_IMG})
+              .setTitle("Payout Request").setThumbnail(PTS_IMG)
+              .setDescription(`<@${userId}> has requested a referral payout and is waiting.\n\u200b`)
               .addFields(
-                {name:"Amount",value:`**${data.balance} pts** ($${pointsToDollars(data.balance)})`,inline:true},
-                {name:"Action",value:`Use \`/paypoints @${interaction.user.username}\` to pay out.`,inline:true},
+                {name:"💰  Amount",value:`**${data.balance} pts**  ·  **${pointsToDollars(data.balance)}**`,inline:true},
+                {name:"⚡  Action",value:`\`/paypoints @${interaction.user.username}\``,inline:true},
               )
               .setTimestamp()
-              .setFooter({text:"Konvert Referrals  •  Admin Notification"})
+              .setFooter({text:"Konvert Referral Program  ·  Admin Notification"})
             ]});
           }catch{}
         }
-        return interaction.reply({content:`✅ Payout request sent! An owner has been notified and will process it shortly.\n\n**Balance:** ${data.balance} pts ($${pointsToDollars(data.balance)})`,ephemeral:true});
+        return interaction.reply({embeds:[new EmbedBuilder()
+          .setColor(0x22c55e).setAuthor({name:"Konvert  ·  Referral Program",iconURL:PTS_IMG})
+          .setTitle("Payout Requested").setThumbnail(PTS_IMG)
+          .setDescription(`Your payout request has been sent. Staff will process it and DM you once it's done.\n\u200b`)
+          .addFields(
+            {name:"💰  Amount Requested",value:`**${data.balance} pts**  ·  **${pointsToDollars(data.balance)}**`,inline:true},
+            {name:"📬  Next Step",value:"Wait for a DM from staff confirming payment.",inline:true},
+          )
+          .setImage(IMG.BANNER)
+          .setFooter({text:"Konvert Referral Program  ·  Thank you for referring people to Konvert"}).setTimestamp()
+        ],ephemeral:true});
       }
 
       if(interaction.customId==="btn_c2c_confirm"){
