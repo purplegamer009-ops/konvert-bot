@@ -532,7 +532,6 @@ function mainButtons(){
   return [new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId("btn_exchange_now").setLabel("Exchange Now").setEmoji("\uD83D\uDCE9").setStyle(ButtonStyle.Primary),
     new ButtonBuilder().setCustomId("btn_fee_calc").setLabel("Calculate Fee").setEmoji("\uD83D\uDCB0").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("btn_rates_quick").setLabel("Live Rates").setEmoji("\uD83D\uDCC8").setStyle(ButtonStyle.Secondary),
   )];
 }
 function step1Embed(){
