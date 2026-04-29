@@ -641,7 +641,7 @@ function buildMineGrid(userId,game){
 
 function buildDealEmbed({clientId,exchangerId,method,amountUSD,direction,coin,message,rating}){
   const stars="\u2605".repeat(Math.min(Math.max(rating||5,1),5));
-  const dirStr=direction&&coin&&method?(direction==="send"?`${coin} \u2192 ${method}`:`${method} \u2192 ${coin}`):null;
+  const dirStr=direction&&coin&&method?(direction==="send"?`${method} \u2192 ${coin}`:`${coin} \u2192 ${method}`):null;
   const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO})
     .setTitle("Deal Complete").setDescription("Trade verified and completed on Konvert Exchange.\n\u200b")
     .addFields(
@@ -674,8 +674,8 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   const feeUSD=calcFee(amountUSD,direction,_isVip),rate=feeRate(amountUSD,direction,_isVip),receiveU=amountUSD-feeUSD;
   let coinAmt=null;
   try{const p=await getPrice(coin);if(p)coinAmt=(receiveU/p).toFixed(6);}catch{}
-  const sendLabel=direction==="send"?`**${coin}** worth ${fmtUSD(amountUSD)}`:`${fmtUSD(amountUSD)} via ${m.label}`;
-  const receiveLabel=direction==="send"?`${fmtUSD(receiveU)} via ${m.label}`:receiveU<5?"To be discussed":coinAmt?`${coinAmt} ${coin}`:`${fmtUSD(receiveU)} worth of ${coin}`;
+  const sendLabel=direction==="send"?`${fmtUSD(amountUSD)} via ${m.label}`:`**${coin}** worth ${fmtUSD(amountUSD)}`;
+  const receiveLabel=direction==="send"?(coinAmt?`${coinAmt} ${coin}`:`${fmtUSD(receiveU)} worth of ${coin}`):receiveU<5?"To be discussed":`${fmtUSD(receiveU)} via ${m.label}`;
   const perms=[
     {id:guild.roles.everyone,deny:[PermissionFlagsBits.ViewChannel]},
     {id:user.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]},
@@ -698,7 +698,7 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
       {name:"__Sending__",  value:`**${sendLabel}**`,                   inline:true},
       {name:"__Receiving__",value:`**${receiveLabel}**`,                inline:true},
       {name:"__Fee__",      value:`**${rate}%**  --  ${fmtUSD(feeUSD)}${_isVip?" ⚡ VIP rate":""}`,inline:true},
-      {name:direction==="send"?`__Your ${m.label} Details__`:"__Your Receiving Wallet__",value:`\`${walletInfo}\``,inline:false},
+      {name:direction==="send"?"__Your Receiving Wallet__":`__Your ${m.label} Details__`,value:`\`${walletInfo}\``,inline:false},
     );
   if(notes)ticketEmbed.addFields({name:"Notes",value:notes,inline:false});
   ticketEmbed.setImage(IMG.TICKET).setTimestamp().setFooter({text:"Konvert  \u2022  All communication stays in this ticket"});
@@ -1960,7 +1960,7 @@ client.on(Events.InteractionCreate, async interaction => {
         // dir_send__ = Send Crypto->Fiat = direction receive; dir_receive__ = Send Fiat->Crypto = direction send
 const _direction=_isSendCrypto?"receive":"send";
 const modal=new ModalBuilder().setCustomId(`modal_amount__${method}__${_direction}`).setTitle(`${m.label} -- ${_isSendCrypto?"Send Crypto":"Receive Crypto"}`);
-        modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_amount").setLabel("Trade amount in USD").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 150").setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_coin").setLabel("Which crypto? (BTC, ETH, SOL)").setStyle(TextInputStyle.Short).setPlaceholder("e.g. SOL").setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_wallet").setLabel(_isSendCrypto?`Your ${m.label} receiving info`:"Your crypto receiving wallet").setStyle(TextInputStyle.Short).setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_notes").setLabel("Notes (optional)").setStyle(TextInputStyle.Paragraph).setRequired(false)));
+        modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_amount").setLabel("Trade amount in USD").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 150").setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_coin").setLabel("Which crypto? (BTC, ETH, SOL)").setStyle(TextInputStyle.Short).setPlaceholder("e.g. SOL").setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_wallet").setLabel(_isSendCrypto?"Your crypto receiving wallet":`Your ${m.label} receiving details`).setStyle(TextInputStyle.Short).setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_notes").setLabel("Notes (optional)").setStyle(TextInputStyle.Paragraph).setRequired(false)));
         return interaction.showModal(modal);
       }
 
@@ -2105,9 +2105,9 @@ const modal=new ModalBuilder().setCustomId(`modal_amount__${method}__${_directio
         if(!COINS.includes(coin))return interaction.editReply(`**${coin}** is not supported. Supported: ${COINS.join(", ")}`);
         if(!walletInf)return interaction.editReply("Please enter your wallet or account info.");
         const fee=calcFee(rawAmt,direction),rate=feeRate(rawAmt,direction),recv=rawAmt-fee;
-        const sendLabel=direction==="send"?`**${coin}** worth **${fmtUSD(rawAmt)}**`:`**${fmtUSD(rawAmt)}** via ${m.label}`;
-        let recvLabel=direction==="send"?`**${fmtUSD(recv)}** via ${m.label}`:recv<5?"To be discussed":`**~${fmtUSD(recv)}** worth of ${coin}`;
-        if(direction==="receive"){try{const coinPrice=await getPrice(coin);if(coinPrice)recvLabel=`**~${(recv/coinPrice).toFixed(6)} ${coin}** (\u2248${fmtUSD(recv)})`;}catch{}}
+        const sendLabel=direction==="send"?`**${fmtUSD(rawAmt)}** via ${m.label}`:`**${coin}** worth **${fmtUSD(rawAmt)}**`;
+        let recvLabel=direction==="send"?(recv<5?"To be discussed":`**~${fmtUSD(recv)}** worth of ${coin}`):(`**${fmtUSD(recv)}** via ${m.label}`);
+        if(direction==="send"){try{const coinPrice=await getPrice(coin);if(coinPrice)recvLabel=`**~${(recv/coinPrice).toFixed(6)} ${coin}** (\u2248${fmtUSD(recv)})`;}catch{}}
         state.pending[interaction.user.id]={method,direction,rawAmt,coin,walletInf,notes};
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Confirm Your Exchange")
           .setThumbnail(COIN_LOGO[coin]||IMG.LOGO).setDescription("Review your details below before confirming.\n\u200b")
