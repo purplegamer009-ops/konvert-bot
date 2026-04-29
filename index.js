@@ -1026,7 +1026,7 @@ client.on(Events.InteractionCreate, async interaction => {
             {name:"Fiat \u2192 Crypto",value:`Rate: **${rS}%**${_feeVip?" ⚡":""} \nFee: **${fmtUSD(fS)}**\nYou receive: **${fmtUSD(recvS)}**`,inline:true},
             {name:"Crypto \u2192 Fiat",value:`Rate: **${rR}%**${_feeVip?" ⚡":""} \nFee: **${fmtUSD(fR)}**\nYou receive: **${fmtUSD(amt-fR)}**`,inline:true},
             {name:"\uD83E\uDE99 If Buying Crypto",value:coinLines.length?coinLines.join("\n"):"--",inline:false},
-            {name:"Fee Tiers",value:`> **Fiat → Crypto:** <$150 = 10%  ·  $150–350 = 9%  ·  $350–600 = 8%  ·  $600–800 = 7%  ·  $800+ = 6%\n> **Crypto → Fiat:** <$150 = 9%  ·  $150–350 = 8%  ·  $350–600 = 7%  ·  $600–800 = 6%  ·  $800+ = 5%\n> Min fee **$5** on any trade${_vipLine}`,inline:false},
+
           ).setImage(IMG.FEE).setFooter({text:`Konvert  \u2022 ${_feeVip?"⚡ VIP rate active  ·  ":""}Rate shown is for the amount entered`})]});
       }
 
@@ -2077,7 +2077,7 @@ const modal=new ModalBuilder().setCustomId(`modal_amount__${method}__${_directio
             {name:"Fiat \u2192 Crypto",value:`Rate: **${rS}%**\nFee: **${fmtUSD(fS)}**\nYou receive: **${fmtUSD(recvS)}**`,inline:true},
             {name:"Crypto \u2192 Fiat",value:`Rate: **${rR}%**\nFee: **${fmtUSD(fR)}**\nYou receive: **${fmtUSD(raw-fR)}**`,inline:true},
             {name:"\uD83E\uDE99 Coin Amounts",value:coinLines.length?coinLines.join("  \u00b7  "):"--",inline:false},
-            {name:"Fee Tiers",value:`> **Fiat → Crypto:** <$150 = 10%  ·  $150–350 = 9%  ·  $350–600 = 8%  ·  $600–800 = 7%  ·  $800+ = 6%\n> **Crypto → Fiat:** <$150 = 9%  ·  $150–350 = 8%  ·  $350–600 = 7%  ·  $600–800 = 6%  ·  $800+ = 5%\n> Min fee **$5** on any trade`,inline:false},
+
           ).setImage(IMG.FEE).setFooter({text:"Konvert  \u2022  Open a ticket to begin"})]});
       }
 
