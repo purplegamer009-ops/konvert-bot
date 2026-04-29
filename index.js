@@ -26,7 +26,7 @@ const youtube = google.youtube({ version: "v3", auth: oauth2Client });
 
 const IMG = {
   LOGO:"https://i.imgur.com/cQyBq33.png", BANNER:"https://i.imgur.com/MfyoLHC.png",
-  RATES:"https://i.imgur.com/0zbG9Fc.png", FEE:"https://i.imgur.com/o6bi905.png",
+  RATES:"https://i.imgur.com/0zbG9Fc.png", FEE:"https://i.imgur.com/uxGThlY.png",
   RULES:"https://i.imgur.com/CaBjEFU.png", TICKET:"https://i.imgur.com/GasrfTC.png",
   WELCOME:"https://i.imgur.com/hSYrFai.png", DEAL:"https://i.imgur.com/GuBspYH.png",
 };
@@ -75,9 +75,35 @@ async function applyTierRole(guild,userId,volume){
   try{
     const member=await guild.members.fetch(userId).catch(()=>null);if(!member)return;
     const tier=getTier(volume);
+    // Detect if this is a new tier (member doesn't have it yet)
+    const isNewTier=tier.role&&!member.roles.cache.has(tier.role);
+    // Remove all old tier roles
     for(const t of TIERS){if(t.role&&member.roles.cache.has(t.role)&&t.role!==tier.role)await member.roles.remove(t.role).catch(()=>{});}
-    if(tier.role&&!member.roles.cache.has(tier.role))await member.roles.add(tier.role).catch(()=>{});
-  }catch{}
+    // Add correct tier role
+    if(tier.role)await member.roles.add(tier.role).catch(()=>{});
+    // Milestone DM if this is a newly achieved tier
+    if(isNewTier&&tier.min>0){
+      const nextTier=getNextTier(volume);
+      const vipNote=isVipVolume(volume)?"\n\n⚡ **VIP Perk Unlocked:** You now receive a **0.75% fee discount** on all future trades automatically.":"";
+      try{
+        await member.user.send({embeds:[new EmbedBuilder()
+          .setColor(tier.min>=7000?0xFFD700:0x7C4DFF)
+          .setAuthor({name:"Konvert Exchange  ·  Tier Up",iconURL:"https://i.imgur.com/cQyBq33.png"})
+          .setTitle(`${tier.emoji}  New Tier Unlocked`)
+          .setThumbnail(member.user.displayAvatarURL({size:256}))
+          .setDescription(`You've reached **${tier.label}** on Konvert Exchange.${vipNote}
+​`)
+          .addFields(
+            {name:"Your Tier",value:`${tier.emoji} **${tier.label}**`,inline:true},
+            {name:"Total Volume",value:`**${volume.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}**`,inline:true},
+            {name:nextTier?"Next Tier":"Max Tier",value:nextTier?`${nextTier.emoji} **${nextTier.label}** — ${(nextTier.min-volume).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} away`:"You've reached the top. Respect.",inline:false},
+          )
+          .setImage("https://i.imgur.com/MfyoLHC.png")
+          .setFooter({text:"Konvert Exchange  ·  Thank you for your continued trust"})
+          .setTimestamp()]});
+      }catch{}
+    }
+  }catch(e){console.log("[applyTierRole]",e.message);}
 }
 
 const METHODS=[
@@ -299,8 +325,9 @@ async function handleReferralTrade(guild, clientUserId, amountUSD){
 
 // ── UTILS ────────────────────────────────────────────────────────────────────
 const fmtUSD=n=>{if(n>=1)return`$${n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`;if(n>=0.01)return`$${n.toFixed(4)}`;return`$${n.toFixed(8)}`;};
-function calcFee(usd,dir){const r=dir==="receive"?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(usd<150?10:usd<350?9:usd<600?8:usd<800?7:6);return Math.max(usd*r/100,CONFIG.MIN_FEE);}
-function feeRate(usd,dir){return dir==="receive"?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(usd<150?10:usd<350?9:usd<600?8:usd<800?7:6);}
+function calcFee(usd,dir,isVip=false){const base=dir==="receive"?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(usd<150?10:usd<350?9:usd<600?8:usd<800?7:6);const r=isVip?Math.max(base-0.75,1):base;return Math.max(usd*r/100,CONFIG.MIN_FEE);}
+function feeRate(usd,dir,isVip=false){const base=dir==="receive"?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(usd<150?10:usd<350?9:usd<600?8:usd<800?7:6);return isVip?Math.max(base-0.75,1):base;}
+function isVipVolume(vol){return vol>=7000;}
 const base=title=>new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(title).setTimestamp();
 function log(guild,msg){if(!CONFIG.LOG_CHANNEL||!guild)return;const ch=guild.channels.cache.get(CONFIG.LOG_CHANNEL);if(ch)ch.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setDescription("```"+msg+"```").setTimestamp()]}).catch(()=>{});}
 
@@ -508,6 +535,8 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("resetstats").setDescription("[Owner] Reset a user's volume adjustment back to 0").addUserOption(o=>o.setName("user").setDescription("User").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("clearleaderboard").setDescription("[Owner] Wipe all trade data from leaderboard and stats").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("testbackup").setDescription("[Owner] Test Discord backup channel").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("search").setDescription("[Owner] Search all tickets for a user").addUserOption(o=>o.setName("user").setDescription("User to search").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("vipstatus").setDescription("Check if you have VIP fee discount active"),
 ].map(c=>c.toJSON());
 
 async function registerCommands(){
@@ -641,7 +670,8 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   const tickets=load("tickets");
   const existing=Object.entries(tickets).find(([,t])=>t.userId===user.id&&t.status==="open");
   if(existing){await interaction.editReply({content:`You already have an open ticket: <#${existing[0]}>`,embeds:[],components:[]});return null;}
-  const feeUSD=calcFee(amountUSD,direction),rate=feeRate(amountUSD,direction),receiveU=amountUSD-feeUSD;
+  const _clientVol=getUserVolume(user.id);const _isVip=isVipVolume(_clientVol);
+  const feeUSD=calcFee(amountUSD,direction,_isVip),rate=feeRate(amountUSD,direction,_isVip),receiveU=amountUSD-feeUSD;
   let coinAmt=null;
   try{const p=await getPrice(coin);if(p)coinAmt=(receiveU/p).toFixed(6);}catch{}
   const sendLabel=direction==="send"?`**${coin}** worth ${fmtUSD(amountUSD)}`:`${fmtUSD(amountUSD)} via ${m.label}`;
@@ -667,7 +697,7 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
     .addFields(
       {name:"__Sending__",  value:`**${sendLabel}**`,                   inline:true},
       {name:"__Receiving__",value:`**${receiveLabel}**`,                inline:true},
-      {name:"__Fee__",      value:`**${rate}%**  --  ${fmtUSD(feeUSD)}`,inline:true},
+      {name:"__Fee__",      value:`**${rate}%**  --  ${fmtUSD(feeUSD)}${_isVip?" ⚡ VIP rate":""}`,inline:true},
       {name:direction==="send"?`__Your ${m.label} Details__`:"__Your Receiving Wallet__",value:`\`${walletInfo}\``,inline:false},
     );
   if(notes)ticketEmbed.addFields({name:"Notes",value:notes,inline:false});
@@ -775,8 +805,12 @@ async function completeTrade(interaction, ticket, tickets) {
   await handleReferralTrade(interaction.guild, ticket.userId, ticket.amountUSD);
   // Live feed
   if(state.feedEnabled&&state.feedChannel){try{const feedCh=interaction.guild.channels.cache.get(state.feedChannel);if(feedCh){const vol=getUserVolume(ticket.userId);const _tier=getTier(vol);await feedCh.send(`\u2705  **${m?.label||ticket.method}**  \u00b7  **${fmtUSD(ticket.amountUSD)}**  \u00b7  ${_tier.emoji}  \u2014  just now`);}}catch{}}
-  // Tier role — use unified volume helper
-  try{await applyTierRole(interaction.guild,ticket.userId,getUserVolume(ticket.userId));}catch{}
+  // Tier role — compute volume fresh from _mem after save
+  try{
+    const _vol=getUserVolume(ticket.userId);
+    console.log(`[tierRole] userId=${ticket.userId} volume=${_vol}`);
+    await applyTierRole(interaction.guild,ticket.userId,_vol);
+  }catch(e){console.log("[tierRole error]",e.message);}
   // Receipt DM
   try{
     const volume=getUserVolume(ticket.userId);
@@ -978,19 +1012,22 @@ client.on(Events.InteractionCreate, async interaction => {
         const amt=interaction.options.getNumber("amount_usd");
         if(!amt||amt<=0)return interaction.reply({content:"Please enter a valid amount greater than $0.",ephemeral:true});
         await interaction.deferReply({ephemeral:true});
-        const fS=calcFee(amt,"send"),rS=feeRate(amt,"send"),fR=calcFee(amt,"receive"),rR=feeRate(amt,"receive");
+        const _feeVol=getUserVolume(interaction.user.id);const _feeVip=isVipVolume(_feeVol);
+        const fS=calcFee(amt,"send",_feeVip),rS=feeRate(amt,"send",_feeVip),fR=calcFee(amt,"receive",_feeVip),rR=feeRate(amt,"receive",_feeVip);
         const [btcP,ethP,solP]=await Promise.all([getPrice("BTC"),getPrice("ETH"),getPrice("SOL")]);
         const recvS=amt-fS,coinLines=[];
         if(btcP)coinLines.push(`BTC: **${(recvS/btcP).toFixed(6)}** (\u2248${fmtUSD(recvS)})`);
         if(ethP)coinLines.push(`ETH: **${(recvS/ethP).toFixed(5)}** (\u2248${fmtUSD(recvS)})`);
         if(solP)coinLines.push(`SOL: **${(recvS/solP).toFixed(4)}** (\u2248${fmtUSD(recvS)})`);
+        const _vipLine=_feeVip?"\n> ⚡ **VIP rate applied** — 0.75% discount active on your account":"";
         return interaction.editReply({embeds:[base("Fee Calculator").setThumbnail(IMG.LOGO)
           .setDescription(`Estimate for **${fmtUSD(amt)}**\n*Final fee may vary slightly.*\n\u200b`)
           .addFields(
-            {name:"Fiat \u2192 Crypto",       value:`Rate: **${rS}%**\nFee: **${fmtUSD(fS)}**\nYou receive: **${fmtUSD(recvS)}**`,inline:true},
-            {name:"Crypto \u2192 Fiat",       value:`Rate: **${rR}%**\nFee: **${fmtUSD(fR)}**\nYou receive: **${fmtUSD(amt-fR)}**`,inline:true},
+            {name:"Fiat \u2192 Crypto",value:`Rate: **${rS}%**${_feeVip?" ⚡":""} \nFee: **${fmtUSD(fS)}**\nYou receive: **${fmtUSD(recvS)}**`,inline:true},
+            {name:"Crypto \u2192 Fiat",value:`Rate: **${rR}%**${_feeVip?" ⚡":""} \nFee: **${fmtUSD(fR)}**\nYou receive: **${fmtUSD(amt-fR)}**`,inline:true},
             {name:"\uD83E\uDE99 If Buying Crypto",value:coinLines.length?coinLines.join("\n"):"--",inline:false},
-          ).setImage(IMG.FEE).setFooter({text:"Konvert  \u2022  Coin amounts shown for Fiat \u2192 Crypto direction"})]});
+            {name:"Fee Tiers",value:`> **Fiat → Crypto:** <$150 = 10%  ·  $150–350 = 9%  ·  $350–600 = 8%  ·  $600–800 = 7%  ·  $800+ = 6%\n> **Crypto → Fiat:** <$150 = 9%  ·  $150–350 = 8%  ·  $350–600 = 7%  ·  $600–800 = 6%  ·  $800+ = 5%\n> Min fee **$5** on any trade${_vipLine}`,inline:false},
+          ).setImage(IMG.FEE).setFooter({text:`Konvert  \u2022 ${_feeVip?"⚡ VIP rate active  ·  ":""}Rate shown is for the amount entered`})]});
       }
 
       if(cmd==="price"){
@@ -1671,6 +1708,72 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.editReply("✅ Leaderboard and stats have been cleared. All trade data wiped.");
       }
 
+
+      if(cmd==="search"){
+        await interaction.deferReply({ephemeral:true});
+        const target=interaction.options.getUser("user");
+        const allT=Object.entries(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
+        const userTickets=allT.filter(([,t])=>t.userId===target.id).sort((a,b)=>(b[1].createdAt||0)-(a[1].createdAt||0));
+        if(!userTickets.length)return interaction.editReply({content:`No tickets found for **${target.username}**.`,ephemeral:true});
+        const volume=getUserVolume(target.id);
+        const tier=getTier(volume);
+        const completed=userTickets.filter(([,t])=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment");
+        const adjustments=userTickets.filter(([,t])=>t.method==="adjustment");
+        const adjTotal=adjustments.reduce((s,[,t])=>s+(parseFloat(t.amountUSD)||0),0);
+        const open=userTickets.filter(([,t])=>t.status==="open");
+        // Build ticket list (last 8)
+        const lines=userTickets.slice(0,8).map(([id,t])=>{
+          const m=getMethod(t.method);
+          const statusEmoji=t.status==="vouched"?"✅":t.status==="open"?"🟡":t.status==="cancelled"?"🚫":"🔴";
+          const amt=t.method==="adjustment"?(parseFloat(t.amountUSD)>0?"+":"")+`${fmtUSD(parseFloat(t.amountUSD))}`:fmtUSD(t.amountUSD||0);
+          return `${statusEmoji} **${m?.label||t.method||"—"}**  ·  ${amt}  ·  <t:${Math.floor((t.createdAt||Date.now())/1000)}:d>`;
+        }).join("\n");
+        const vipActive=isVipVolume(volume);
+        return interaction.editReply({embeds:[new EmbedBuilder()
+          .setColor(tier.min>=1000?0xFFD700:0x7C4DFF)
+          .setAuthor({name:"Konvert  ·  User Search",iconURL:IMG.LOGO})
+          .setTitle(`${target.username}'s Full History`)
+          .setThumbnail(target.displayAvatarURL({size:256}))
+          .setDescription(`${tier.emoji} **${tier.label}**${vipActive?" ⚡ VIP":""}
+​`)
+          .addFields(
+            {name:"💰  Total Volume",value:`**${fmtUSD(volume)}**`,inline:true},
+            {name:"✅  Completed",value:`**${completed.length}** trade${completed.length!==1?"s":""}`,inline:true},
+            {name:"🟡  Open",value:`**${open.length}**`,inline:true},
+            {name:"📊  Adjustments",value:adjustments.length?`**${adjustments.length}** entries  ·  net ${adjTotal>=0?"+":""}${fmtUSD(adjTotal)}`:"None",inline:true},
+            {name:"⚡  VIP Discount",value:vipActive?"Active — 0.75% off all trades":"Not yet (requires $7,000+)",inline:true},
+            {name:"🔗  Referred By",value:(()=>{const r=getReferrals();const ref=r.referred[target.id];return ref?`<@${ref}>`:"No referral";})(),inline:true},
+            {name:`Last ${Math.min(userTickets.length,8)} Tickets`,value:lines||"—",inline:false},
+          )
+          .setFooter({text:`${userTickets.length} total tickets  ·  Konvert Exchange`})
+          .setTimestamp()]});
+      }
+
+      if(cmd==="vipstatus"){
+        await interaction.deferReply({ephemeral:true});
+        const vol=getUserVolume(interaction.user.id);
+        const vip=isVipVolume(vol);
+        const tier=getTier(vol);
+        const needed=vip?0:Math.max(7000-vol,0);
+        return interaction.editReply({embeds:[new EmbedBuilder()
+          .setColor(vip?0xFFD700:0x7C4DFF)
+          .setAuthor({name:"Konvert Exchange  ·  VIP Status",iconURL:IMG.LOGO})
+          .setTitle(vip?"⚡  VIP Rate Active":"VIP Rate — Not Yet Unlocked")
+          .setThumbnail(IMG.LOGO)
+          .setDescription(vip
+            ?"Your account has been upgraded. You receive a **0.75% fee discount** on every trade automatically.\n\u200b"
+            :`You're **${fmtUSD(needed)}** away from unlocking VIP status and a permanent fee discount.\n\u200b`)
+          .addFields(
+            {name:"Your Tier",value:`${tier.emoji} **${tier.label}**`,inline:true},
+            {name:"Your Volume",value:`**${fmtUSD(vol)}**`,inline:true},
+            {name:"VIP Threshold",value:"**$7,000+** (⚡ Godly Client)",inline:true},
+            {name:"VIP Perk",value:"**0.75% off** every trade — both directions, automatically applied",inline:false},
+          )
+          .setImage(IMG.BANNER)
+          .setFooter({text:"Konvert Exchange  ·  VIP benefits apply to all future trades"})
+          .setTimestamp()]});
+      }
+
       if(cmd==="testbackup"){
         await interaction.deferReply({ephemeral:true});
         const channelId=process.env.BACKUP_CHANNEL_ID;
@@ -1969,9 +2072,10 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.editReply({embeds:[base("Fee Calculator").setThumbnail(IMG.LOGO)
           .setDescription(`Estimate for **${fmtUSD(raw)}**\n*Final fee may vary slightly.*\n\u200b`)
           .addFields(
-            {name:"Fiat \u2192 Crypto",       value:`Rate: **${rS}%**\nFee: **${fmtUSD(fS)}**\nYou receive: **${fmtUSD(recvS)}**`,inline:true},
-            {name:"Crypto \u2192 Fiat",       value:`Rate: **${rR}%**\nFee: **${fmtUSD(fR)}**\nYou receive: **${fmtUSD(raw-fR)}**`,inline:true},
+            {name:"Fiat \u2192 Crypto",value:`Rate: **${rS}%**\nFee: **${fmtUSD(fS)}**\nYou receive: **${fmtUSD(recvS)}**`,inline:true},
+            {name:"Crypto \u2192 Fiat",value:`Rate: **${rR}%**\nFee: **${fmtUSD(fR)}**\nYou receive: **${fmtUSD(raw-fR)}**`,inline:true},
             {name:"\uD83E\uDE99 Coin Amounts",value:coinLines.length?coinLines.join("  \u00b7  "):"--",inline:false},
+            {name:"Fee Tiers",value:`> **Fiat → Crypto:** <$150 = 10%  ·  $150–350 = 9%  ·  $350–600 = 8%  ·  $600–800 = 7%  ·  $800+ = 6%\n> **Crypto → Fiat:** <$150 = 9%  ·  $150–350 = 8%  ·  $350–600 = 7%  ·  $600–800 = 6%  ·  $800+ = 5%\n> Min fee **$5** on any trade`,inline:false},
           ).setImage(IMG.FEE).setFooter({text:"Konvert  \u2022  Open a ticket to begin"})]});
       }
 
@@ -2063,6 +2167,53 @@ async function checkAlerts(){
 
 const GENERAL_CHANNEL_ID="1454793385750560894";
 
+async function postDailyCryptoFact(guild){
+  try{
+    const ch=guild.channels.cache.get(GENERAL_CHANNEL_ID)||await guild.channels.fetch(GENERAL_CHANNEL_ID).catch(()=>null);
+    if(!ch){console.log("[dailyFact] channel not found");return;}
+    const facts=["Bitcoin was worth less than $0.01 when it first launched in 2009. The first real-world transaction used 10,000 BTC to buy two pizzas.","Ethereum's smart contracts allow code to run automatically without any middleman — the basis for DeFi, NFTs, and thousands of dApps.","Satoshi Nakamoto, Bitcoin's creator, has never moved their estimated 1 million BTC wallet — worth billions — since mining it in 2009.","There will only ever be 21 million Bitcoin. Around 19.7 million have already been mined. The last one won't be mined until around 2140.","Over 20% of all Bitcoin is estimated to be permanently lost — forgotten wallets, lost keys, and early miners who didn't think it would be worth anything.","Solana can process up to 65,000 transactions per second. Visa handles around 24,000. Bitcoin handles around 7.","El Salvador became the first country to adopt Bitcoin as legal tender in 2021. Citizens can pay taxes and buy groceries with it.","The term 'HODL' came from a 2013 forum post where someone drunkenly misspelled 'hold'. It's now a core crypto philosophy.","Crypto markets never close. Unlike stocks, you can trade Bitcoin at 3am on Christmas Day.","Tether (USDT) is the most traded cryptocurrency by volume — more than Bitcoin or Ethereum on most days.","DeFi protocols collectively hold over $50 billion in locked assets, all managed by code with no banks involved.","The first Bitcoin ATM opened in Vancouver, Canada in 2013. There are now over 38,000 worldwide.","Ethereum burns a portion of every transaction fee permanently, making it deflationary over time.","Lightning Network allows Bitcoin transactions to settle in milliseconds for fractions of a cent — solving the scalability problem.","Crypto wallets don't actually store crypto. They store the private keys that prove ownership on the blockchain.","Over 560 million people worldwide own some form of cryptocurrency as of 2024.","A single Dogecoin was worth $0.0002 in 2019. At its peak in 2021, it hit $0.74 — a 3,700x increase.","The blockchain cannot be edited or deleted. Every transaction ever made on Bitcoin is permanently visible to anyone.","Ripple (XRP) can settle international bank transfers in 3–5 seconds for a fraction of a cent, vs 3–5 business days for SWIFT.","Gas fees on Ethereum once hit over $200 per transaction during peak NFT demand in 2021.","Cold wallets — hardware devices not connected to the internet — are considered the safest way to store large amounts of crypto.","Binance processes over $10 billion in trades daily, making it the largest crypto exchange in the world by volume.","The Bitcoin halving happens every 4 years, cutting miner rewards in half. Historically, each halving has preceded a major bull run.","Stablecoins like USDC are backed 1:1 by US dollars held in reserve, making them immune to crypto volatility.","Crypto transactions are pseudonymous, not anonymous. Every transaction is traceable on the public blockchain.","Avalanche (AVAX) can finalize transactions in under 2 seconds — one of the fastest finality times of any blockchain.","There are over 20,000 different cryptocurrencies in existence. The vast majority have little to no value.","Michael Saylor's MicroStrategy holds over 200,000 BTC on its balance sheet — more than most countries.","Ethereum's merge to Proof of Stake in 2022 reduced its energy consumption by over 99.9%.","The total crypto market cap has exceeded $3 trillion — larger than the GDP of most countries."];
+    const fact=facts[Math.floor(Math.random()*facts.length)];
+    const coins=["BTC","ETH","SOL","XRP","BNB","ADA","DOGE","AVAX","LTC","DOT"];
+    const featuredCoin=coins[Math.floor(Math.random()*coins.length)];
+    let priceStr="";
+    try{const p=await getPrice(featuredCoin);if(p)priceStr=` · **${featuredCoin}: ${fmtUSD(p)}**`;}catch{}
+    const embed=new EmbedBuilder()
+      .setColor(0x7C4DFF)
+      .setAuthor({name:"Konvert Exchange  ·  Daily Crypto Fact",iconURL:IMG.LOGO})
+      .setTitle("Did You Know?")
+      .setThumbnail(COIN_LOGO[featuredCoin]||IMG.LOGO)
+      .setDescription(`${fact}
+​`)
+      .addFields(
+        {name:"Live Price",value:`${featuredCoin}${priceStr||" — unavailable"}`,inline:true},
+        {name:"Trade Now",value:`Open a ticket in <#${CONFIG.EXCHANGE_CHANNEL}>`,inline:true},
+      )
+      .setImage(IMG.BANNER)
+      .setFooter({text:"Konvert Exchange  ·  Daily fact — come back tomorrow for another"})
+      .setTimestamp();
+    await ch.send({embeds:[embed]});
+    console.log("[dailyFact] posted");
+  }catch(e){console.error("[dailyFact]",e.message);}
+}
+
+function scheduleDailyFact(guild){
+  function msUntil9am(){
+    const now=new Date();
+    const next=new Date(now);
+    next.setUTCHours(13,0,0,0); // 9am EST = 1pm UTC
+    if(next<=now)next.setUTCDate(next.getUTCDate()+1);
+    return next.getTime()-now.getTime();
+  }
+  const delay=msUntil9am();
+  console.log(`[dailyFact] first post in ${Math.round(delay/3600000)}h`);
+  setTimeout(()=>{
+    postDailyCryptoFact(guild).catch(()=>{});
+    setInterval(()=>postDailyCryptoFact(guild).catch(()=>{}),24*60*60*1000);
+  },delay);
+}
+
+
+
 async function postWeeklyReferralSummary(guild){
   try{
     const ch=guild.channels.cache.get(GENERAL_CHANNEL_ID)||await guild.channels.fetch(GENERAL_CHANNEL_ID).catch(()=>null);
@@ -2138,6 +2289,7 @@ client.once(Events.ClientReady, async () => {
     setInterval(()=>checkAlerts(),5*60*1000);
     setInterval(()=>{const t=load("tickets");if(Object.keys(t).length>0)_backupToDiscord(t).catch(()=>{});},30*60*1000);
     scheduleWeeklyReferralSummary(guild);
+    scheduleDailyFact(guild);
   }
 });
 
