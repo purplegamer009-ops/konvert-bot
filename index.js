@@ -870,6 +870,52 @@ client.on(Events.MessageCreate, async message => {
   }
 
   if(message.author.bot)return;
+
+  // ── AUTO CONVERTER: "500 usd to eur", "4 SOL to USD", "100 GBP to CAD" ──────
+  const convMatch=message.content.trim().match(/^([\d,]+\.?\d*)\s+([a-zA-Z]{2,6})\s+to\s+([a-zA-Z]{2,6})$/i);
+  if(convMatch){
+    const rawAmt=parseFloat(convMatch[1].replace(/,/g,""));
+    const fromRaw=convMatch[2].toUpperCase();
+    const toRaw=convMatch[3].toUpperCase();
+    if(isNaN(rawAmt)||rawAmt<=0)return;
+    const FIAT_RATES={USD:1,CAD:1.37,EUR:0.93,GBP:0.79,AUD:1.53,CHF:0.90,JPY:149.5,MXN:17.2,AED:3.67,SGD:1.35};
+    const FIAT_FLAGS={USD:"🇺🇸",CAD:"🇨🇦",EUR:"🇪🇺",GBP:"🇬🇧",AUD:"🇦🇺",CHF:"🇨🇭",JPY:"🇯🇵",MXN:"🇲🇽",AED:"🇦🇪",SGD:"🇸🇬"};
+    const FIAT_SYM={USD:"$",CAD:"CA$",EUR:"€",GBP:"£",AUD:"A$",CHF:"CHF ",JPY:"¥",MXN:"MX$",AED:"AED ",SGD:"S$"};
+    const isCoin=s=>COINS.includes(s);
+    const isFiat=s=>!!FIAT_RATES[s];
+    if(!isCoin(fromRaw)&&!isFiat(fromRaw))return;
+    if(!isCoin(toRaw)&&!isFiat(toRaw))return;
+    try{
+      let amtUSD=0,fromPrice=null,toPrice=null;
+      if(isFiat(fromRaw)){amtUSD=rawAmt/FIAT_RATES[fromRaw];}
+      else{fromPrice=await getPrice(fromRaw);if(!fromPrice){await message.reply({content:"❌ Could not fetch price for **"+fromRaw+"**."}).catch(()=>{});return;}amtUSD=rawAmt*fromPrice;}
+      let result=0;
+      if(isFiat(toRaw)){result=amtUSD*FIAT_RATES[toRaw];}
+      else{toPrice=await getPrice(toRaw);if(!toPrice){await message.reply({content:"❌ Could not fetch price for **"+toRaw+"**."}).catch(()=>{});return;}result=amtUSD/toPrice;}
+      const fmtResult=n=>{if(n>=1000)return n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});if(n>=1)return n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:4});if(n>=0.01)return n.toFixed(4);return n.toFixed(8);};
+      const fromSym=isFiat(fromRaw)?(FIAT_SYM[fromRaw]||fromRaw+" "):"";
+      const toSym=isFiat(toRaw)?(FIAT_SYM[toRaw]||toRaw+" "):"";
+      const fromFlag=isFiat(fromRaw)?(FIAT_FLAGS[fromRaw]||"💱"):(COIN_LOGO[fromRaw]?"":" ");
+      const toFlag=isFiat(toRaw)?(FIAT_FLAGS[toRaw]||"💱"):(COIN_LOGO[toRaw]?"":" ");
+      const color=(isCoin(fromRaw)||isCoin(toRaw))?0x7C4DFF:0x22c55e;
+      const embed=new EmbedBuilder()
+        .setColor(color)
+        .setAuthor({name:"Konvert Exchange  ·  Converter",iconURL:IMG.LOGO})
+        .setTitle(fromSym+rawAmt.toLocaleString("en-US")+" "+fromRaw+"  →  "+toSym+fmtResult(result)+" "+toRaw)
+        .addFields(
+          {name:"You have",value:"**"+fromSym+rawAmt.toLocaleString("en-US")+" "+fromRaw+"**",inline:true},
+          {name:"You get",value:"**"+toSym+fmtResult(result)+" "+toRaw+"**",inline:true},
+          {name:"≈ USD Value",value:"**$"+amtUSD.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})+"**",inline:true},
+        )
+        .setFooter({text:"Konvert Exchange  ·  Live rates  ·  Open a ticket to trade"})
+        .setTimestamp();
+      if(isCoin(fromRaw)&&COIN_LOGO[fromRaw])embed.setThumbnail(COIN_LOGO[fromRaw]);
+      else if(isCoin(toRaw)&&COIN_LOGO[toRaw])embed.setThumbnail(COIN_LOGO[toRaw]);
+      await message.reply({embeds:[embed]}).catch(()=>{});
+    }catch(e){console.log("[autoConvert]",e.message);}
+    return;
+  }
+
   const match=message.content.trim().match(/^\$([A-Za-z]{2,10})$/i);
   if(!match)return;
   const coin=match[1].toUpperCase();
