@@ -182,19 +182,49 @@ async function _backupReferralsToDiscord(data){
 async function restoreFromDiscord(){
   if(!process.env.BACKUP_CHANNEL_ID)return;
   try{
-    const tickets=load("tickets");
-    if(Object.keys(tickets).length>0){console.log("[restore] disk has data, skipping");return;}
-    const ch=client.channels.cache.get(process.env.BACKUP_CHANNEL_ID);
-    if(!ch){console.log("[restore] backup channel not found");return;}
-    const msgs=await ch.messages.fetch({limit:20});
+    const ch=await client.channels.fetch(process.env.BACKUP_CHANNEL_ID).catch(e=>{
+      console.error("[restore] cannot fetch backup channel:",e.message);return null;
+    });
+    if(!ch){console.log("[restore] backup channel not found — check BACKUP_CHANNEL_ID");return;}
+    const msgs=await ch.messages.fetch({limit:50});
+    let ticketsRestored=false,referralsRestored=false;
     for(const msg of msgs.values()){
-      if(msg.author.id===client.user?.id&&msg.attachments.size>0){
+      if(msg.attachments.size===0)continue;
+      if(!ticketsRestored){
         const ticketAtt=msg.attachments.find(a=>a.name==="konvert_tickets.json");
-        if(ticketAtt){const res=await fetch(ticketAtt.url,{signal:AbortSignal.timeout(10000)});if(res.ok){const data=await res.json();_mem.tickets=data;fs.writeFileSync(DB.tickets,JSON.stringify(data,null,2));console.log(`[restore] SUCCESS: restored ${Object.keys(data).length} tickets`);}}
-        const refAtt=msg.attachments.find(a=>a.name==="konvert_referrals.json");
-        if(refAtt){const res2=await fetch(refAtt.url,{signal:AbortSignal.timeout(10000)});if(res2.ok){const data2=await res2.json();_mem.referrals=data2;fs.writeFileSync(DB.referrals,JSON.stringify(data2,null,2));console.log(`[restore] SUCCESS: restored referrals`);}}
+        if(ticketAtt){
+          try{
+            const res=await fetch(ticketAtt.url,{signal:AbortSignal.timeout(10000)});
+            if(res.ok){
+              const data=await res.json();
+              if(Object.keys(data).length>0){
+                _mem.tickets=data;
+                fs.writeFileSync(DB.tickets,JSON.stringify(data,null,2));
+                console.log(`[restore] tickets: restored ${Object.keys(data).length} entries`);
+                ticketsRestored=true;
+              }
+            }
+          }catch(e){console.error("[restore] ticket fetch error:",e.message);}
+        }
       }
+      if(!referralsRestored){
+        const refAtt=msg.attachments.find(a=>a.name==="konvert_referrals.json");
+        if(refAtt){
+          try{
+            const res2=await fetch(refAtt.url,{signal:AbortSignal.timeout(10000)});
+            if(res2.ok){
+              const data2=await res2.json();
+              _mem.referrals=data2;
+              fs.writeFileSync(DB.referrals,JSON.stringify(data2,null,2));
+              console.log("[restore] referrals: restored");
+              referralsRestored=true;
+            }
+          }catch(e){console.error("[restore] referral fetch error:",e.message);}
+        }
+      }
+      if(ticketsRestored&&referralsRestored)break;
     }
+    if(!ticketsRestored)console.log("[restore] no ticket backup found in last 50 messages");
     console.log("[restore] scan complete");
   }catch(e){console.error("[restore error]",e.message);}
 }
