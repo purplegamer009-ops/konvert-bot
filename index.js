@@ -25,7 +25,7 @@ oauth2Client.setCredentials({ refresh_token: process.env.YOUTUBE_REFRESH_TOKEN }
 const youtube = google.youtube({ version: "v3", auth: oauth2Client });
 
 const IMG = {
-  LOGO:"https://i.imgur.com/cQyBq33.png", BANNER:"https://i.imgur.com/MfyoLHC.png",
+  LOGO:"https://i.imgur.com/nrm5TW5.png", BANNER:"https://i.imgur.com/tl4n8sx.png",
   RATES:"https://i.imgur.com/0zbG9Fc.png", FEE:"https://i.imgur.com/uxGThlY.png",
   RULES:"https://i.imgur.com/CaBjEFU.png", TICKET:"https://i.imgur.com/GasrfTC.png",
   WELCOME:"https://i.imgur.com/hSYrFai.png", DEAL:"https://i.imgur.com/GuBspYH.png",
@@ -84,7 +84,7 @@ async function applyTierRole(guild,userId,volume){
       try{
         await member.user.send({embeds:[new EmbedBuilder()
           .setColor(tier.min>=7000?0xFFD700:0x7C4DFF)
-          .setAuthor({name:"Konvert Exchange  \u00b7  Tier Up",iconURL:"https://i.imgur.com/cQyBq33.png"})
+          .setAuthor({name:"Konvert Exchange  \u00b7  Tier Up",iconURL:"https://i.imgur.com/nrm5TW5.png"})
           .setTitle(`${tier.emoji}  New Tier Unlocked`)
           .setThumbnail(member.user.displayAvatarURL({size:256}))
           .setDescription(`You've reached **${tier.label}** on Konvert Exchange.${vipNote}\n\u200b`)
@@ -93,7 +93,7 @@ async function applyTierRole(guild,userId,volume){
             {name:"Total Volume",value:`**${volume.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}**`,inline:true},
             {name:nextTier?"Next Tier":"Max Tier",value:nextTier?`${nextTier.emoji} **${nextTier.label}** \u2014 ${(nextTier.min-volume).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} away`:"You've reached the top. Respect.",inline:false},
           )
-          .setImage("https://i.imgur.com/MfyoLHC.png")
+          .setImage("https://i.imgur.com/tl4n8sx.png")
           .setFooter({text:"Konvert Exchange  \u00b7  Thank you for your continued trust"})
           .setTimestamp()]});
       }catch{}
@@ -771,7 +771,7 @@ client.on(Events.InteractionCreate,async interaction=>{
         const target=interaction.options.getUser("user")||interaction.user;
         const isSelf=target.id===interaction.user.id;
         const DONE_STATUS=["vouched","completed"];
-        const allT=Object.values(_mem.tickets||load("tickets"));
+        const allT=Object.values(Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets"));
         const realTrades=allT.filter(t=>t.userId===target.id&&DONE_STATUS.includes(t.status)&&t.amountUSD&&t.method!=="adjustment");
         const volume=getUserVolume(target.id);
         const avg=realTrades.length>0?realTrades.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0)/realTrades.length:0;
