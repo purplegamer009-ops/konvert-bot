@@ -535,6 +535,11 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("resetstats").setDescription("[Owner] Reset a user's volume adjustment back to 0").addUserOption(o=>o.setName("user").setDescription("User").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("clearleaderboard").setDescription("[Owner] Wipe all trade data from leaderboard and stats").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("testbackup").setDescription("[Owner] Test Discord backup channel").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("wipestats").setDescription("[Owner] Completely wipe ALL stats and tickets for a single user").addUserOption(o=>o.setName("user").setDescription("User to wipe").setRequired(true)).addStringOption(o=>o.setName("confirm").setDescription('Type "CONFIRM" to proceed').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("dispute").setDescription("Flag an issue with your current trade — locks ticket and alerts staff"),
+  new SlashCommandBuilder().setName("broadcast").setDescription("[Owner] DM all clients who traded in the last X days").addIntegerOption(o=>o.setName("days").setDescription("How many days back to look (default 30)").setMinValue(1).setMaxValue(365).setRequired(false)).addStringOption(o=>o.setName("message").setDescription("Message to send").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("mytrades").setDescription("View your personal trade history and stats"),
+  new SlashCommandBuilder().setName("estimate").setDescription("Get a full quote for a trade before opening a ticket").addNumberOption(o=>o.setName("amount").setDescription("Amount in USD").setRequired(true)).addStringOption(o=>o.setName("method").setDescription("Payment method (e.g. PayPal, Interac)").setRequired(true)).addStringOption(o=>o.setName("coin").setDescription("Crypto (BTC, ETH, SOL)").setRequired(true)).addStringOption(o=>o.setName("direction").setDescription("Which direction?").setRequired(true).addChoices({name:"Send fiat, receive crypto",value:"send"},{name:"Send crypto, receive fiat",value:"receive"})),
   new SlashCommandBuilder().setName("search").setDescription("[Owner] Search all tickets for a user").addUserOption(o=>o.setName("user").setDescription("User to search").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("vipstatus").setDescription("Check if you have VIP fee discount active"),
 ].map(c=>c.toJSON());
@@ -1818,6 +1823,240 @@ client.on(Events.InteractionCreate, async interaction => {
           .setImage(IMG.BANNER)
           .setFooter({text:"Konvert Exchange  ·  VIP benefits apply to all future trades"})
           .setTimestamp()]});
+      }
+
+
+      if(cmd==="wipestats"){
+        await interaction.deferReply({ephemeral:true});
+        const target=interaction.options.getUser("user");
+        const confirm=interaction.options.getString("confirm");
+        if(confirm!=="CONFIRM"){
+          return interaction.editReply({content:'❌ You must type **CONFIRM** exactly in the confirm field to wipe a user. This cannot be undone.',ephemeral:true});
+        }
+        const tickets=Object.keys(_mem.tickets||{}).length>0?{..._mem.tickets}:load("tickets");
+        const before=Object.keys(tickets).length;
+        // Remove ALL ticket entries for this user (trades + adjustments)
+        let removed=0;
+        for(const [key,t] of Object.entries(tickets)){
+          if(t.userId===target.id){delete tickets[key];removed++;}
+        }
+        _mem.tickets=tickets;
+        save("tickets",tickets);
+        // Remove referral points too
+        const ref=getReferrals();
+        delete ref.points[target.id];
+        delete ref.referred[target.id];
+        // Remove any invite codes they owned
+        for(const [code,uid] of Object.entries(ref.invites||{})){if(uid===target.id)delete ref.invites[code];}
+        delete ref.inviteCodes[target.id];
+        saveReferrals(ref);
+        // Remove tier roles
+        try{
+          const member=await interaction.guild.members.fetch(target.id).catch(()=>null);
+          if(member){for(const t of TIERS){if(t.role&&member.roles.cache.has(t.role))await member.roles.remove(t.role).catch(()=>{});}}
+        }catch{}
+        // DM the user
+        try{
+          await target.send({embeds:[new EmbedBuilder()
+            .setColor(0xef4444)
+            .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
+            .setTitle("Account Reset")
+            .setDescription("Your exchange history and stats have been reset by staff.\n\nIf you believe this is a mistake, please open a support ticket.")
+            .setFooter({text:"Konvert Exchange"}).setTimestamp()]});
+        }catch{}
+        log(interaction.guild,`WIPESTATS: ${interaction.user.tag} wiped ALL data for ${target.tag||target.username} — ${removed} entries removed`);
+        return interaction.editReply({embeds:[new EmbedBuilder()
+          .setColor(0xef4444)
+          .setAuthor({name:"Konvert  ·  Admin",iconURL:IMG.LOGO})
+          .setTitle("User Wiped")
+          .setThumbnail(target.displayAvatarURL({size:128}))
+          .setDescription(`All data for <@${target.id}> has been permanently removed.\n\u200b`)
+          .addFields(
+            {name:"Entries Removed",value:`**${removed}**`,inline:true},
+            {name:"Referral Points",value:"**Cleared**",inline:true},
+            {name:"Tier Roles",value:"**Removed**",inline:true},
+          )
+          .setFooter({text:`Wiped by ${interaction.user.tag}  ·  Konvert Exchange`}).setTimestamp()]});
+      }
+
+
+      if(cmd==="dispute"){
+        await interaction.deferReply({ephemeral:true});
+        const tickets=Object.keys(_mem.tickets||{}).length?_mem.tickets:load("tickets");
+        const ticket=Object.entries(tickets).find(([id,t])=>id===interaction.channel.id&&t.status==="open");
+        if(!ticket){
+          return interaction.editReply({content:"This command can only be used inside your open ticket channel.",ephemeral:true});
+        }
+        const [channelId,t]=ticket;
+        // Lock the channel for everyone except owners/staff
+        try{
+          await interaction.channel.permissionOverwrites.edit(interaction.user.id,{SendMessages:false});
+          if(CONFIG.EXCHANGER_ROLE)await interaction.channel.permissionOverwrites.edit(CONFIG.EXCHANGER_ROLE,{SendMessages:false}).catch(()=>{});
+        }catch{}
+        // Post dispute embed in the ticket
+        const disputeEmbed=new EmbedBuilder()
+          .setColor(0xef4444)
+          .setAuthor({name:"Konvert Exchange  ·  Dispute Filed",iconURL:IMG.LOGO})
+          .setTitle("⚠️  Dispute Filed")
+          .setDescription(`<@${interaction.user.id}> has flagged an issue with this trade.\n\nThis ticket has been **locked** pending staff review. Only owners can unlock it.\n\u200b`)
+          .addFields(
+            {name:"Filed By",value:`<@${interaction.user.id}>`,inline:true},
+            {name:"Time",value:`<t:${Math.floor(Date.now()/1000)}:F>`,inline:true},
+            {name:"Status",value:"🔴 **Under Review**",inline:true},
+          )
+          .setFooter({text:"Konvert Exchange  ·  Do not close this ticket until resolved"})
+          .setTimestamp();
+        await interaction.channel.send({embeds:[disputeEmbed]});
+        // Mark in storage
+        tickets[channelId].status="dispute";
+        _mem.tickets=tickets;
+        save("tickets",tickets);
+        // DM all owners
+        for(const oid of CONFIG.OWNER_IDS){
+          try{
+            const owner=await client.users.fetch(oid);
+            await owner.send({embeds:[new EmbedBuilder()
+              .setColor(0xef4444)
+              .setAuthor({name:"Konvert  ·  Dispute Alert",iconURL:IMG.LOGO})
+              .setTitle("⚠️  Dispute Filed")
+              .setDescription(`A client has filed a dispute in a ticket.\n\u200b`)
+              .addFields(
+                {name:"Client",value:`<@${interaction.user.id}>`,inline:true},
+                {name:"Channel",value:`<#${channelId}>`,inline:true},
+                {name:"Method",value:getMethod(t.method)?.label||t.method||"—",inline:true},
+                {name:"Amount",value:fmtUSD(t.amountUSD||0),inline:true},
+              )
+              .setFooter({text:"Konvert Exchange  ·  Review immediately"}).setTimestamp()]});
+          }catch{}
+        }
+        log(interaction.guild,`DISPUTE: ${interaction.user.tag} filed dispute in #${interaction.channel.name}`);
+        return interaction.editReply({content:"Your dispute has been filed. Staff have been notified and will review shortly. The ticket has been locked.",ephemeral:true});
+      }
+
+
+      if(cmd==="broadcast"){
+        await interaction.deferReply({ephemeral:true});
+        const days=interaction.options.getInteger("days")||30;
+        const msg=interaction.options.getString("message");
+        const cutoff=Date.now()-(days*24*60*60*1000);
+        const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
+        const uniqueIds=[...new Set(
+          allT.filter(t=>["vouched","completed"].includes(t.status)&&(t.completedAt||0)>=cutoff&&t.method!=="adjustment")
+              .map(t=>t.userId)
+        )];
+        if(!uniqueIds.length)return interaction.editReply({content:`No clients found who traded in the last ${days} days.`});
+        await interaction.editReply({content:`📨 Sending to **${uniqueIds.length}** clients...`});
+        let sent=0,failed=0;
+        for(const uid of uniqueIds){
+          try{
+            const u=await client.users.fetch(uid);
+            await u.send({embeds:[new EmbedBuilder()
+              .setColor(0x7C4DFF)
+              .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
+              .setTitle("Message from Konvert")
+              .setDescription(msg)
+              .setImage(IMG.BANNER)
+              .setFooter({text:"Konvert Exchange  ·  Thank you for trading with us"}).setTimestamp()]});
+            sent++;
+            await new Promise(r=>setTimeout(r,800)); // rate limit safety
+          }catch{failed++;}
+        }
+        return interaction.followUp({content:`✅ Broadcast complete — **${sent}** sent, **${failed}** failed (DMs closed).`,ephemeral:true});
+      }
+
+
+      if(cmd==="mytrades"){
+        await interaction.deferReply({ephemeral:true});
+        const userId=interaction.user.id;
+        const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
+        const done=allT.filter(t=>t.userId===userId&&["vouched","completed"].includes(t.status)&&t.method!=="adjustment")
+          .sort((a,b)=>(b.completedAt||0)-(a.completedAt||0));
+        const volume=getUserVolume(userId);
+        const tier=getTier(volume);
+        const nextT=getNextTier(volume);
+        const vip=isVipVolume(volume);
+        if(!done.length){
+          return interaction.editReply({embeds:[new EmbedBuilder()
+            .setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  My Trades",iconURL:IMG.LOGO})
+            .setTitle("No Trades Yet")
+            .setDescription("You haven't completed any trades with Konvert yet.\n\nHead to the exchange channel to get started.\n\u200b")
+            .setImage(IMG.BANNER).setFooter({text:"Konvert Exchange"}).setTimestamp()]});
+        }
+        const last5=done.slice(0,5).map((t,i)=>{
+          const m=getMethod(t.method);
+          return `${i+1}. **${m?.label||t.method}** · ${fmtUSD(t.amountUSD)} · <t:${Math.floor((t.completedAt||Date.now())/1000)}:d>`;
+        }).join("\n");
+        // method breakdown
+        const methods={};done.forEach(t=>{if(t.method)methods[t.method]=(methods[t.method]||0)+1;});
+        const topM=Object.entries(methods).sort((a,b)=>b[1]-a[1])[0];
+        const avg=done.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0)/done.length;
+        const ref=getReferrals();
+        const refPts=ref.points[userId]?.balance||0;
+        return interaction.editReply({embeds:[new EmbedBuilder()
+          .setColor(tier.min>=1000?0xFFD700:0x7C4DFF)
+          .setAuthor({name:"Konvert Exchange  ·  My Trade History",iconURL:IMG.LOGO})
+          .setTitle("My Trades")
+          .setThumbnail(interaction.user.displayAvatarURL({size:256}))
+          .setDescription(`${tier.emoji} **${tier.label}**${vip?" ⚡ VIP":""}${nextT?`  ·  ${fmtUSD(Math.max(nextT.min-volume,0))} to ${nextT.emoji} ${nextT.label}`:"  ·  Max tier reached"}\n\u200b`)
+          .addFields(
+            {name:"✅  Total Trades",value:`**${done.length}**`,inline:true},
+            {name:"💰  Total Volume",value:`**${fmtUSD(volume)}**`,inline:true},
+            {name:"📊  Avg Trade",value:`**${fmtUSD(avg)}**`,inline:true},
+            {name:"🏆  Top Method",value:topM?`**${getMethod(topM[0])?.label||topM[0]}** (${topM[1]}x)`:"—",inline:true},
+            {name:"🔗  Referral Points",value:`**${refPts} pts** (${pointsToDollars(refPts)})`,inline:true},
+            {name:"⚡  VIP Discount",value:vip?"Active — 0.75% off":"Not yet ($7,000+ required)",inline:true},
+            {name:"📋  Last 5 Trades",value:last5,inline:false},
+          )
+          .setImage(IMG.BANNER)
+          .setFooter({text:"Konvert Exchange  ·  Use /stats for full tier details"})
+          .setTimestamp()]});
+      }
+
+
+      if(cmd==="estimate"){
+        await interaction.deferReply({ephemeral:true});
+        const amount=interaction.options.getNumber("amount");
+        const methodRaw=interaction.options.getString("method").toLowerCase().trim();
+        const coinRaw=interaction.options.getString("coin").toUpperCase().trim();
+        const direction=interaction.options.getString("direction");
+        const m=METHODS.find(x=>x.label.toLowerCase().includes(methodRaw)||x.value.includes(methodRaw));
+        if(!m)return interaction.editReply({content:`❌ Method **${methodRaw}** not recognised. Try: PayPal, Interac, Zelle, Cash App etc.`});
+        if(!COINS.includes(coinRaw))return interaction.editReply({content:`❌ Coin **${coinRaw}** not supported. Try BTC, ETH, SOL, LTC etc.`});
+        const vol=getUserVolume(interaction.user.id);
+        const vip=isVipVolume(vol);
+        const fee=calcFee(amount,direction,vip);
+        const rate=feeRate(amount,direction,vip);
+        const receive=amount-fee;
+        const coinPrice=await getPrice(coinRaw);
+        const tier=getTier(vol);
+        let coinLine="";
+        if(coinPrice){
+          if(direction==="send"){
+            coinLine=`**~${(receive/coinPrice).toFixed(6)} ${coinRaw}**  (≈${fmtUSD(receive)})`;
+          } else {
+            coinLine=`**${fmtUSD(receive)}** via ${m.label}`;
+          }
+        }
+        const sendStr=direction==="send"?`**${fmtUSD(amount)}** via **${m.label}**`:`**${coinRaw}** worth **${fmtUSD(amount)}**`;
+        const receiveStr=coinLine||(direction==="send"?`~${fmtUSD(receive)} worth of ${coinRaw}`:`${fmtUSD(receive)} via ${m.label}`);
+        const embed=new EmbedBuilder()
+          .setColor(0x7C4DFF)
+          .setAuthor({name:"Konvert Exchange  ·  Trade Estimate",iconURL:IMG.LOGO})
+          .setTitle(`${m.label}  ↔  ${coinRaw}  —  Estimate`)
+          .setThumbnail(COIN_LOGO[coinRaw]||IMG.LOGO)
+          .setDescription(`Live quote for your proposed trade. Open a ticket to proceed.\n\u200b`)
+          .addFields(
+            {name:"📤  You Send",value:sendStr,inline:true},
+            {name:"📥  You Receive",value:receiveStr,inline:true},
+            {name:"​",value:"​",inline:true},
+            {name:"💸  Fee",value:`**${rate}%**${vip?" ⚡ VIP":""} — ${fmtUSD(fee)}`,inline:true},
+            {name:"📈  ${coinRaw} Price",value:coinPrice?`**${fmtUSD(coinPrice)}**`:"Unavailable",inline:true},
+            {name:"${tier.emoji}  Your Tier",value:`**${tier.label}**`,inline:true},
+          )
+          .setImage(IMG.BANNER)
+          .setFooter({text:"Estimate only  ·  Final rate confirmed in your ticket  ·  Konvert Exchange"})
+          .setTimestamp();
+        return interaction.editReply({embeds:[embed]});
       }
 
       if(cmd==="testbackup"){
