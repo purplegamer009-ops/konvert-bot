@@ -2050,8 +2050,8 @@ client.on(Events.InteractionCreate, async interaction => {
             {name:"📥  You Receive",value:receiveStr,inline:true},
             {name:"​",value:"​",inline:true},
             {name:"💸  Fee",value:`**${rate}%**${vip?" ⚡ VIP":""} — ${fmtUSD(fee)}`,inline:true},
-            {name:"📈  ${coinRaw} Price",value:coinPrice?`**${fmtUSD(coinPrice)}**`:"Unavailable",inline:true},
-            {name:"${tier.emoji}  Your Tier",value:`**${tier.label}**`,inline:true},
+            {name:`📈  ${coinRaw} Price`,value:coinPrice?`**${fmtUSD(coinPrice)}**`:"Unavailable",inline:true},
+{name:`${tier.emoji}  Your Tier`,value:`**${tier.label}**`,inline:true},
           )
           .setImage(IMG.BANNER)
           .setFooter({text:"Estimate only  ·  Final rate confirmed in your ticket  ·  Konvert Exchange"})
