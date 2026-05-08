@@ -293,8 +293,8 @@ async function handleReferralTrade(guild,clientUserId,amountUSD){
 }
 
 const fmtUSD=n=>{if(n>=1)return`$${n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`;if(n>=0.01)return`$${n.toFixed(4)}`;return`$${n.toFixed(8)}`;};
-function calcFee(usd,dir,isVip=false){const base=dir==="receive"?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(usd<150?10:usd<350?9:usd<600?8:usd<800?7:6);const r=isVip?Math.max(base-0.75,1):base;return Math.max(usd*r/100,CONFIG.MIN_FEE);}
-function feeRate(usd,dir,isVip=false){const base=dir==="receive"?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(usd<150?10:usd<350?9:usd<600?8:usd<800?7:6);return isVip?Math.max(base-0.75,1):base;}
+function calcFee(usd,dir,isVip=false){const red=state.feeMode==="reduced";const base=dir==="receive"?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(red?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(usd<150?10:usd<350?9:usd<600?8:usd<800?7:6));const r=isVip?Math.max(base-0.75,1):base;return Math.max(usd*r/100,CONFIG.MIN_FEE);}
+function feeRate(usd,dir,isVip=false){const red=state.feeMode==="reduced";const base=dir==="receive"?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(red?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(usd<150?10:usd<350?9:usd<600?8:usd<800?7:6));return isVip?Math.max(base-0.75,1):base;}
 function isVipVolume(vol){return vol>=7000;}
 const base=title=>new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(title).setTimestamp();
 function log(guild,msg){if(!CONFIG.LOG_CHANNEL||!guild)return;const ch=guild.channels.cache.get(CONFIG.LOG_CHANNEL);if(ch)ch.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setDescription("```"+msg+"```").setTimestamp()]}).catch(()=>{});}
@@ -332,7 +332,7 @@ async function fetchFullPrice(coin){
 }
 
 const client=new Client({intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent,GatewayIntentBits.GuildMembers,GatewayIntentBits.GuildInvites],partials:[Partials.Channel]});
-const state={pending:{},mineGames:{},cooldowns:{},alerts:[],passes:{},c2cSelections:{},feedChannel:null,feedEnabled:false,volumeAdj:{}};
+const state={pending:{},mineGames:{},cooldowns:{},alerts:[],passes:{},c2cSelections:{},feedChannel:null,feedEnabled:false,volumeAdj:{},feeMode:"standard"};
 
 function buildLeaderboardVolumes(){
   const DONE_STATUS=["vouched","completed"];
@@ -420,6 +420,7 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("estimate").setDescription("Get a full quote for a trade before opening a ticket").addNumberOption(o=>o.setName("amount").setDescription("Amount in USD").setRequired(true)).addStringOption(o=>o.setName("method").setDescription("Payment method (e.g. PayPal, Interac)").setRequired(true)).addStringOption(o=>o.setName("coin").setDescription("Crypto (BTC, ETH, SOL)").setRequired(true)).addStringOption(o=>o.setName("direction").setDescription("Which direction?").setRequired(true).addChoices({name:"Send fiat, receive crypto",value:"send"},{name:"Send crypto, receive fiat",value:"receive"})),
   new SlashCommandBuilder().setName("search").setDescription("[Owner] Search all tickets for a user").addUserOption(o=>o.setName("user").setDescription("User to search").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("vipstatus").setDescription("Check if you have VIP fee discount active"),
+  new SlashCommandBuilder().setName("setfeemode").setDescription("[Owner] Switch between standard (5-10%) and reduced (5-9%) fee tiers").addStringOption(o=>o.setName("mode").setDescription("Fee mode").setRequired(true).addChoices({name:"Standard (5-10%)",value:"standard"},{name:"Reduced (5-9%)",value:"reduced"})).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 ].map(c=>c.toJSON());
 
 async function registerCommands(){
@@ -704,7 +705,7 @@ client.on(Events.GuildMemberAdd,async member=>{
     const WELCOME_CHANNEL="1477787759799435344";
     const ch=guild.channels.cache.get(WELCOME_CHANNEL);
     if(!ch)return;
-    await ch.send({content:`<@${member.id}>`,embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle(`Welcome to Konvert! \uD83D\uDC4B`).setThumbnail(member.user.displayAvatarURL({size:256})).setDescription(`Hey <@${member.id}>, welcome to **Konvert Exchange**!\n\nYou're member **#${guild.memberCount}** \u2014 glad to have you here.\n\u200b`).addFields({name:"\uD83D\uDCB8  Exchange",value:`Open a ticket in <#${CONFIG.EXCHANGE_CHANNEL}> to start trading`,inline:false},{name:"\u26A1  Fast",value:"Usually under 10 minutes",inline:true},{name:"\uD83D\uDD12  Safe",value:"MM required on all trades",inline:true},{name:"\uD83E\uDD1D  Support",value:"24/7 agents available",inline:true}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  \u2022  Fast  \u00b7  Safe  \u00b7  Simple"}).setTimestamp()]});
+    await ch.send({content:`<@${member.id}>`,embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setThumbnail(member.user.displayAvatarURL({size:256})).setDescription(`Welcome to Konvert, <@${member.id}>. \u2014 Member **#${guild.memberCount}**\n\nReady to exchange? Open a ticket in <#${CONFIG.EXCHANGE_CHANNEL}>.\n\u200b`).setFooter({text:"Fast  \u00b7  Safe  \u00b7  Simple"}).setTimestamp()]});
   }catch(e){console.error("Welcome error:",e.message);}
 });
 
@@ -984,7 +985,52 @@ client.on(Events.InteractionCreate,async interaction=>{
       if(cmd==="lookup"){const query=interaction.options.getString("name").toLowerCase().trim(),tickets=load("tickets"),match=Object.entries(tickets).find(([id,t])=>{const chName=interaction.guild.channels.cache.get(id)?.name||"";return chName.includes(query)||id===query;});if(!match)return interaction.reply({content:`No ticket found matching **${query}**.`,ephemeral:true});const [channelId,t]=match,m=getMethod(t.method),se=t.status==="vouched"?"\u2705":t.status==="open"?"\uD83D\uDFE1":"\uD83D\uDD34";return interaction.reply({embeds:[base("Ticket Lookup").setThumbnail(IMG.LOGO).addFields({name:"Client",value:`<@${t.userId}>`,inline:true},{name:"Status",value:`${se} **${t.status==="vouched"?"Completed":t.status==="open"?"Open":"Closed"}**`,inline:true},{name:"Method",value:m?.label||t.method,inline:true},{name:"Amount",value:fmtUSD(t.amountUSD||0),inline:true},{name:"Coin",value:t.coin||"--",inline:true},{name:"Opened",value:t.createdAt?`<t:${Math.floor(t.createdAt/1000)}:R>`:"--",inline:true},{name:"Completed",value:t.completedAt?`<t:${Math.floor(t.completedAt/1000)}:R>`:"--",inline:true},{name:"Channel",value:`<#${channelId}>`,inline:true}).setFooter({text:"Konvert  \u2022  Ticket Lookup"})],ephemeral:true});}
       if(cmd==="postkonvault"){const inviteUrl="https://discord.gg/jnT63k4UA7";const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("\uD83D\uDE80  Konvault\u2122").setDescription("**The Ultimate Crypto Wagering Hub**\n-- Owned by Konvert Exchange\n-- Free MM service  \u00b7  0% fee\n\n*Flip, win, repeat. It's that simple.*\n\u200b").addFields({name:"What We Offer",value:"\uD83D\uDCB0  Choose any amount of crypto to wager\n\uD83E\uDE99  Fair coin flips -- winner takes all\n\uD83D\uDD12  Funds securely held by trusted middlemen\n\u26A1  Active agents & support 24/7\n\uD83C\uDF10  Supports ALL cryptocurrencies\n\u2705  0 fees -- tips are always welcome",inline:false},{name:"\uD83C\uDF89  Join Now",value:"Click the button below to join Konvault and start flipping!",inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvault by Konvert Exchange  \u2022  Free MM  \u2022  0% Fee"}).setTimestamp();await interaction.channel.send({embeds:[embed],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel("Join Konvault").setEmoji("\uD83D\uDE80").setStyle(ButtonStyle.Link).setURL(inviteUrl))]});return interaction.reply({content:"Konvault embed posted.",ephemeral:true});}
       if(cmd==="postinfo"){const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Info").setThumbnail(IMG.LOGO).setDescription("Konvert is a **fast and reliable exchange community** for converting value across platforms.\n\nEasily exchange **PayPal, Crypto, Cash App, Zelle, E-Transfer**, and other payment methods -- both directions -- with **low fees** and **quick processing**.\n\nOur agents are available **24/7**, backed by a friendly, active community and real-time crypto price updates to keep you informed.\n\u200b").addFields({name:"\uD83D\uDCB8  Fees",value:"5% - 10%  \u00b7  Tiered by amount  \u00b7  Min $5",inline:true},{name:"\u26A1  Speed",value:"Usually under 10 minutes",inline:true},{name:"\uD83E\uDD1D  Support",value:"24/7 agents always available",inline:true}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  \u2022  Fast  \u00b7  Safe  \u00b7  Simple  \u00b7  Private"});await interaction.channel.send({embeds:[embed]});return interaction.reply({content:"Info embed posted.",ephemeral:true});}
-      if(cmd==="posttos"){const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Terms of Service").setThumbnail(IMG.LOGO).setDescription("**Konvert -- Exchange Policies**\n\u200b").addFields({name:"1. Lawful Use",value:"Konvert strictly prohibits the use of its services for any unlawful activity, including but not limited to fraud, scams, chargebacks, or abuse of payment systems.",inline:false},{name:"2. Fees & Pricing",value:"All exchanges are subject to a minimum service fee of **$5 USD**, and a tiered rate based on amount.\n\n**Fiat \u2192 Crypto:** $0\u2013150 = 10%  \u00b7  $150\u2013350 = 9%  \u00b7  $350\u2013600 = 8%  \u00b7  $600\u2013800 = 7%  \u00b7  $800+ = 6%\n**Crypto \u2192 Fiat:** $0\u2013150 = 9%  \u00b7  $150\u2013350 = 8%  \u00b7  $350\u2013600 = 7%  \u00b7  $600\u2013800 = 6%  \u00b7  $800+ = 5%\n\nFees are **non-refundable** if the exchange is confirmed completed by both parties.",inline:false},{name:"3. On-Platform Transactions Only",value:"All exchanges must be conducted exclusively through the Konvert server and official ticket system.",inline:false},{name:"4. Accepted Payment Methods",value:"PayPal  \u00b7  Cash App  \u00b7  Venmo  \u00b7  Interac e-Transfer  \u00b7  Zelle  \u00b7  IBAN  \u00b7  Bank Transfer  \u00b7  Crypto",inline:false},{name:"5. Disputes & Enforcement",value:"Any attempt to chargeback, make false claims, abuse staff, or bypass policies will result in an **immediate ban** from the server.",inline:false}).setFooter({text:"Konvert  \u2022  By using our services you agree to these terms"});await interaction.channel.send({embeds:[embed]});return interaction.reply({content:"Terms of Service embed posted.",ephemeral:true});}
+      if(cmd==="posttos"){
+        const embed=new EmbedBuilder()
+          .setColor(CONFIG.COLOR)
+          .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
+          .setTitle("Terms of Service")
+          .setThumbnail(IMG.LOGO)
+          .setDescription(
+            "By engaging in any exchange or service facilitated through Konvert, you acknowledge and agree to the following terms in full. "
+            +"These terms exist to protect all parties and ensure a safe, transparent trading environment.\n\u200b"
+          )
+          .addFields(
+            {name:"\u00a7 1  \u2014  Eligibility & Lawful Use",
+             value:"Konvert services are available to individuals who can lawfully engage in cryptocurrency and fiat transactions in their jurisdiction. "
+             +"You agree not to use Konvert for any unlawful purpose, including but not limited to money laundering, fraud, unauthorized chargebacks, or circumvention of financial regulations. "
+             +"Konvert reserves the right to refuse service to any individual at its sole discretion.",
+             inline:false},
+            {name:"\u00a7 2  \u2014  Service Fees",
+             value:"All transactions are subject to a tiered service fee based on trade volume and direction. A minimum fee of **$5.00 USD** applies to every exchange. "
+             +"Fees are disclosed prior to trade confirmation and are considered earned upon completion. "
+             +"**All fees are non-refundable** once a trade has been mutually confirmed. "
+             +"Refund requests due to verified Konvert error must be submitted within 24 hours of completion.",
+             inline:false},
+            {name:"\u00a7 3  \u2014  Platform Exclusivity",
+             value:"All exchanges must be initiated and completed exclusively within the Konvert Discord server via the official ticket system. "
+             +"Any transaction arranged outside of Konvert\u2019s platform is conducted entirely at the user\u2019s own risk. "
+             +"Konvert bears no liability for losses arising from off-platform arrangements and will provide no support or remediation for such incidents.",
+             inline:false},
+            {name:"\u00a7 4  \u2014  Middleman & Communication Policy",
+             value:"A trusted middleman is required on all trades unless explicitly waived by a Konvert owner within your active ticket. "
+             +"Staff will **never** contact you via direct message to initiate or facilitate a trade. Anyone doing so should be treated as an impersonator and reported immediately. "
+             +"All communication must remain within your assigned ticket channel.",
+             inline:false},
+            {name:"\u00a7 5  \u2014  Disputes & Enforcement",
+             value:"Disputes must be raised through the official dispute process within your active ticket. Konvert staff will review all available evidence before issuing a determination. "
+             +"Abuse of the dispute process, chargebacks, fraudulent activity, staff abuse, or circumvention of these terms will result in **immediate and permanent removal** from the Konvert platform.",
+             inline:false},
+            {name:"\u00a7 6  \u2014  Limitation of Liability",
+             value:"Konvert operates as a peer-facilitated exchange intermediary. While reasonable precautions are taken to ensure safe trading, Konvert does not guarantee outcomes and is not liable for losses arising from market volatility, user error, third-party failures, or events beyond its control. "
+             +"Use of Konvert\u2019s services is at your own discretion and risk.",
+             inline:false},
+          )
+          .setImage(IMG.BANNER)
+          .setFooter({text:"Konvert Exchange  \u2022  By proceeding you agree to these terms in full"});
+        await interaction.channel.send({embeds:[embed]});
+        return interaction.reply({content:"Terms of Service embed posted.",ephemeral:true});
+      }
       if(cmd==="postlinks"){const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Official Links for Konvert").setThumbnail(IMG.LOGO).setDescription("All official Konvert social media. Follow us for updates, announcements, and giveaways.\n\u200b").addFields({name:"\uD835\uDD4F  Twitter / X",value:"[**@KonvertNow**](https://x.com/konvertnow)",inline:true},{name:"\uD83D\uDCF8  Instagram",value:"[**@KonvertNow**](https://www.instagram.com/konvertnow/)",inline:true},{name:"\u26A0\uFE0F  Stay Safe",value:"Only interact with accounts listed here. Any other account claiming to be Konvert is an impersonator.",inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert  \u2022  Official Links  \u2022  Follow us for updates"});await interaction.channel.send({embeds:[embed]});return interaction.reply({content:"Official links embed posted.",ephemeral:true});}
 
       if(cmd==="adjuststats"){
@@ -1108,6 +1154,26 @@ client.on(Events.InteractionCreate,async interaction=>{
         const sendStr=direction==="send"?`**${fmtUSD(amount)}** via **${m.label}**`:`**${coinRaw}** worth **${fmtUSD(amount)}**`;
         const receiveStr=coinLine||(direction==="send"?`~${fmtUSD(receive)} worth of ${coinRaw}`:`${fmtUSD(receive)} via ${m.label}`);
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  Trade Estimate",iconURL:IMG.LOGO}).setTitle(`${m.label}  \u2194  ${coinRaw}  \u2014  Estimate`).setThumbnail(COIN_LOGO[coinRaw]||IMG.LOGO).setDescription(`Live quote for your proposed trade. Open a ticket to proceed.\n\u200b`).addFields({name:"\uD83D\uDCE4  You Send",value:sendStr,inline:true},{name:"\uD83D\uDCE5  You Receive",value:receiveStr,inline:true},{name:"\u200b",value:"\u200b",inline:true},{name:"\uD83D\uDCB8  Fee",value:`**${rate}%**${vip?" \u26A1 VIP":""} \u2014 ${fmtUSD(fee)}`,inline:true},{name:`\uD83D\uDCC8  ${coinRaw} Price`,value:coinPrice?`**${fmtUSD(coinPrice)}**`:"Unavailable",inline:true},{name:`${tier.emoji}  Your Tier`,value:`**${tier.label}**`,inline:true}).setImage(IMG.BANNER).setFooter({text:"Estimate only  \u00b7  Final rate confirmed in your ticket  \u00b7  Konvert Exchange"}).setTimestamp()]});
+      }
+
+      if(cmd==="setfeemode"){
+        const mode=interaction.options.getString("mode");
+        state.feeMode=mode;
+        const isReduced=mode==="reduced";
+        return interaction.reply({embeds:[new EmbedBuilder()
+          .setColor(isReduced?0x22c55e:0x7C4DFF)
+          .setAuthor({name:"Konvert  ·  Fee Settings",iconURL:IMG.LOGO})
+          .setTitle(isReduced?"Fee Mode: Reduced (5–9%)":"Fee Mode: Standard (5–10%)")
+          .setDescription(isReduced
+            ?"Fee tiers switched to **5–9%** across all transactions. Applies immediately to all new tickets.\n\u200b"
+            :"Fee tiers restored to **5–10%** (standard). Applies immediately to all new tickets.\n\u200b")
+          .addFields(
+            {name:"Fiat \u2192 Crypto",value:isReduced?"9% \u2192 8% \u2192 7% \u2192 6% \u2192 5%":"10% \u2192 9% \u2192 8% \u2192 7% \u2192 6%",inline:true},
+            {name:"Crypto \u2192 Fiat",value:"9% \u2192 8% \u2192 7% \u2192 6% \u2192 5%",inline:true},
+            {name:"Min Fee",value:"**$5** on all trades",inline:true},
+          )
+          .setFooter({text:`Set by ${interaction.user.tag}  ·  Konvert Exchange`})
+          .setTimestamp()],ephemeral:true});
       }
 
       if(cmd==="testbackup"){
