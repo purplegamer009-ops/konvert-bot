@@ -75,31 +75,26 @@ async function applyTierRole(guild,userId,volume){
   try{
     const member=await guild.members.fetch(userId).catch(()=>null);if(!member)return;
     const tier=getTier(volume);
-    // Detect if this is a new tier (member doesn't have it yet)
     const isNewTier=tier.role&&!member.roles.cache.has(tier.role);
-    // Remove all old tier roles
     for(const t of TIERS){if(t.role&&member.roles.cache.has(t.role)&&t.role!==tier.role)await member.roles.remove(t.role).catch(()=>{});}
-    // Add correct tier role
     if(tier.role)await member.roles.add(tier.role).catch(()=>{});
-    // Milestone DM if this is a newly achieved tier
     if(isNewTier&&tier.min>0){
       const nextTier=getNextTier(volume);
-      const vipNote=isVipVolume(volume)?"\n\n⚡ **VIP Perk Unlocked:** You now receive a **0.75% fee discount** on all future trades automatically.":"";
+      const vipNote=isVipVolume(volume)?"\n\n\u26A1 **VIP Perk Unlocked:** You now receive a **0.75% fee discount** on all future trades automatically.":"";
       try{
         await member.user.send({embeds:[new EmbedBuilder()
           .setColor(tier.min>=7000?0xFFD700:0x7C4DFF)
-          .setAuthor({name:"Konvert Exchange  ·  Tier Up",iconURL:"https://i.imgur.com/cQyBq33.png"})
+          .setAuthor({name:"Konvert Exchange  \u00b7  Tier Up",iconURL:"https://i.imgur.com/cQyBq33.png"})
           .setTitle(`${tier.emoji}  New Tier Unlocked`)
           .setThumbnail(member.user.displayAvatarURL({size:256}))
-          .setDescription(`You've reached **${tier.label}** on Konvert Exchange.${vipNote}
-​`)
+          .setDescription(`You've reached **${tier.label}** on Konvert Exchange.${vipNote}\n\u200b`)
           .addFields(
             {name:"Your Tier",value:`${tier.emoji} **${tier.label}**`,inline:true},
             {name:"Total Volume",value:`**${volume.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}**`,inline:true},
-            {name:nextTier?"Next Tier":"Max Tier",value:nextTier?`${nextTier.emoji} **${nextTier.label}** — ${(nextTier.min-volume).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} away`:"You've reached the top. Respect.",inline:false},
+            {name:nextTier?"Next Tier":"Max Tier",value:nextTier?`${nextTier.emoji} **${nextTier.label}** \u2014 ${(nextTier.min-volume).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} away`:"You've reached the top. Respect.",inline:false},
           )
           .setImage("https://i.imgur.com/MfyoLHC.png")
-          .setFooter({text:"Konvert Exchange  ·  Thank you for your continued trust"})
+          .setFooter({text:"Konvert Exchange  \u00b7  Thank you for your continued trust"})
           .setTimestamp()]});
       }catch{}
     }
@@ -153,37 +148,22 @@ const save=(k,d)=>{
   }catch(e){
     console.error(`[save ERROR] ${k}: ${e.message}`);
   }
-  if(k==="tickets"&&process.env.BACKUP_CHANNEL_ID){
-    _backupToDiscord(d).catch(()=>{});
-  }
-  if(k==="referrals"&&process.env.BACKUP_CHANNEL_ID){
-    _backupReferralsToDiscord(d).catch(()=>{});
-  }
+  if(k==="tickets"&&process.env.BACKUP_CHANNEL_ID){_backupToDiscord(d).catch(()=>{});}
+  if(k==="referrals"&&process.env.BACKUP_CHANNEL_ID){_backupReferralsToDiscord(d).catch(()=>{});}
 };
 
 async function _backupToDiscord(data){
   if(!client.isReady()){console.log("[backup] skipped - client not ready");return;}
   if(!process.env.BACKUP_CHANNEL_ID){console.log("[backup] skipped - no BACKUP_CHANNEL_ID");return;}
   try{
-    const ch=await client.channels.fetch(process.env.BACKUP_CHANNEL_ID).catch(e=>{
-      console.error("[backup] CANNOT FETCH CHANNEL:",process.env.BACKUP_CHANNEL_ID,"error:",e.message);
-      return null;
-    });
+    const ch=await client.channels.fetch(process.env.BACKUP_CHANNEL_ID).catch(e=>{console.error("[backup] CANNOT FETCH CHANNEL:",process.env.BACKUP_CHANNEL_ID,"error:",e.message);return null;});
     if(!ch){return;}
     const json=JSON.stringify(data,null,2);
     const buf=Buffer.from(json,"utf8");
-    try{
-      const msgs=await ch.messages.fetch({limit:10});
-      for(const m of msgs.values()){if(m.author?.id===client.user.id&&m.attachments.find(a=>a.name==="konvert_tickets.json"))await m.delete().catch(()=>{});}
-    }catch{}
-    await ch.send({
-      content:`**Backup** \`${new Date().toISOString()}\` — ${Object.keys(data).length} entries`,
-      files:[{attachment:buf,name:"konvert_tickets.json"}]
-    });
+    try{const msgs=await ch.messages.fetch({limit:10});for(const m of msgs.values()){if(m.author?.id===client.user.id&&m.attachments.find(a=>a.name==="konvert_tickets.json"))await m.delete().catch(()=>{});}}catch{}
+    await ch.send({content:`**Backup** \`${new Date().toISOString()}\` — ${Object.keys(data).length} entries`,files:[{attachment:buf,name:"konvert_tickets.json"}]});
     console.log(`[backup] SUCCESS — ${Object.keys(data).length} tickets`);
-  }catch(e){
-    console.error("[backup] FAILED:",e.message,"\nStack:",e.stack?.split("\n")[1]);
-  }
+  }catch(e){console.error("[backup] FAILED:",e.message);}
 }
 
 async function _backupReferralsToDiscord(data){
@@ -194,14 +174,8 @@ async function _backupReferralsToDiscord(data){
     if(!ch)return;
     const json=JSON.stringify(data,null,2);
     const buf=Buffer.from(json,"utf8");
-    try{
-      const msgs=await ch.messages.fetch({limit:20});
-      for(const m of msgs.values()){if(m.author?.id===client.user.id&&m.attachments.find(a=>a.name==="konvert_referrals.json"))await m.delete().catch(()=>{});}
-    }catch{}
-    await ch.send({
-      content:`**Referral Backup** \`${new Date().toISOString()}\``,
-      files:[{attachment:buf,name:"konvert_referrals.json"}]
-    });
+    try{const msgs=await ch.messages.fetch({limit:20});for(const m of msgs.values()){if(m.author?.id===client.user.id&&m.attachments.find(a=>a.name==="konvert_referrals.json"))await m.delete().catch(()=>{});}}catch{}
+    await ch.send({content:`**Referral Backup** \`${new Date().toISOString()}\``,files:[{attachment:buf,name:"konvert_referrals.json"}]});
   }catch(e){console.error("[referral backup] FAILED:",e.message);}
 }
 
@@ -215,115 +189,61 @@ async function restoreFromDiscord(){
     const msgs=await ch.messages.fetch({limit:20});
     for(const msg of msgs.values()){
       if(msg.author.id===client.user?.id&&msg.attachments.size>0){
-        // Restore tickets
         const ticketAtt=msg.attachments.find(a=>a.name==="konvert_tickets.json");
-        if(ticketAtt){
-          const res=await fetch(ticketAtt.url,{signal:AbortSignal.timeout(10000)});
-          if(res.ok){
-            const data=await res.json();
-            _mem.tickets=data;
-            fs.writeFileSync(DB.tickets,JSON.stringify(data,null,2));
-            console.log(`[restore] SUCCESS: restored ${Object.keys(data).length} tickets from Discord backup`);
-          }
-        }
-        // Restore referrals
+        if(ticketAtt){const res=await fetch(ticketAtt.url,{signal:AbortSignal.timeout(10000)});if(res.ok){const data=await res.json();_mem.tickets=data;fs.writeFileSync(DB.tickets,JSON.stringify(data,null,2));console.log(`[restore] SUCCESS: restored ${Object.keys(data).length} tickets`);}}
         const refAtt=msg.attachments.find(a=>a.name==="konvert_referrals.json");
-        if(refAtt){
-          const res2=await fetch(refAtt.url,{signal:AbortSignal.timeout(10000)});
-          if(res2.ok){
-            const data2=await res2.json();
-            _mem.referrals=data2;
-            fs.writeFileSync(DB.referrals,JSON.stringify(data2,null,2));
-            console.log(`[restore] SUCCESS: restored referrals from Discord backup`);
-          }
-        }
+        if(refAtt){const res2=await fetch(refAtt.url,{signal:AbortSignal.timeout(10000)});if(res2.ok){const data2=await res2.json();_mem.referrals=data2;fs.writeFileSync(DB.referrals,JSON.stringify(data2,null,2));console.log(`[restore] SUCCESS: restored referrals`);}}
       }
     }
     console.log("[restore] scan complete");
   }catch(e){console.error("[restore error]",e.message);}
 }
 
-// ── REFERRAL SYSTEM ─────────────────────────────────────────────────────────
-// Storage structure:
-// _mem.referrals = {
-//   invites:   { "inviteCode": "referrerId" },
-//   referred:  { "newUserId":  "referrerId" },
-//   points:    { "referrerId": { balance: 0, paid: 0, history: [], pendingPayout: false } },
-//   inviteCodes: { "referrerId": { code: "...", expiresAt: timestamp, uses: 0 } }
-// }
-
 function getReferrals(){
   const r=Object.keys(_mem.referrals||{}).length>0?_mem.referrals:load("referrals");
-  if(!r.invites)r.invites={};
-  if(!r.referred)r.referred={};
-  if(!r.points)r.points={};
-  if(!r.inviteCodes)r.inviteCodes={};
+  if(!r.invites)r.invites={};if(!r.referred)r.referred={};if(!r.points)r.points={};if(!r.inviteCodes)r.inviteCodes={};
   return r;
 }
-function saveReferrals(data){
-  _mem.referrals=data;
-  save("referrals",data);
-}
+function saveReferrals(data){_mem.referrals=data;save("referrals",data);}
 
-// Points: 5 pts per $100 exchanged by referred user. 10 pts = $1. Min withdrawal: 50 pts ($5)
-const POINTS_PER_100=5;
-const POINTS_PER_DOLLAR=10;
-const MIN_WITHDRAW_POINTS=50;
+const POINTS_PER_100=5,POINTS_PER_DOLLAR=10,MIN_WITHDRAW_POINTS=50;
+function calcReferralPoints(amountUSD){return Math.floor((amountUSD/100)*POINTS_PER_100);}
+function pointsToDollars(pts){return (pts/POINTS_PER_DOLLAR).toFixed(2);}
 
-function calcReferralPoints(amountUSD){
-  return Math.floor((amountUSD/100)*POINTS_PER_100);
-}
-function pointsToDollars(pts){
-  return (pts/POINTS_PER_DOLLAR).toFixed(2);
-}
-
-async function handleReferralTrade(guild, clientUserId, amountUSD){
+async function handleReferralTrade(guild,clientUserId,amountUSD){
   try{
     const ref=getReferrals();
     const referrerId=ref.referred[clientUserId];
     if(!referrerId||referrerId===clientUserId)return;
     const _refBL=ref.blacklist||{};
-    if(_refBL[referrerId]||_refBL[clientUserId])return; // blacklisted
+    if(_refBL[referrerId]||_refBL[clientUserId])return;
     const pts=calcReferralPoints(amountUSD);
     if(pts<=0)return;
     if(!ref.points[referrerId])ref.points[referrerId]={balance:0,paid:0,history:[],pendingPayout:false};
     ref.points[referrerId].balance+=pts;
-    ref.points[referrerId].history.push({
-      type:"earned",
-      referredUserId:clientUserId,
-      amountUSD,
-      points:pts,
-      at:Date.now(),
-    });
+    ref.points[referrerId].history.push({type:"earned",referredUserId:clientUserId,amountUSD,points:pts,at:Date.now()});
     saveReferrals(ref);
-    // DM the referrer
     try{
       const referrer=await client.users.fetch(referrerId);
       const referred=await client.users.fetch(clientUserId).catch(()=>null);
       const dollarVal=pointsToDollars(pts);
       const newBal=ref.points[referrerId].balance;
-      const embed=new EmbedBuilder()
-        .setColor(0x7C4DFF)
-        .setAuthor({name:"Konvert  ·  Referral Program",iconURL:PTS_IMG})
-        .setTitle("Points Earned")
-        .setThumbnail(PTS_IMG)
+      await referrer.send({embeds:[new EmbedBuilder()
+        .setColor(0x7C4DFF).setAuthor({name:"Konvert  \u00b7  Referral Program",iconURL:PTS_IMG})
+        .setTitle("Points Earned").setThumbnail(PTS_IMG)
         .setDescription(`<@${referrerId}>, a trade just completed through your referral link.\n\u200b`)
         .addFields(
           {name:"Referred User",value:referred?`<@${referred.id}>`:"A referred client",inline:true},
           {name:"Trade Amount",value:`**${fmtUSD(amountUSD)}**`,inline:true},
           {name:"Points Earned",value:`**+${pts} pts  (+${dollarVal})**`,inline:true},
-          {name:"Your Balance",value:`**${newBal} pts**  ·  **${pointsToDollars(newBal)}**`,inline:true},
-          {name:"Status",value:newBal>=MIN_WITHDRAW_POINTS?`✅ **Ready to withdraw** — open a ticket in <#${SUPPORT_CH}>`:`${MIN_WITHDRAW_POINTS-newBal} more pts until withdrawal`,inline:true},
+          {name:"Your Balance",value:`**${newBal} pts**  \u00b7  **${pointsToDollars(newBal)}**`,inline:true},
+          {name:"Status",value:newBal>=MIN_WITHDRAW_POINTS?`\u2705 **Ready to withdraw** \u2014 open a ticket in <#${SUPPORT_CH}>`:`${MIN_WITHDRAW_POINTS-newBal} more pts until withdrawal`,inline:true},
         )
-        .setImage(IMG.BANNER)
-        .setFooter({text:"Konvert Referral Program  ·  10 pts = $1"})
-        .setTimestamp();
-      await referrer.send({embeds:[embed]});
+        .setImage(IMG.BANNER).setFooter({text:"Konvert Referral Program  \u00b7  10 pts = $1"}).setTimestamp()]});
     }catch{}
   }catch(e){console.error("[referral trade error]",e.message);}
 }
 
-// ── UTILS ────────────────────────────────────────────────────────────────────
 const fmtUSD=n=>{if(n>=1)return`$${n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`;if(n>=0.01)return`$${n.toFixed(4)}`;return`$${n.toFixed(8)}`;};
 function calcFee(usd,dir,isVip=false){const base=dir==="receive"?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(usd<150?10:usd<350?9:usd<600?8:usd<800?7:6);const r=isVip?Math.max(base-0.75,1):base;return Math.max(usd*r/100,CONFIG.MIN_FEE);}
 function feeRate(usd,dir,isVip=false){const base=dir==="receive"?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(usd<150?10:usd<350?9:usd<600?8:usd<800?7:6);return isVip?Math.max(base-0.75,1):base;}
@@ -331,11 +251,9 @@ function isVipVolume(vol){return vol>=7000;}
 const base=title=>new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(title).setTimestamp();
 function log(guild,msg){if(!CONFIG.LOG_CHANNEL||!guild)return;const ch=guild.channels.cache.get(CONFIG.LOG_CHANNEL);if(ch)ch.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setDescription("```"+msg+"```").setTimestamp()]}).catch(()=>{});}
 
-// ── PRICE ENGINE ─────────────────────────────────────────────────────────────
 const BINANCE={BTC:"BTCUSDT",ETH:"ETHUSDT",SOL:"SOLUSDT",LTC:"LTCUSDT",XRP:"XRPUSDT",BNB:"BNBUSDT",ADA:"ADAUSDT",DOGE:"DOGEUSDT",MATIC:"MATICUSDT",AVAX:"AVAXUSDT",DOT:"DOTUSDT",LINK:"LINKUSDT",TRX:"TRXUSDT",UNI:"UNIUSDT",ATOM:"ATOMUSDT",NEAR:"NEARUSDT",SHIB:"SHIBUSDT"};
 const STABLE=new Set(["USDT","USDC"]);
-const _priceCache={};
-const _inFlight={};
+const _priceCache={},_inFlight={};
 
 async function getPrice(coin){
   if(STABLE.has(coin))return 1;
@@ -347,23 +265,8 @@ async function getPrice(coin){
 }
 async function _fetchPrice(coin){
   const geckoId=GECKO[coin];
-  if(BINANCE[coin]){
-    try{
-      const r=await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${BINANCE[coin]}`,{signal:AbortSignal.timeout(5000)});
-      if(r.ok){const d=await r.json();const v=parseFloat(d.price||0);if(v>0){_priceCache[coin]={v,ts:Date.now()};return v;}}
-    }catch{}
-  }
-  if(geckoId){
-    for(let i=0;i<2;i++){
-      try{
-        const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${geckoId}&vs_currencies=usd`,{signal:AbortSignal.timeout(8000)});
-        if(r.status===429){await new Promise(res=>setTimeout(res,2000*(i+1)));continue;}
-        if(!r.ok){await new Promise(res=>setTimeout(res,1000*(i+1)));continue;}
-        const d=await r.json(),v=d[geckoId]?.usd||null;
-        if(v){_priceCache[coin]={v,ts:Date.now()};return v;}
-      }catch{await new Promise(res=>setTimeout(res,1000*(i+1)));}
-    }
-  }
+  if(BINANCE[coin]){try{const r=await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${BINANCE[coin]}`,{signal:AbortSignal.timeout(5000)});if(r.ok){const d=await r.json();const v=parseFloat(d.price||0);if(v>0){_priceCache[coin]={v,ts:Date.now()};return v;}}}catch{}}
+  if(geckoId){for(let i=0;i<2;i++){try{const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${geckoId}&vs_currencies=usd`,{signal:AbortSignal.timeout(8000)});if(r.status===429){await new Promise(res=>setTimeout(res,2000*(i+1)));continue;}if(!r.ok){await new Promise(res=>setTimeout(res,1000*(i+1)));continue;}const d=await r.json(),v=d[geckoId]?.usd||null;if(v){_priceCache[coin]={v,ts:Date.now()};return v;}}catch{await new Promise(res=>setTimeout(res,1000*(i+1)));}} }
   if(_priceCache[coin])return _priceCache[coin].v;
   return null;
 }
@@ -373,109 +276,37 @@ async function fetchFullPrice(coin){
   const cKey=coin+"_full";
   if(_priceCache[cKey]&&Date.now()-_priceCache[cKey].ts<300000)return _priceCache[cKey].v;
   let d=null;
-  if(BINANCE[coin]){
-    try{
-      const r=await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${BINANCE[coin]}`,{signal:AbortSignal.timeout(5000)});
-      if(r.ok){
-        const j=await r.json();
-        const usd=parseFloat(j.lastPrice||0);
-        if(usd>0){
-          d={usd,cad:usd*1.37,eur:usd*0.93,usd_24h_change:parseFloat(j.priceChangePercent||0),usd_market_cap:0,usd_24h_vol:parseFloat(j.quoteVolume||0)};
-          _priceCache[cKey]={v:d,ts:Date.now()};
-          _priceCache[coin]={v:usd,ts:Date.now()};
-          return d;
-        }
-      }
-    }catch(e){console.log(`[price] Binance failed for ${coin}: ${e.message}`);}
-  }
-  if(!d&&GECKO[coin]){
-    const id=GECKO[coin];
-    for(let i=0;i<3;i++){
-      try{
-        const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd,cad,eur&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`,{signal:AbortSignal.timeout(10000)});
-        if(r.status===429){await new Promise(res=>setTimeout(res,3000*(i+1)));continue;}
-        if(!r.ok){await new Promise(res=>setTimeout(res,1000*(i+1)));continue;}
-        const j=await r.json();
-        if(j[id]?.usd){
-          d=j[id];
-          _priceCache[cKey]={v:d,ts:Date.now()};
-          _priceCache[coin]={v:d.usd,ts:Date.now()};
-          return d;
-        }
-      }catch{await new Promise(res=>setTimeout(res,1000*(i+1)));}
-    }
-  }
-  if(!d){
-    const KRAKEN={BTC:"XBTUSD",ETH:"ETHUSD",LTC:"LTCUSD",XRP:"XRPUSD",ADA:"ADAUSD",SOL:"SOLUSD",DOGE:"XDGUSD",DOT:"DOTUSD",LINK:"LINKUSD",ATOM:"ATOMUSD"};
-    if(KRAKEN[coin]){
-      try{
-        const r=await fetch(`https://api.kraken.com/0/public/Ticker?pair=${KRAKEN[coin]}`,{signal:AbortSignal.timeout(8000)});
-        if(r.ok){
-          const j=await r.json();
-          const pair=Object.values(j.result||{})[0];
-          const usd=parseFloat(pair?.c?.[0]||0);
-          if(usd>0){
-            d={usd,cad:usd*1.37,eur:usd*0.93,usd_24h_change:0,usd_market_cap:0,usd_24h_vol:0};
-            _priceCache[cKey]={v:d,ts:Date.now()};
-            _priceCache[coin]={v:usd,ts:Date.now()};
-            return d;
-          }
-        }
-      }catch(e){console.log(`[price] Kraken failed for ${coin}: ${e.message}`);}
-    }
-  }
-  if(_priceCache[cKey]){
-    console.log(`[price] returning stale cache for ${coin}`);
-    return _priceCache[cKey].v;
-  }
-  console.log(`[price] ALL sources failed for ${coin}`);
+  if(BINANCE[coin]){try{const r=await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${BINANCE[coin]}`,{signal:AbortSignal.timeout(5000)});if(r.ok){const j=await r.json();const usd=parseFloat(j.lastPrice||0);if(usd>0){d={usd,cad:usd*1.37,eur:usd*0.93,usd_24h_change:parseFloat(j.priceChangePercent||0),usd_market_cap:0,usd_24h_vol:parseFloat(j.quoteVolume||0)};_priceCache[cKey]={v:d,ts:Date.now()};_priceCache[coin]={v:usd,ts:Date.now()};return d;}}}catch(e){console.log(`[price] Binance failed for ${coin}: ${e.message}`);}}
+  if(!d&&GECKO[coin]){const id=GECKO[coin];for(let i=0;i<3;i++){try{const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd,cad,eur&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`,{signal:AbortSignal.timeout(10000)});if(r.status===429){await new Promise(res=>setTimeout(res,3000*(i+1)));continue;}if(!r.ok){await new Promise(res=>setTimeout(res,1000*(i+1)));continue;}const j=await r.json();if(j[id]?.usd){d=j[id];_priceCache[cKey]={v:d,ts:Date.now()};_priceCache[coin]={v:d.usd,ts:Date.now()};return d;}}catch{await new Promise(res=>setTimeout(res,1000*(i+1)));}} }
+  if(!d){const KRAKEN={BTC:"XBTUSD",ETH:"ETHUSD",LTC:"LTCUSD",XRP:"XRPUSD",ADA:"ADAUSD",SOL:"SOLUSD",DOGE:"XDGUSD",DOT:"DOTUSD",LINK:"LINKUSD",ATOM:"ATOMUSD"};if(KRAKEN[coin]){try{const r=await fetch(`https://api.kraken.com/0/public/Ticker?pair=${KRAKEN[coin]}`,{signal:AbortSignal.timeout(8000)});if(r.ok){const j=await r.json();const pair=Object.values(j.result||{})[0];const usd=parseFloat(pair?.c?.[0]||0);if(usd>0){d={usd,cad:usd*1.37,eur:usd*0.93,usd_24h_change:0,usd_market_cap:0,usd_24h_vol:0};_priceCache[cKey]={v:d,ts:Date.now()};_priceCache[coin]={v:usd,ts:Date.now()};return d;}}}catch(e){console.log(`[price] Kraken failed for ${coin}: ${e.message}`);}}}
+  if(_priceCache[cKey]){console.log(`[price] returning stale cache for ${coin}`);return _priceCache[cKey].v;}
   return null;
 }
 
 const client=new Client({intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent,GatewayIntentBits.GuildMembers,GatewayIntentBits.GuildInvites],partials:[Partials.Channel]});
 const state={pending:{},mineGames:{},cooldowns:{},alerts:[],passes:{},c2cSelections:{},feedChannel:null,feedEnabled:false,volumeAdj:{}};
 
-// ── LEADERBOARD HELPER (FIXED) ────────────────────────────────────────────────
-// Sums ALL vouched/completed entries per user including method:"adjustment" (which can be negative)
-// After summing, filters out users with net total <= 0
 function buildLeaderboardVolumes(){
   const DONE_STATUS=["vouched","completed"];
-  const allEntries=Object.values(
-    _mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets")
-  );
-  // Include ALL entries with done status — positive trades AND negative adjustments
+  const allEntries=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
   const relevant=allEntries.filter(t=>DONE_STATUS.includes(t.status)&&typeof t.amountUSD==="number"||typeof t.amountUSD==="string"&&!isNaN(parseFloat(t.amountUSD)));
   const byUser={};
-  for(const t of relevant){
-    if(!DONE_STATUS.includes(t.status))continue;
-    const amt=parseFloat(t.amountUSD)||0;
-    if(!byUser[t.userId])byUser[t.userId]=0;
-    byUser[t.userId]+=amt; // negative adjustments subtract naturally here
-  }
-  // Clamp each user to 0 minimum, then filter out zeros
+  for(const t of relevant){if(!DONE_STATUS.includes(t.status))continue;const amt=parseFloat(t.amountUSD)||0;if(!byUser[t.userId])byUser[t.userId]=0;byUser[t.userId]+=amt;}
   const result={};
-  for(const [uid,vol] of Object.entries(byUser)){
-    const clamped=Math.max(0,vol);
-    if(clamped>0)result[uid]=clamped;
-  }
+  for(const [uid,vol] of Object.entries(byUser)){const clamped=Math.max(0,vol);if(clamped>0)result[uid]=clamped;}
   return result;
 }
 
-// User volume for /stats — same logic, single user
 function getUserVolume(userId){
   const DONE_STATUS=["vouched","completed"];
-  const allEntries=Object.values(
-    _mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets")
-  );
-  const total=allEntries
-    .filter(t=>t.userId===userId&&DONE_STATUS.includes(t.status))
-    .reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
+  const allEntries=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
+  const total=allEntries.filter(t=>t.userId===userId&&DONE_STATUS.includes(t.status)).reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
   return Math.max(0,total);
 }
 
-// YouTube
 const YT_TITLES=["You need to hear this...","Remember This...","Don't forget why you started","Watch this when you feel like quitting","Your prime is not over","This hit different at 3am...","Why NOT you?","Let them talk. Keep working","Be the 1%","You didn't break","Maturing is realizing this...","How badly do you want it?","Trust the process","Nobody cares. Work harder.","It sucks. Do it anyway.","We are all being tested","Look yourself in the mirror","I solemnly swear...","Crazy Motivational Video","To win, you have to lose first","Stop waiting. Start now","Your future self is watching","Get up. Right now.","You were built for this","Don't die before you live","Remember June...","Okay. Get up.","Fail Fast. Win Faster.","The sun rises. So do you","How badly do you want it?"];
-const YT_DESCRIPTIONS=["Subscribe & never miss a workout again \u274C\n\n\uD83D\uDD14 @GymMotivez for daily motivation\n\uD83D\uDCAA Like & share if this fired you up\n\uD83D\uDCAC Comment your workout below\n\n#Shorts #GymMotivation #Fitness #Workout #Motivation #GymLife #NoExcuses #BeastMode","Subscribe & never miss a drop \uD83D\uDD25\n\n\uD83D\uDD14 Follow @GymMotivez\n\uD83D\uDCAA Drop a \uD83D\uDCAA if you needed this today\n\uD83D\uDCAC What are you working on?\n\n#Shorts #GymMotivation #Grind #Workout #FitnessMotivation #MindsetShift #NoExcuses","Subscribe & never miss a workout again \uD83D\uDCAA\n\n\uD83D\uDD14 @GymMotivez \u2014 daily fire\n\u2764\uFE0F Save this for when you need it\n\uD83D\uDCAC What's your why?\n\n#Shorts #Motivation #GymLife #MindsetMatters #WorkoutMotivation #Fitness #Discipline","Subscribe & never lose this mindset \uD83D\uDD25\n\n\uD83D\uDD14 @GymMotivez every day\n\uD83D\uDCAA Tag someone who needs this\n\uD83D\uDCAC Reply with your goal\n\n#Shorts #GymMotivation #NoExcuses #Discipline #Fitness #Grind #DailyMotivation"];
+const YT_DESCRIPTIONS=["Subscribe & never miss a workout again \u274C\n\n\uD83D\uDD14 @GymMotivez for daily motivation\n\uD83D\uDCAA Like & share if this fired you up\n\uD83D\uDCAC Comment your workout below\n\n#Shorts #GymMotivation #Fitness #Workout #Motivation #GymLife #NoExcuses #BeastMode","Subscribe & never miss a drop \uD83D\uDD25\n\n\uD83D\uDD14 Follow @GymMotivez\n\uD83D\uDCAA Drop a \uD83D\uDCAA if you needed this today\n\uD83D\uDCAC What are you working on?\n\n#Shorts #GymMotivation #Grind #Workout #FitnessMotivation #MindsetShift #NoExcuses"];
+
 
 const COMMANDS=[
   new SlashCommandBuilder().setName("rates").setDescription("View live crypto rates"),
@@ -497,7 +328,6 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("remind").setDescription("Set a personal reminder").addIntegerOption(o=>o.setName("minutes").setDescription("Minutes from now").setRequired(true)).addStringOption(o=>o.setName("message").setDescription("What to remind you about").setRequired(true)),
   new SlashCommandBuilder().setName("vouch").setDescription("Manually record a completed trade").addUserOption(o=>o.setName("client").setDescription("The client").setRequired(true)).addUserOption(o=>o.setName("exchanger").setDescription("The exchanger").setRequired(true)).addStringOption(o=>o.setName("message").setDescription("Review message").setRequired(true)).addStringOption(o=>o.setName("method").setDescription("Payment method").setRequired(true)).addNumberOption(o=>o.setName("amount").setDescription("Trade amount USD").setRequired(true)).addIntegerOption(o=>o.setName("rating").setDescription("Rating 1-5").setMinValue(1).setMaxValue(5).setRequired(false)),
   new SlashCommandBuilder().setName("uptime").setDescription("Check how long the bot has been running"),
-  // Referral commands
   new SlashCommandBuilder().setName("referral").setDescription("Generate your unique referral invite link and view your points balance"),
   new SlashCommandBuilder().setName("mypoints").setDescription("Check your referral points balance, history and payout status"),
   new SlashCommandBuilder().setName("referraltop").setDescription("Top referrers leaderboard"),
@@ -507,7 +337,6 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("adjustpoints").setDescription("[Owner] Add or subtract referral points from a user").addUserOption(o=>o.setName("user").setDescription("User").setRequired(true)).addNumberOption(o=>o.setName("amount").setDescription("Points to add/subtract (use negative to subtract)").setRequired(true)).addStringOption(o=>o.setName("reason").setDescription("Reason").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("blacklistref").setDescription("[Owner] Blacklist a user from the referral program").addUserOption(o=>o.setName("user").setDescription("User").setRequired(true)).addStringOption(o=>o.setName("reason").setDescription("Reason").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("unblacklistref").setDescription("[Owner] Remove referral blacklist from a user").addUserOption(o=>o.setName("user").setDescription("User").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  // Owner commands
   new SlashCommandBuilder().setName("postexchange").setDescription("[Owner] Post the exchange embed").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("postsupport").setDescription("[Owner] Post the support embed").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("postmm").setDescription("[Owner] Post the MM info embed").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
@@ -536,8 +365,9 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("clearleaderboard").setDescription("[Owner] Wipe all trade data from leaderboard and stats").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("testbackup").setDescription("[Owner] Test Discord backup channel").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("wipestats").setDescription("[Owner] Completely wipe ALL stats and tickets for a single user").addUserOption(o=>o.setName("user").setDescription("User to wipe").setRequired(true)).addStringOption(o=>o.setName("confirm").setDescription('Type "CONFIRM" to proceed').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  new SlashCommandBuilder().setName("dispute").setDescription("Flag an issue with your current trade — locks ticket and alerts staff"),
-  new SlashCommandBuilder().setName("broadcast").setDescription("[Owner] DM all clients who traded in the last X days").addIntegerOption(o=>o.setName("days").setDescription("How many days back to look (default 30)").setMinValue(1).setMaxValue(365).setRequired(false)).addStringOption(o=>o.setName("message").setDescription("Message to send").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("dispute").setDescription("Flag an issue with your current trade \u2014 locks ticket and alerts staff"),
+  // FIXED: message (required) BEFORE days (optional)
+  new SlashCommandBuilder().setName("broadcast").setDescription("[Owner] DM all clients who traded in the last X days").addStringOption(o=>o.setName("message").setDescription("Message to send").setRequired(true)).addIntegerOption(o=>o.setName("days").setDescription("How many days back to look (default 30)").setMinValue(1).setMaxValue(365).setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("mytrades").setDescription("View your personal trade history and stats"),
   new SlashCommandBuilder().setName("estimate").setDescription("Get a full quote for a trade before opening a ticket").addNumberOption(o=>o.setName("amount").setDescription("Amount in USD").setRequired(true)).addStringOption(o=>o.setName("method").setDescription("Payment method (e.g. PayPal, Interac)").setRequired(true)).addStringOption(o=>o.setName("coin").setDescription("Crypto (BTC, ETH, SOL)").setRequired(true)).addStringOption(o=>o.setName("direction").setDescription("Which direction?").setRequired(true).addChoices({name:"Send fiat, receive crypto",value:"send"},{name:"Send crypto, receive fiat",value:"receive"})),
   new SlashCommandBuilder().setName("search").setDescription("[Owner] Search all tickets for a user").addUserOption(o=>o.setName("user").setDescription("User to search").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
@@ -555,11 +385,11 @@ function mainEmbed(){
   return new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Konvert Exchange")
     .setDescription("**Fast. Safe. Simple.**\nExchange any crypto with any major payment method.\nOpen a ticket instantly -- a verified handler will assist you.\n\u200b")
     .addFields(
-      {name:"\uD83D\uDCB8  Fee",     value:"5% - 10%  \u00b7  Tiered by amount\nMin fee $5 on any deal",inline:true},
-      {name:"\u26A1  Speed",         value:"**Usually < 10 min**\nOften faster",                       inline:true},
-      {name:"\uD83E\uDD1D  Support", value:"**24/7 Agents**\nAlways available",                        inline:true},
-      {name:"\uD83D\uDCB3  Methods", value:"PayPal \u00b7 Cash App \u00b7 Zelle \u00b7 Interac \u00b7 Venmo \u00b7 Apple Pay \u00b7 Bank \u00b7 Crypto to Crypto \u00b7 and more",inline:false},
-      {name:"\uD83E\uDE99  Crypto",  value:"BTC \u00b7 ETH \u00b7 SOL \u00b7 LTC \u00b7 USDT \u00b7 USDC \u00b7 XRP \u00b7 BNB \u00b7 and all major coins",inline:false},
+      {name:"\uD83D\uDCB8  Fee",value:"5% - 10%  \u00b7  Tiered by amount\nMin fee $5 on any deal",inline:true},
+      {name:"\u26A1  Speed",value:"**Usually < 10 min**\nOften faster",inline:true},
+      {name:"\uD83E\uDD1D  Support",value:"**24/7 Agents**\nAlways available",inline:true},
+      {name:"\uD83D\uDCB3  Methods",value:"PayPal \u00b7 Cash App \u00b7 Zelle \u00b7 Interac \u00b7 Venmo \u00b7 Apple Pay \u00b7 Bank \u00b7 Crypto to Crypto \u00b7 and more",inline:false},
+      {name:"\uD83E\uDE99  Crypto",value:"BTC \u00b7 ETH \u00b7 SOL \u00b7 LTC \u00b7 USDT \u00b7 USDC \u00b7 XRP \u00b7 BNB \u00b7 and all major coins",inline:false},
     ).setImage(IMG.BANNER).setFooter({text:"Konvert  \u2022  Click Exchange Now to begin"});
 }
 function mainButtons(){
@@ -576,32 +406,19 @@ function step1Embed(){
 }
 function step2Embed(method){
   const m=getMethod(method);
-  if(method==="crypto"){
-    return new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO})
-      .setTitle("Step 2 -- Crypto to Crypto")
-      .setDescription("**Send one coin, receive another.**\nFor example: send SOL, receive BTC.\n\nSelect your direction below.")
-      .setFooter({text:"Step 2 of 3  \u2022  Konvert"});
-  }
-  return new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO})
-    .setTitle(`Step 2 -- ${m.label}`)
-    .setDescription(`**Send Crypto \u2192 Receive ${m.label}**\nYou send crypto. We pay you via ${m.label}.\n\n**Send ${m.label} \u2192 Receive Crypto**\nYou pay via ${m.label}. We send crypto to your wallet.`)
-    .setFooter({text:"Step 2 of 3  \u2022  Konvert"});
+  if(method==="crypto"){return new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Step 2 -- Crypto to Crypto").setDescription("**Send one coin, receive another.**\nFor example: send SOL, receive BTC.\n\nSelect your direction below.").setFooter({text:"Step 2 of 3  \u2022  Konvert"});}
+  return new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(`Step 2 -- ${m.label}`).setDescription(`**Send Crypto \u2192 Receive ${m.label}**\nYou send crypto. We pay you via ${m.label}.\n\n**Send ${m.label} \u2192 Receive Crypto**\nYou pay via ${m.label}. We send crypto to your wallet.`).setFooter({text:"Step 2 of 3  \u2022  Konvert"});
 }
 
-const RATES_CHANNEL_ID=process.env.RATES_CHANNEL_ID||null; // set via env var, blank = disabled
+const RATES_CHANNEL_ID=process.env.RATES_CHANNEL_ID||null;
 
 async function buildRatesEmbed(){
   const ids=COINS.map(c=>GECKO[c]||c.toLowerCase()).join(",");
   let p={};
-  try{
-    const res=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd,cad&include_24hr_change=true`,{signal:AbortSignal.timeout(10000)});
-    if(res.ok)p=await res.json();
-  }catch(e){console.error("buildRatesEmbed:",e.message);}
+  try{const res=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd,cad&include_24hr_change=true`,{signal:AbortSignal.timeout(10000)});if(res.ok)p=await res.json();}catch(e){console.error("buildRatesEmbed:",e.message);}
   const lines=COINS.map(coin=>{
     const geckoId=GECKO[coin]||coin.toLowerCase();
-    let usdNum=p[geckoId]?.usd;
-    let cadNum=p[geckoId]?.cad;
-    let ch=parseFloat(p[geckoId]?.usd_24h_change||0);
+    let usdNum=p[geckoId]?.usd,cadNum=p[geckoId]?.cad,ch=parseFloat(p[geckoId]?.usd_24h_change||0);
     if(!usdNum&&_priceCache[coin]){usdNum=_priceCache[coin].v;cadNum=usdNum*1.37;}
     if(!usdNum)return null;
     const usd=Number(usdNum).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -609,18 +426,10 @@ async function buildRatesEmbed(){
     return `\`${coin.padEnd(5)}\` **$${usd}**  \u00b7  CA$${cad}  \u00b7  ${ch>=0?"\u25B2":"\u25BC"} ${ch.toFixed(2)}%`;
   }).filter(Boolean).join("\n");
   const now=new Date(),next=new Date(now.getTime()+30*60*1000);
-  return new EmbedBuilder()
-    .setColor(CONFIG.COLOR)
-    .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
-    .setTitle("Live Rates").setThumbnail(IMG.LOGO)
+  return new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Live Rates").setThumbnail(IMG.LOGO)
     .setDescription((lines||"Unable to fetch rates right now.")+"\n\u200b")
-    .addFields(
-      {name:"Exchange",value:`Open a ticket in <#${CONFIG.EXCHANGE_CHANNEL}>`,inline:true},
-      {name:"Tip",value:"Type **$BTC**, **$ETH** etc. for live price",inline:true},
-    )
-    .setImage(IMG.BANNER)
-    .setFooter({text:`Updates every 30 min  \u00b7  Next: ${next.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"})}  \u00b7  Konvert Exchange`})
-    .setTimestamp();
+    .addFields({name:"Exchange",value:`Open a ticket in <#${CONFIG.EXCHANGE_CHANNEL}>`,inline:true},{name:"Tip",value:"Type **$BTC**, **$ETH** etc. for live price",inline:true})
+    .setImage(IMG.BANNER).setFooter({text:`Updates every 30 min  \u00b7  Next: ${next.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"})}  \u00b7  Konvert Exchange`}).setTimestamp();
 }
 
 function buildMineGrid(userId,game){
@@ -631,12 +440,7 @@ function buildMineGrid(userId,game){
       const idx=r*5+c,rev=game.revealed.includes(idx);
       const isDiamond=game.diamonds.includes(idx),isBomb=game.bombs.includes(idx);
       let label="?",style=ButtonStyle.Secondary,disabled=false;
-      if(rev||game.over){
-        if(isDiamond){label="\uD83D\uDC8E";style=ButtonStyle.Success;}
-        else if(isBomb){label="\uD83D\uDCA3";style=ButtonStyle.Danger;}
-        else{label="\u00b7";style=ButtonStyle.Secondary;}
-        disabled=true;
-      }
+      if(rev||game.over){if(isDiamond){label="\uD83D\uDC8E";style=ButtonStyle.Success;}else if(isBomb){label="\uD83D\uDCA3";style=ButtonStyle.Danger;}else{label="\u00b7";style=ButtonStyle.Secondary;}disabled=true;}
       row.addComponents(new ButtonBuilder().setCustomId(`mine_cell_${userId}_${idx}`).setLabel(label).setStyle(style).setDisabled(disabled));
     }
     rows.push(row);
@@ -647,13 +451,7 @@ function buildMineGrid(userId,game){
 function buildDealEmbed({clientId,exchangerId,method,amountUSD,direction,coin,message,rating}){
   const stars="\u2605".repeat(Math.min(Math.max(rating||5,1),5));
   const dirStr=direction&&coin&&method?(direction==="send"?`${method} \u2192 ${coin}`:`${coin} \u2192 ${method}`):null;
-  const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO})
-    .setTitle("Deal Complete").setDescription("Trade verified and completed on Konvert Exchange.\n\u200b")
-    .addFields(
-      {name:"Client",value:`<@${clientId}>`,inline:true},
-      {name:"Exchanger",value:`<@${exchangerId}>`,inline:true},
-      {name:"Rating",value:stars,inline:true},
-    );
+  const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Deal Complete").setDescription("Trade verified and completed on Konvert Exchange.\n\u200b").addFields({name:"Client",value:`<@${clientId}>`,inline:true},{name:"Exchanger",value:`<@${exchangerId}>`,inline:true},{name:"Rating",value:stars,inline:true});
   if(method)embed.addFields({name:"Method",value:`**${method}**`,inline:true});
   if(amountUSD)embed.addFields({name:"Amount",value:`**${fmtUSD(amountUSD)}**`,inline:true});
   if(dirStr)embed.addFields({name:"Direction",value:dirStr,inline:true});
@@ -675,45 +473,27 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   const tickets=load("tickets");
   const existing=Object.entries(tickets).find(([,t])=>t.userId===user.id&&t.status==="open");
   if(existing){await interaction.editReply({content:`You already have an open ticket: <#${existing[0]}>`,embeds:[],components:[]});return null;}
-  const _clientVol=getUserVolume(user.id);const _isVip=isVipVolume(_clientVol);
+  const _clientVol=getUserVolume(user.id),_isVip=isVipVolume(_clientVol);
   const feeUSD=calcFee(amountUSD,direction,_isVip),rate=feeRate(amountUSD,direction,_isVip),receiveU=amountUSD-feeUSD;
   let coinAmt=null;
   try{const p=await getPrice(coin);if(p)coinAmt=(receiveU/p).toFixed(6);}catch{}
   const sendLabel=direction==="send"?`${fmtUSD(amountUSD)} via ${m.label}`:`**${coin}** worth ${fmtUSD(amountUSD)}`;
   const receiveLabel=direction==="send"?(coinAmt?`${coinAmt} ${coin}`:`${fmtUSD(receiveU)} worth of ${coin}`):receiveU<5?"To be discussed":`${fmtUSD(receiveU)} via ${m.label}`;
-  const perms=[
-    {id:guild.roles.everyone,deny:[PermissionFlagsBits.ViewChannel]},
-    {id:user.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]},
-  ];
+  const perms=[{id:guild.roles.everyone,deny:[PermissionFlagsBits.ViewChannel]},{id:user.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]}];
   if(CONFIG.STAFF_ROLE)perms.push({id:CONFIG.STAFF_ROLE,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]});
   const mRoleId=CONFIG.ROLES[m.value];
   if(mRoleId&&mRoleId!==CONFIG.STAFF_ROLE)perms.push({id:mRoleId,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]});
   for(const oid of CONFIG.OWNER_IDS)perms.push({id:oid,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]});
   let ch;
-  try{
-    ch=await guild.channels.create({
-      name:`${m.value}-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,4)}`,
-      type:ChannelType.GuildText,parent:CONFIG.TICKET_CATEGORY||null,permissionOverwrites:perms,
-    });
-  }catch(err){await interaction.editReply({content:`Failed to create ticket: ${err.message}`,embeds:[],components:[]});return null;}
-  const ticketEmbed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO})
-    .setTitle(`${m.label} Exchange`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
+  try{ch=await guild.channels.create({name:`${m.value}-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,4)}`,type:ChannelType.GuildText,parent:CONFIG.TICKET_CATEGORY||null,permissionOverwrites:perms});}
+  catch(err){await interaction.editReply({content:`Failed to create ticket: ${err.message}`,embeds:[],components:[]});return null;}
+  const ticketEmbed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(`${m.label} Exchange`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
     .setDescription(`**Welcome, <@${user.id}>**\n\nYour ticket is open. A **${m.label}** handler has been notified.\n\u200b`)
-    .addFields(
-      {name:"__Sending__",  value:`**${sendLabel}**`,                   inline:true},
-      {name:"__Receiving__",value:`**${receiveLabel}**`,                inline:true},
-      {name:"__Fee__",      value:`**${rate}%**  --  ${fmtUSD(feeUSD)}${_isVip?" ⚡ VIP rate":""}`,inline:true},
-      {name:direction==="send"?"__Your Receiving Wallet__":`__Your ${m.label} Details__`,value:`\`${walletInfo}\``,inline:false},
-    );
+    .addFields({name:"__Sending__",value:`**${sendLabel}**`,inline:true},{name:"__Receiving__",value:`**${receiveLabel}**`,inline:true},{name:"__Fee__",value:`**${rate}%**  --  ${fmtUSD(feeUSD)}${_isVip?" \u26A1 VIP rate":""}`,inline:true},{name:direction==="send"?"__Your Receiving Wallet__":`__Your ${m.label} Details__`,value:`\`${walletInfo}\``,inline:false});
   if(notes)ticketEmbed.addFields({name:"Notes",value:notes,inline:false});
   ticketEmbed.setImage(IMG.TICKET).setTimestamp().setFooter({text:"Konvert  \u2022  All communication stays in this ticket"});
-  const rulesEmbed=new EmbedBuilder().setColor(CONFIG.COLOR).setTitle("Before You Proceed")
-    .setDescription("**Middleman required on all trades.**\nAgree on a trusted MM with your exchanger before sending anything.\n\n**Do not go first** unless **@jswaps** or **@3uce** explicitly says so in this ticket.\n\n__Staff will **never** DM you first.__ Anyone claiming to be Konvert in DMs is an impersonator.\nAll communication stays **in this ticket only.**")
-    .setImage(IMG.RULES).setFooter({text:"Konvert  \u2022  Stay safe, stay in this ticket"});
-  const btns=new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("btn_done").setLabel("Mark Trade Complete").setEmoji("\u2705").setStyle(ButtonStyle.Success),
-    new ButtonBuilder().setCustomId("btn_close").setLabel("Close Ticket").setEmoji("\uD83D\uDD12").setStyle(ButtonStyle.Danger),
-  );
+  const rulesEmbed=new EmbedBuilder().setColor(CONFIG.COLOR).setTitle("Before You Proceed").setDescription("**Middleman required on all trades.**\nAgree on a trusted MM with your exchanger before sending anything.\n\n**Do not go first** unless **@jswaps** or **@3uce** explicitly says so in this ticket.\n\n__Staff will **never** DM you first.__ Anyone claiming to be Konvert in DMs is an impersonator.\nAll communication stays **in this ticket only.**").setImage(IMG.RULES).setFooter({text:"Konvert  \u2022  Stay safe, stay in this ticket"});
+  const btns=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_done").setLabel("Mark Trade Complete").setEmoji("\u2705").setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId("btn_close").setLabel("Close Ticket").setEmoji("\uD83D\uDD12").setStyle(ButtonStyle.Danger));
   await ch.send({content:`<@${user.id}>`,embeds:[ticketEmbed,rulesEmbed],components:[btns]});
   const pings=[];
   if(mRoleId)pings.push(`<@&${mRoleId}>`);
@@ -721,127 +501,69 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   if(pings.length)await ch.send(`${pings.join(" ")} -- New **${m.label}** ticket!`);
   const t=Object.keys(_mem.tickets||{}).length>0?{..._mem.tickets}:load("tickets");
   t[ch.id]={userId:user.id,userTag:user.tag,method,direction,coin,amountUSD,feeUSD,walletInfo,notes:notes||"",status:"open",createdAt:Date.now()};
-  _mem.tickets=t;
-  save("tickets",t);
+  _mem.tickets=t;save("tickets",t);
   log(guild,`TICKET: #${ch.name} | ${user.tag} | ${m.label} | ${fmtUSD(amountUSD)} | ${coin}`);
   return ch;
 }
 
 async function doCloseTicket(channel,guild,closedBy,reason){
   const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
-  if(tickets[channel.id]){
-    if(tickets[channel.id].status!=="vouched"){
-      tickets[channel.id].status="closed";
-    }
-    tickets[channel.id].closedAt=Date.now();
-    _mem.tickets=tickets;
-    save("tickets",tickets);
-  }
+  if(tickets[channel.id]){if(tickets[channel.id].status!=="vouched"){tickets[channel.id].status="closed";}tickets[channel.id].closedAt=Date.now();_mem.tickets=tickets;save("tickets",tickets);}
   try{
     const msgs=await channel.messages.fetch({limit:100});
     const lines=[...msgs.values()].reverse().map(m=>`[${new Date(m.createdTimestamp).toISOString()}] ${m.author.tag}: ${m.content||"[embed]"}`).join("\n");
     const fname=`transcript-${channel.name}-${Date.now()}.txt`,fpath=`./${fname}`;
     fs.writeFileSync(fpath,lines);
     if(CONFIG.LOG_CHANNEL){const lch=guild.channels.cache.get(CONFIG.LOG_CHANNEL);if(lch)await lch.send({content:`Transcript: **#${channel.name}** closed by ${closedBy.tag}. Reason: ${reason}`,files:[{attachment:fpath,name:fname}]});}
-    if(tickets[channel.id]){
-      try{const mem=await guild.members.fetch(tickets[channel.id].userId).catch(()=>null);if(mem){const f2=`tr-dm-${channel.name}.txt`;fs.writeFileSync("./"+f2,lines);await mem.send({content:"Your Konvert ticket has been closed. Transcript attached:",files:[{attachment:"./"+f2,name:f2}]}).catch(()=>{});fs.unlinkSync("./"+f2);}}catch{}
-    }
+    if(tickets[channel.id]){try{const mem=await guild.members.fetch(tickets[channel.id].userId).catch(()=>null);if(mem){const f2=`tr-dm-${channel.name}.txt`;fs.writeFileSync("./"+f2,lines);await mem.send({content:"Your Konvert ticket has been closed. Transcript attached:",files:[{attachment:"./"+f2,name:f2}]}).catch(()=>{});fs.unlinkSync("./"+f2);}}catch{}}
     for(const oid of CONFIG.OWNER_IDS){try{const o=await guild.members.fetch(oid).then(m=>m.user).catch(()=>null);if(o&&o.id!==closedBy.id){const f3=`tr-owner-${channel.name}.txt`;fs.writeFileSync("./"+f3,lines);await o.send({content:`Transcript: **#${channel.name}** | Closed by: ${closedBy.tag}`,files:[{attachment:"./"+f3,name:f3}]}).catch(()=>{});fs.unlinkSync("./"+f3);}}catch{}}
     fs.unlinkSync(fpath);
   }catch{}
   log(guild,`CLOSED: #${channel.name} by ${closedBy.tag} -- ${reason}`);
 }
 
-
-// ── TRADE RECEIPT DM ─────────────────────────────────────────────────────────
-async function sendReceiptDM(clientUserId, exchangerId, ticketData, tradeCount, totalVolume){
+async function sendReceiptDM(clientUserId,exchangerId,ticketData,tradeCount,totalVolume){
   try{
     const clientUser=await client.users.fetch(clientUserId).catch(()=>null);
     if(!clientUser)return;
     const m=getMethod(ticketData.method);
-    const tier=getTier(totalVolume);
-    const nextT=getNextTier(totalVolume);
+    const tier=getTier(totalVolume),nextT=getNextTier(totalVolume);
     const tradeId=`KV-${Date.now().toString(36).toUpperCase()}`;
-    const dirStr=ticketData.direction&&ticketData.coin&&ticketData.method
-      ?(ticketData.direction==="send"?`${ticketData.coin} → ${m?.label||ticketData.method}`:`${m?.label||ticketData.method} → ${ticketData.coin}`)
-      :(m?.label||ticketData.method);
-    const embed=new EmbedBuilder()
-      .setColor(0x7C4DFF)
-      .setAuthor({name:"Konvert Exchange  ·  Trade Receipt",iconURL:IMG.LOGO})
-      .setTitle("Trade Complete")
-      .setThumbnail(IMG.LOGO)
+    const dirStr=ticketData.direction&&ticketData.coin&&ticketData.method?(ticketData.direction==="send"?`${ticketData.coin} \u2192 ${m?.label||ticketData.method}`:`${m?.label||ticketData.method} \u2192 ${ticketData.coin}`):(m?.label||ticketData.method);
+    await clientUser.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  Trade Receipt",iconURL:IMG.LOGO}).setTitle("Trade Complete").setThumbnail(IMG.LOGO)
       .setDescription(`Your exchange has been verified and completed. This is your official receipt.\n\u200b`)
       .addFields(
-        {name:"Receipt ID",value:`\`${tradeId}\``,inline:true},
-        {name:"Date",value:`<t:${Math.floor(Date.now()/1000)}:F>`,inline:true},
-        {name:"\u200b",value:"\u200b",inline:true},
-        {name:"Method",value:`**${m?.label||ticketData.method}**`,inline:true},
-        {name:"Direction",value:`**${dirStr}**`,inline:true},
-        {name:"Amount",value:`**${fmtUSD(ticketData.amountUSD)}**`,inline:true},
-        {name:"Fee",value:`**${fmtUSD(ticketData.feeUSD||calcFee(ticketData.amountUSD,"send"))}**`,inline:true},
-        {name:"Exchanger",value:`<@${exchangerId}>`,inline:true},
-        {name:"\u200b",value:"\u200b",inline:true},
-        {name:"Your Tier",value:`${tier.emoji} **${tier.label}**`,inline:true},
-        {name:"Total Trades",value:`**${tradeCount}**`,inline:true},
-        {name:"Total Volume",value:`**${fmtUSD(totalVolume)}**`,inline:true},
+        {name:"Receipt ID",value:`\`${tradeId}\``,inline:true},{name:"Date",value:`<t:${Math.floor(Date.now()/1000)}:F>`,inline:true},{name:"\u200b",value:"\u200b",inline:true},
+        {name:"Method",value:`**${m?.label||ticketData.method}**`,inline:true},{name:"Direction",value:`**${dirStr}**`,inline:true},{name:"Amount",value:`**${fmtUSD(ticketData.amountUSD)}**`,inline:true},
+        {name:"Fee",value:`**${fmtUSD(ticketData.feeUSD||calcFee(ticketData.amountUSD,"send"))}**`,inline:true},{name:"Exchanger",value:`<@${exchangerId}>`,inline:true},{name:"\u200b",value:"\u200b",inline:true},
+        {name:"Your Tier",value:`${tier.emoji} **${tier.label}**`,inline:true},{name:"Total Trades",value:`**${tradeCount}**`,inline:true},{name:"Total Volume",value:`**${fmtUSD(totalVolume)}**`,inline:true},
         {name:nextT?`Next Tier: ${nextT.emoji} ${nextT.label}`:"Max Tier Reached",value:nextT?`${fmtUSD(Math.max(nextT.min-totalVolume,0))} away`:"You're at the top. Thank you.",inline:false},
-      )
-      .setImage(IMG.DEAL)
-      .setFooter({text:"Konvert Exchange  ·  Keep this receipt for your records"})
-      .setTimestamp();
-    await clientUser.send({embeds:[embed]});
+      ).setImage(IMG.DEAL).setFooter({text:"Konvert Exchange  \u00b7  Keep this receipt for your records"}).setTimestamp()]});
   }catch(e){console.log("[receipt DM]",e.message);}
 }
 
-async function completeTrade(interaction, ticket, tickets) {
-  const m = getMethod(ticket.method);
-  ticket.status = "vouched";
-  ticket.completedBy = interaction.user.id;
-  ticket.completedAt = Date.now();
-  ticket.amountUSD = parseFloat(ticket.amountUSD)||0;
-  const ticketKey = interaction.channel.id;
-  tickets[ticketKey] = ticket;
-  _mem.tickets = {...(_mem.tickets||{}), ...tickets};
-  save("tickets", _mem.tickets);
+async function completeTrade(interaction,ticket,tickets){
+  const m=getMethod(ticket.method);
+  ticket.status="vouched";ticket.completedBy=interaction.user.id;ticket.completedAt=Date.now();ticket.amountUSD=parseFloat(ticket.amountUSD)||0;
+  const ticketKey=interaction.channel.id;tickets[ticketKey]=ticket;
+  _mem.tickets={...(_mem.tickets||{}),...tickets};save("tickets",_mem.tickets);
   console.log(`[completeTrade] userId=${ticket.userId} amount=${ticket.amountUSD} total=${Object.keys(_mem.tickets).length}`);
-  // Post vouch embed
   await postVouch(interaction.guild,{clientId:ticket.userId,exchangerId:interaction.user.id,method:m?.label||ticket.method,amountUSD:ticket.amountUSD,direction:ticket.direction,coin:ticket.coin,message:null,rating:5});
-  // Handle referral points
-  await handleReferralTrade(interaction.guild, ticket.userId, ticket.amountUSD);
-  // Live feed
+  await handleReferralTrade(interaction.guild,ticket.userId,ticket.amountUSD);
   if(state.feedEnabled&&state.feedChannel){try{const feedCh=interaction.guild.channels.cache.get(state.feedChannel);if(feedCh){const vol=getUserVolume(ticket.userId);const _tier=getTier(vol);await feedCh.send(`\u2705  **${m?.label||ticket.method}**  \u00b7  **${fmtUSD(ticket.amountUSD)}**  \u00b7  ${_tier.emoji}  \u2014  just now`);}}catch{}}
-  // Tier role — compute volume fresh from _mem after save
-  try{
-    const _vol=getUserVolume(ticket.userId);
-    console.log(`[tierRole] userId=${ticket.userId} volume=${_vol}`);
-    await applyTierRole(interaction.guild,ticket.userId,_vol);
-  }catch(e){console.log("[tierRole error]",e.message);}
-  // Receipt DM
-  try{
-    const volume=getUserVolume(ticket.userId);
-    const allC=Object.values(_mem.tickets).filter(t=>t.userId===ticket.userId&&["vouched","completed"].includes(t.status)&&t.method!=="adjustment");
-    await sendReceiptDM(ticket.userId,interaction.user.id,ticket,allC.length,volume);
-  }catch{}
-  // Check referral status for ticket close message
-  const _ref=getReferrals();
-  const _referrerId=_ref.referred[ticket.userId];
+  try{const _vol=getUserVolume(ticket.userId);console.log(`[tierRole] userId=${ticket.userId} volume=${_vol}`);await applyTierRole(interaction.guild,ticket.userId,_vol);}catch(e){console.log("[tierRole error]",e.message);}
+  try{const volume=getUserVolume(ticket.userId);const allC=Object.values(_mem.tickets).filter(t=>t.userId===ticket.userId&&["vouched","completed"].includes(t.status)&&t.method!=="adjustment");await sendReceiptDM(ticket.userId,interaction.user.id,ticket,allC.length,volume);}catch{}
+  const _ref=getReferrals();const _referrerId=_ref.referred[ticket.userId];
   let _referralLine="";
-  if(_referrerId&&_referrerId!==ticket.userId){
-    const _ptsEarned=calcReferralPoints(ticket.amountUSD);
-    try{const _rUser=await client.users.fetch(_referrerId);_referralLine=`\n\n🔗 **Referral deal** — referred by <@${_referrerId}> · **+${_ptsEarned} pts** credited`;}
-    catch{_referralLine=`\n\n🔗 **Referral deal** — referral points credited`;}
-  } else {
-    _referralLine="\n\n❌ **No referral** on this trade";
-  }
-  // Reply and close
+  if(_referrerId&&_referrerId!==ticket.userId){const _ptsEarned=calcReferralPoints(ticket.amountUSD);try{await client.users.fetch(_referrerId);_referralLine=`\n\n\uD83D\uDD17 **Referral deal** \u2014 referred by <@${_referrerId}> \u00b7 **+${_ptsEarned} pts** credited`;}catch{_referralLine=`\n\n\uD83D\uDD17 **Referral deal** \u2014 referral points credited`;}}
+  else{_referralLine="\n\n\u274C **No referral** on this trade";}
   const completionEmbed=buildDealEmbed({clientId:ticket.userId,exchangerId:interaction.user.id,method:m?.label||ticket.method,amountUSD:ticket.amountUSD,direction:ticket.direction,coin:ticket.coin,message:null,rating:5});
   const replyEmbed=new EmbedBuilder(completionEmbed.data).setDescription("Vouch posted. Thank-you DM sent.\nThis ticket closes in **15 seconds**."+_referralLine);
   await interaction.editReply({embeds:[replyEmbed]});
   setTimeout(async()=>{await doCloseTicket(interaction.channel,interaction.guild,interaction.user,"Trade completed");interaction.channel.delete().catch(()=>{});},15000);
 }
 
-// ── MESSAGE HANDLER ───────────────────────────────────────────────────────────
-client.on(Events.MessageCreate, async message => {
+client.on(Events.MessageCreate,async message=>{
   if(CONFIG.SHORTS_CHANNEL&&message.channel.id===CONFIG.SHORTS_CHANNEL&&!message.author.bot){
     const attachment=message.attachments.find(a=>a.contentType?.startsWith("video/"));
     if(attachment){
@@ -854,73 +576,44 @@ client.on(Events.MessageCreate, async message => {
         await new Promise((resolve,reject)=>{writer.on("finish",resolve);writer.on("error",reject);});
         const title=YT_TITLES[Math.floor(Math.random()*YT_TITLES.length)];
         const desc=YT_DESCRIPTIONS[Math.floor(Math.random()*YT_DESCRIPTIONS.length)];
-        const res=await youtube.videos.insert({
-          part:["snippet","status"],
-          requestBody:{
-            snippet:{title,description:desc,tags:["gym motivation","shorts","fitness","workout","motivation","gym life","no excuses","beast mode","grind","discipline","mindset","never give up"],categoryId:"17"},
-            status:{privacyStatus:"public"},
-          },
-          media:{body:fs.createReadStream(filePath)},
-        });
-        await message.react("\u2705");
-        await message.reply(`\u2705 Posted: https://youtube.com/watch?v=${res.data.id}\n**Title:** ${title}`);
-        fs.unlinkSync(filePath);
-      }catch(err){
-        await message.react("\u274C");
-        await message.reply(`\u274C Upload failed: ${err.message}`);
-        try{fs.unlinkSync(filePath);}catch{}
-      }
+        const res=await youtube.videos.insert({part:["snippet","status"],requestBody:{snippet:{title,description:desc,tags:["gym motivation","shorts","fitness","workout","motivation"],categoryId:"17"},status:{privacyStatus:"public"}},media:{body:fs.createReadStream(filePath)}});
+        await message.react("\u2705");await message.reply(`\u2705 Posted: https://youtube.com/watch?v=${res.data.id}\n**Title:** ${title}`);fs.unlinkSync(filePath);
+      }catch(err){await message.react("\u274C");await message.reply(`\u274C Upload failed: ${err.message}`);try{fs.unlinkSync(filePath);}catch{}}
       return;
     }
   }
-
   if(message.author.bot)return;
-
-  // ── AUTO CONVERTER: "500 usd to eur", "4 SOL to USD", "100 GBP to CAD" ──────
   const convMatch=message.content.trim().match(/^([\d,]+\.?\d*)\s+([a-zA-Z]{2,6})\s+to\s+([a-zA-Z]{2,6})$/i);
   if(convMatch){
     const rawAmt=parseFloat(convMatch[1].replace(/,/g,""));
-    const fromRaw=convMatch[2].toUpperCase();
-    const toRaw=convMatch[3].toUpperCase();
+    const fromRaw=convMatch[2].toUpperCase(),toRaw=convMatch[3].toUpperCase();
     if(isNaN(rawAmt)||rawAmt<=0)return;
     const FIAT_RATES={USD:1,CAD:1.37,EUR:0.93,GBP:0.79,AUD:1.53,CHF:0.90,JPY:149.5,MXN:17.2,AED:3.67,SGD:1.35};
-    const FIAT_FLAGS={USD:"🇺🇸",CAD:"🇨🇦",EUR:"🇪🇺",GBP:"🇬🇧",AUD:"🇦🇺",CHF:"🇨🇭",JPY:"🇯🇵",MXN:"🇲🇽",AED:"🇦🇪",SGD:"🇸🇬"};
-    const FIAT_SYM={USD:"$",CAD:"CA$",EUR:"€",GBP:"£",AUD:"A$",CHF:"CHF ",JPY:"¥",MXN:"MX$",AED:"AED ",SGD:"S$"};
-    const isCoin=s=>COINS.includes(s);
-    const isFiat=s=>!!FIAT_RATES[s];
+    const FIAT_SYM={USD:"$",CAD:"CA$",EUR:"\u20AC",GBP:"\u00A3",AUD:"A$",CHF:"CHF ",JPY:"\u00A5",MXN:"MX$",AED:"AED ",SGD:"S$"};
+    const isCoin=s=>COINS.includes(s),isFiat=s=>!!FIAT_RATES[s];
     if(!isCoin(fromRaw)&&!isFiat(fromRaw))return;
     if(!isCoin(toRaw)&&!isFiat(toRaw))return;
     try{
-      let amtUSD=0,fromPrice=null,toPrice=null;
+      let amtUSD=0;
       if(isFiat(fromRaw)){amtUSD=rawAmt/FIAT_RATES[fromRaw];}
-      else{fromPrice=await getPrice(fromRaw);if(!fromPrice){await message.reply({content:"❌ Could not fetch price for **"+fromRaw+"**."}).catch(()=>{});return;}amtUSD=rawAmt*fromPrice;}
+      else{const fp=await getPrice(fromRaw);if(!fp){await message.reply({content:`\u274C Could not fetch price for **${fromRaw}**.`}).catch(()=>{});return;}amtUSD=rawAmt*fp;}
       let result=0;
       if(isFiat(toRaw)){result=amtUSD*FIAT_RATES[toRaw];}
-      else{toPrice=await getPrice(toRaw);if(!toPrice){await message.reply({content:"❌ Could not fetch price for **"+toRaw+"**."}).catch(()=>{});return;}result=amtUSD/toPrice;}
-      const fmtResult=n=>{if(n>=1000)return n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});if(n>=1)return n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:4});if(n>=0.01)return n.toFixed(4);return n.toFixed(8);};
+      else{const tp=await getPrice(toRaw);if(!tp){await message.reply({content:`\u274C Could not fetch price for **${toRaw}**.`}).catch(()=>{});return;}result=amtUSD/tp;}
+      const fmtR=n=>{if(n>=1000)return n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});if(n>=1)return n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:4});if(n>=0.01)return n.toFixed(4);return n.toFixed(8);};
       const fromSym=isFiat(fromRaw)?(FIAT_SYM[fromRaw]||fromRaw+" "):"";
       const toSym=isFiat(toRaw)?(FIAT_SYM[toRaw]||toRaw+" "):"";
-      const fromFlag=isFiat(fromRaw)?(FIAT_FLAGS[fromRaw]||"💱"):(COIN_LOGO[fromRaw]?"":" ");
-      const toFlag=isFiat(toRaw)?(FIAT_FLAGS[toRaw]||"💱"):(COIN_LOGO[toRaw]?"":" ");
       const color=(isCoin(fromRaw)||isCoin(toRaw))?0x7C4DFF:0x22c55e;
-      const embed=new EmbedBuilder()
-        .setColor(color)
-        .setAuthor({name:"Konvert Exchange  ·  Converter",iconURL:IMG.LOGO})
-        .setTitle(fromSym+rawAmt.toLocaleString("en-US")+" "+fromRaw+"  →  "+toSym+fmtResult(result)+" "+toRaw)
-        .addFields(
-          {name:"You have",value:"**"+fromSym+rawAmt.toLocaleString("en-US")+" "+fromRaw+"**",inline:true},
-          {name:"You get",value:"**"+toSym+fmtResult(result)+" "+toRaw+"**",inline:true},
-          {name:"≈ USD Value",value:"**$"+amtUSD.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})+"**",inline:true},
-        )
-        .setFooter({text:"Konvert Exchange  ·  Live rates  ·  Open a ticket to trade"})
-        .setTimestamp();
+      const embed=new EmbedBuilder().setColor(color).setAuthor({name:"Konvert Exchange  \u00b7  Converter",iconURL:IMG.LOGO})
+        .setTitle(fromSym+rawAmt.toLocaleString("en-US")+" "+fromRaw+"  \u2192  "+toSym+fmtR(result)+" "+toRaw)
+        .addFields({name:"You have",value:`**${fromSym}${rawAmt.toLocaleString("en-US")} ${fromRaw}**`,inline:true},{name:"You get",value:`**${toSym}${fmtR(result)} ${toRaw}**`,inline:true},{name:"\u2248 USD Value",value:`**$${amtUSD.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}**`,inline:true})
+        .setFooter({text:"Konvert Exchange  \u00b7  Live rates  \u00b7  Open a ticket to trade"}).setTimestamp();
       if(isCoin(fromRaw)&&COIN_LOGO[fromRaw])embed.setThumbnail(COIN_LOGO[fromRaw]);
       else if(isCoin(toRaw)&&COIN_LOGO[toRaw])embed.setThumbnail(COIN_LOGO[toRaw]);
       await message.reply({embeds:[embed]}).catch(()=>{});
     }catch(e){console.log("[autoConvert]",e.message);}
     return;
   }
-
   const match=message.content.trim().match(/^\$([A-Za-z]{2,10})$/i);
   if(!match)return;
   const coin=match[1].toUpperCase();
@@ -928,134 +621,53 @@ client.on(Events.MessageCreate, async message => {
   const d=await fetchFullPrice(coin);
   if(!d){await message.reply(`\u274C Could not fetch **${coin}** price right now. Try again in a moment.`).catch(()=>{});return;}
   const fmt=n=>{if(n>=1)return n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});if(n>=0.01)return n.toFixed(4);return n.toFixed(8);};
-  const ch2=parseFloat(d.usd_24h_change||0);
-  const isUp=ch2>=0;
+  const ch2=parseFloat(d.usd_24h_change||0),isUp=ch2>=0;
   const mcap=d.usd_market_cap?`$${(d.usd_market_cap/1e9).toFixed(2)}B`:"--";
   const vol=d.usd_24h_vol?`$${(d.usd_24h_vol/1e9).toFixed(2)}B`:"--";
   const fee=calcFee(Math.max(d.usd,1),"send"),rate=feeRate(Math.max(d.usd,1),"send");
   const color=isUp?0x00C853:0xFF1744;
-  await message.reply({embeds:[new EmbedBuilder().setColor(color)
-    .setAuthor({name:"Konvert Exchange  \u2022  Live Price",iconURL:IMG.LOGO})
-    .setTitle(`${isUp?"\u25B2":"\u25BC"}  ${coin}  \u2014  $${fmt(d.usd)}`)
-    .setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
-    .setDescription(`**${isUp?"+":""}${ch2.toFixed(2)}%** in the last 24 hours\n\u200b`)
-    .addFields(
-      {name:"\uD83C\uDDFA\uD83C\uDDF8  USD",   value:`**$${fmt(d.usd)}**`,                        inline:true},
-      {name:"\uD83C\uDDE8\uD83C\uDDE6  CAD",   value:`**CA$${fmt(d.cad)}**`,                      inline:true},
-      {name:"\uD83C\uDDEA\uD83C\uDDFA  EUR",   value:`**\u20AC${fmt(d.eur)}**`,                   inline:true},
-      {name:"\uD83D\uDCCA  Market Cap",         value:mcap,                                        inline:true},
-      {name:"\uD83D\uDCB9  24h Volume",         value:vol,                                         inline:true},
-      {name:"\uD83D\uDCB8  Konvert Fee",        value:`**${rate}%** \u2014 ${fmtUSD(fee)}`,        inline:true},
-    )
-    .setImage(IMG.BANNER)
-    .setFooter({text:`Konvert Exchange  \u2022  Type /price ${coin} for more details`})
-    .setTimestamp()]}).catch(()=>{});
+  await message.reply({embeds:[new EmbedBuilder().setColor(color).setAuthor({name:"Konvert Exchange  \u2022  Live Price",iconURL:IMG.LOGO}).setTitle(`${isUp?"\u25B2":"\u25BC"}  ${coin}  \u2014  $${fmt(d.usd)}`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO).setDescription(`**${isUp?"+":""}${ch2.toFixed(2)}%** in the last 24 hours\n\u200b`)
+    .addFields({name:"\uD83C\uDDFA\uD83C\uDDF8  USD",value:`**$${fmt(d.usd)}**`,inline:true},{name:"\uD83C\uDDE8\uD83C\uDDE6  CAD",value:`**CA$${fmt(d.cad)}**`,inline:true},{name:"\uD83C\uDDEA\uD83C\uDDFA  EUR",value:`**\u20AC${fmt(d.eur)}**`,inline:true},{name:"\uD83D\uDCCA  Market Cap",value:mcap,inline:true},{name:"\uD83D\uDCB9  24h Volume",value:vol,inline:true},{name:"\uD83D\uDCB8  Konvert Fee",value:`**${rate}%** \u2014 ${fmtUSD(fee)}`,inline:true})
+    .setImage(IMG.BANNER).setFooter({text:`Konvert Exchange  \u2022  Type /price ${coin} for more details`}).setTimestamp()]}).catch(()=>{});
 });
 
-// ── INVITE TRACKING ───────────────────────────────────────────────────────────
-// Cache invite use counts so we can diff on member join
-let _inviteCache = new Map(); // code -> uses
-
+let _inviteCache=new Map();
 async function cacheInvites(guild){
-  try{
-    const invites=await guild.invites.fetch();
-    _inviteCache=new Map(invites.map(i=>[i.code,i.uses]));
-  }catch(e){console.error("[inviteCache]",e.message);}
+  try{const invites=await guild.invites.fetch();_inviteCache=new Map(invites.map(i=>[i.code,i.uses]));}catch(e){console.error("[inviteCache]",e.message);}
 }
 
-client.on(Events.GuildMemberAdd, async member => {
-  try {
+client.on(Events.GuildMemberAdd,async member=>{
+  try{
     const guild=member.guild;
-
-    // --- Referral tracking via invite diff ---
     try{
       const ref=getReferrals();
       const freshInvites=await guild.invites.fetch();
       let usedCode=null;
-      for(const invite of freshInvites.values()){
-        const prev=_inviteCache.get(invite.code)||0;
-        if(invite.uses>prev){usedCode=invite.code;break;}
-      }
-      // Update cache
+      for(const invite of freshInvites.values()){const prev=_inviteCache.get(invite.code)||0;if(invite.uses>prev){usedCode=invite.code;break;}}
       _inviteCache=new Map(freshInvites.map(i=>[i.code,i.uses]));
       if(usedCode&&ref.invites[usedCode]){
         const referrerId=ref.invites[usedCode];
         if(referrerId!==member.id){
-          ref.referred[member.id]=referrerId;
-          saveReferrals(ref);
-          // DM referrer
-          try{
-            const referrer=await client.users.fetch(referrerId);
-            const embed=new EmbedBuilder()
-              .setColor(0x7C4DFF)
-              .setAuthor({name:"Konvert  ·  Referral Program",iconURL:PTS_IMG})
-              .setTitle("New Referral")
-              .setThumbnail(member.user.displayAvatarURL({size:128}))
-              .setDescription(`**${member.user.username}** just joined Konvert using your invite link.\n\nYou'll earn **${POINTS_PER_100} pts** for every **$100** they exchange — automatically, every time.\n\u200b`)
-              .addFields(
-                {name:"How to Earn",value:`Every trade they complete sends points straight to your balance.`,inline:false},
-                {name:"Rate",value:`**${POINTS_PER_100} pts** per $100 traded  ·  **${POINTS_PER_DOLLAR} pts = $1**`,inline:false},
-              )
-              .setImage(IMG.BANNER)
-              .setFooter({text:"Konvert Referral Program  ·  Earn on every trade they make"})
-              .setTimestamp();
-            await referrer.send({embeds:[embed]});
-          }catch{}
+          ref.referred[member.id]=referrerId;saveReferrals(ref);
+          try{const referrer=await client.users.fetch(referrerId);await referrer.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert  \u00b7  Referral Program",iconURL:PTS_IMG}).setTitle("New Referral").setThumbnail(member.user.displayAvatarURL({size:128})).setDescription(`**${member.user.username}** just joined Konvert using your invite link.\n\nYou'll earn **${POINTS_PER_100} pts** for every **$100** they exchange \u2014 automatically, every time.\n\u200b`).addFields({name:"Rate",value:`**${POINTS_PER_100} pts** per $100 traded  \u00b7  **${POINTS_PER_DOLLAR} pts = $1**`,inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert Referral Program  \u00b7  Earn on every trade they make"}).setTimestamp()]});}catch{}
         }
       }
     }catch(e){console.error("[referral join]",e.message);}
-
-    // --- Welcome message ---
     const WELCOME_CHANNEL="1477787759799435344";
-    const ch = guild.channels.cache.get(WELCOME_CHANNEL);
-    if (!ch) return;
-    const memberCount = guild.memberCount;
-    const embed = new EmbedBuilder()
-      .setColor(CONFIG.COLOR)
-      .setAuthor({ name: "Konvert Exchange", iconURL: IMG.LOGO })
-      .setTitle(`Welcome to Konvert! \uD83D\uDC4B`)
-      .setThumbnail(member.user.displayAvatarURL({ size: 256 }))
-      .setDescription(
-        `Hey <@${member.id}>, welcome to **Konvert Exchange**!\n\n` +
-        `You're member **#${memberCount}** \u2014 glad to have you here.\n\u200b`
-      )
-      .addFields(
-        { name: "\uD83D\uDCB8  Exchange",  value: `Open a ticket in <#${CONFIG.EXCHANGE_CHANNEL}> to start trading`, inline: false },
-        { name: "\u26A1  Fast",            value: "Usually under 10 minutes",   inline: true },
-        { name: "\uD83D\uDD12  Safe",      value: "MM required on all trades",  inline: true },
-        { name: "\uD83E\uDD1D  Support",   value: "24/7 agents available",      inline: true },
-      )
-      .setImage(IMG.BANNER)
-      .setFooter({ text: "Konvert Exchange  \u2022  Fast  \u00b7  Safe  \u00b7  Simple" })
-      .setTimestamp();
-    await ch.send({ content: `<@${member.id}>`, embeds: [embed] });
-  } catch(e) { console.error("Welcome error:", e.message); }
+    const ch=guild.channels.cache.get(WELCOME_CHANNEL);
+    if(!ch)return;
+    await ch.send({content:`<@${member.id}>`,embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle(`Welcome to Konvert! \uD83D\uDC4B`).setThumbnail(member.user.displayAvatarURL({size:256})).setDescription(`Hey <@${member.id}>, welcome to **Konvert Exchange**!\n\nYou're member **#${guild.memberCount}** \u2014 glad to have you here.\n\u200b`).addFields({name:"\uD83D\uDCB8  Exchange",value:`Open a ticket in <#${CONFIG.EXCHANGE_CHANNEL}> to start trading`,inline:false},{name:"\u26A1  Fast",value:"Usually under 10 minutes",inline:true},{name:"\uD83D\uDD12  Safe",value:"MM required on all trades",inline:true},{name:"\uD83E\uDD1D  Support",value:"24/7 agents available",inline:true}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  \u2022  Fast  \u00b7  Safe  \u00b7  Simple"}).setTimestamp()]});
+  }catch(e){console.error("Welcome error:",e.message);}
 });
 
-// ── INTERACTION HANDLER ───────────────────────────────────────────────────────
-client.on(Events.InteractionCreate, async interaction => {
-  try {
+client.on(Events.InteractionCreate,async interaction=>{
+  try{
     if(interaction.isChatInputCommand()){
       const cmd=interaction.commandName;
 
       if(cmd==="postexchange"){await interaction.channel.send({embeds:[mainEmbed()],components:mainButtons()});return interaction.reply({content:"Exchange embed posted.",ephemeral:true});}
-
-      if(cmd==="postsupport"){
-        const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Support").setThumbnail(IMG.LOGO)
-          .setDescription(`This channel is for **support tickets only**.\n\nFor exchanges, head to <#${CONFIG.EXCHANGE_CHANNEL}>.\n\n**What to include:**\n\u00b7 What you need help with\n\u00b7 Any error messages or screenshots\n\u00b7 What you have already tried\n\u00b7 A full explanation of what happened\n\u200b`)
-          .setFooter({text:"Konvert  \u2022  Support"});
-        await interaction.channel.send({embeds:[embed],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_support_ticket").setLabel("Open Support Ticket").setEmoji("\uD83C\uDF9F").setStyle(ButtonStyle.Primary))]});
-        return interaction.reply({content:"Support embed posted.",ephemeral:true});
-      }
-
-      if(cmd==="postmm"){
-        const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Middleman Information").setThumbnail(IMG.LOGO)
-          .setDescription(`**Konvert officially partners with Astro MM** to ensure all deals go smoothly.\n\n**How It Works:**\n**1.** Open a ticket in <#${CONFIG.EXCHANGE_CHANNEL}>\n**2.** Get a quote for your exchange\n**3.** If terms are agreed on, open an MM ticket on Astro MM\n**4.** Complete the exchange safely\n\u200b`)
-          .addFields({name:"Important",value:"**Do NOT go first** without using Astro MM, unless explicitly advised by an owner in your ticket.",inline:false},{name:"Astro MM",value:"Click the button below to join the Astro MM server.",inline:false})
-          .setImage(IMG.BANNER).setFooter({text:"Konvert  \u2022  Official Escrow Partner: Astro MM"});
-        await interaction.channel.send({embeds:[embed],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel("Join Astro MM").setEmoji("\uD83E\uDD1D").setStyle(ButtonStyle.Link).setURL("https://discord.gg/astromm"))]});
-        return interaction.reply({content:"MM embed posted.",ephemeral:true});
-      }
+      if(cmd==="postsupport"){const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Support").setThumbnail(IMG.LOGO).setDescription(`This channel is for **support tickets only**.\n\nFor exchanges, head to <#${CONFIG.EXCHANGE_CHANNEL}>.\n\n**What to include:**\n\u00b7 What you need help with\n\u00b7 Any error messages or screenshots\n\u00b7 What you have already tried\n\u00b7 A full explanation of what happened\n\u200b`).setFooter({text:"Konvert  \u2022  Support"});await interaction.channel.send({embeds:[embed],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_support_ticket").setLabel("Open Support Ticket").setEmoji("\uD83C\uDF9F").setStyle(ButtonStyle.Primary))]});return interaction.reply({content:"Support embed posted.",ephemeral:true});}
+      if(cmd==="postmm"){const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Middleman Information").setThumbnail(IMG.LOGO).setDescription(`**Konvert officially partners with Astro MM** to ensure all deals go smoothly.\n\n**How It Works:**\n**1.** Open a ticket in <#${CONFIG.EXCHANGE_CHANNEL}>\n**2.** Get a quote for your exchange\n**3.** If terms are agreed on, open an MM ticket on Astro MM\n**4.** Complete the exchange safely\n\u200b`).addFields({name:"Important",value:"**Do NOT go first** without using Astro MM, unless explicitly advised by an owner in your ticket.",inline:false},{name:"Astro MM",value:"Click the button below to join the Astro MM server.",inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert  \u2022  Official Escrow Partner: Astro MM"});await interaction.channel.send({embeds:[embed],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel("Join Astro MM").setEmoji("\uD83E\uDD1D").setStyle(ButtonStyle.Link).setURL("https://discord.gg/astromm"))]});return interaction.reply({content:"MM embed posted.",ephemeral:true});}
 
       if(cmd==="rates"){await interaction.deferReply();return interaction.editReply({embeds:[await buildRatesEmbed()],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_refresh_rates").setLabel("Refresh").setStyle(ButtonStyle.Secondary))]});}
 
@@ -1063,22 +675,14 @@ client.on(Events.InteractionCreate, async interaction => {
         const amt=interaction.options.getNumber("amount_usd");
         if(!amt||amt<=0)return interaction.reply({content:"Please enter a valid amount greater than $0.",ephemeral:true});
         await interaction.deferReply({ephemeral:true});
-        const _feeVol=getUserVolume(interaction.user.id);const _feeVip=isVipVolume(_feeVol);
+        const _feeVol=getUserVolume(interaction.user.id),_feeVip=isVipVolume(_feeVol);
         const fS=calcFee(amt,"send",_feeVip),rS=feeRate(amt,"send",_feeVip),fR=calcFee(amt,"receive",_feeVip),rR=feeRate(amt,"receive",_feeVip);
         const [btcP,ethP,solP]=await Promise.all([getPrice("BTC"),getPrice("ETH"),getPrice("SOL")]);
         const recvS=amt-fS,coinLines=[];
         if(btcP)coinLines.push(`BTC: **${(recvS/btcP).toFixed(6)}** (\u2248${fmtUSD(recvS)})`);
         if(ethP)coinLines.push(`ETH: **${(recvS/ethP).toFixed(5)}** (\u2248${fmtUSD(recvS)})`);
         if(solP)coinLines.push(`SOL: **${(recvS/solP).toFixed(4)}** (\u2248${fmtUSD(recvS)})`);
-        const _vipLine=_feeVip?"\n> ⚡ **VIP rate applied** — 0.75% discount active on your account":"";
-        return interaction.editReply({embeds:[base("Fee Calculator").setThumbnail(IMG.LOGO)
-          .setDescription(`Estimate for **${fmtUSD(amt)}**\n*Final fee may vary slightly.*\n\u200b`)
-          .addFields(
-            {name:"Fiat \u2192 Crypto",value:`Rate: **${rS}%**${_feeVip?" ⚡":""} \nFee: **${fmtUSD(fS)}**\nYou receive: **${fmtUSD(recvS)}**`,inline:true},
-            {name:"Crypto \u2192 Fiat",value:`Rate: **${rR}%**${_feeVip?" ⚡":""} \nFee: **${fmtUSD(fR)}**\nYou receive: **${fmtUSD(amt-fR)}**`,inline:true},
-            {name:"\uD83E\uDE99 If Buying Crypto",value:coinLines.length?coinLines.join("\n"):"--",inline:false},
-
-          ).setImage(IMG.FEE).setFooter({text:`Konvert  \u2022 ${_feeVip?"⚡ VIP rate active  ·  ":""}Rate shown is for the amount entered`})]});
+        return interaction.editReply({embeds:[base("Fee Calculator").setThumbnail(IMG.LOGO).setDescription(`Estimate for **${fmtUSD(amt)}**\n*Final fee may vary slightly.*\n\u200b`).addFields({name:"Fiat \u2192 Crypto",value:`Rate: **${rS}%**${_feeVip?" \u26A1":""} \nFee: **${fmtUSD(fS)}**\nYou receive: **${fmtUSD(recvS)}**`,inline:true},{name:"Crypto \u2192 Fiat",value:`Rate: **${rR}%**${_feeVip?" \u26A1":""} \nFee: **${fmtUSD(fR)}**\nYou receive: **${fmtUSD(amt-fR)}**`,inline:true},{name:"\uD83E\uDE99 If Buying Crypto",value:coinLines.length?coinLines.join("\n"):"--",inline:false}).setImage(IMG.FEE).setFooter({text:`Konvert  \u2022 ${_feeVip?"\u26A1 VIP rate active  \u00b7  ":""}Rate shown is for the amount entered`})]});
       }
 
       if(cmd==="price"){
@@ -1092,22 +696,7 @@ client.on(Events.InteractionCreate, async interaction => {
         const mcap=d.usd_market_cap?`$${(d.usd_market_cap/1e9).toFixed(2)}B`:"--",vol=d.usd_24h_vol?`$${(d.usd_24h_vol/1e9).toFixed(2)}B`:"--";
         const fee=calcFee(Math.max(d.usd,1),"send"),rate=feeRate(Math.max(d.usd,1),"send");
         const color2=isUp?0x00C853:0xFF1744;
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(color2)
-          .setAuthor({name:"Konvert Exchange  \u2022  Live Price",iconURL:IMG.LOGO})
-          .setTitle(`${isUp?"\u25B2":"\u25BC"}  ${coin}  \u2014  $${fmt2(d.usd)}`)
-          .setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
-          .setDescription(`**${isUp?"+":""}${ch.toFixed(2)}%** in the last 24 hours\n\u200b`)
-          .addFields(
-            {name:"\uD83C\uDDFA\uD83C\uDDF8  USD",   value:`**$${fmt2(d.usd)}**`,                  inline:true},
-            {name:"\uD83C\uDDE8\uD83C\uDDE6  CAD",   value:`**CA$${fmt2(d.cad)}**`,                inline:true},
-            {name:"\uD83C\uDDEA\uD83C\uDDFA  EUR",   value:`**\u20AC${fmt2(d.eur)}**`,             inline:true},
-            {name:"\uD83D\uDCCA  Market Cap",         value:mcap,                                    inline:true},
-            {name:"\uD83D\uDCB9  24h Volume",         value:vol,                                     inline:true},
-            {name:"\uD83D\uDCB8  Konvert Fee",        value:`**${rate}%** \u2014 ${fmtUSD(fee)}`,    inline:true},
-          )
-          .setImage(IMG.BANNER)
-          .setFooter({text:"Konvert Exchange  \u2022  Open a ticket to start trading"})
-          .setTimestamp()]});
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(color2).setAuthor({name:"Konvert Exchange  \u2022  Live Price",iconURL:IMG.LOGO}).setTitle(`${isUp?"\u25B2":"\u25BC"}  ${coin}  \u2014  $${fmt2(d.usd)}`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO).setDescription(`**${isUp?"+":""}${ch.toFixed(2)}%** in the last 24 hours\n\u200b`).addFields({name:"\uD83C\uDDFA\uD83C\uDDF8  USD",value:`**$${fmt2(d.usd)}**`,inline:true},{name:"\uD83C\uDDE8\uD83C\uDDE6  CAD",value:`**CA$${fmt2(d.cad)}**`,inline:true},{name:"\uD83C\uDDEA\uD83C\uDDFA  EUR",value:`**\u20AC${fmt2(d.eur)}**`,inline:true},{name:"\uD83D\uDCCA  Market Cap",value:mcap,inline:true},{name:"\uD83D\uDCB9  24h Volume",value:vol,inline:true},{name:"\uD83D\uDCB8  Konvert Fee",value:`**${rate}%** \u2014 ${fmtUSD(fee)}`,inline:true}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  \u2022  Open a ticket to start trading"}).setTimestamp()]});
       }
 
       if(cmd==="convert"){
@@ -1115,54 +704,26 @@ client.on(Events.InteractionCreate, async interaction => {
         const amount=interaction.options.getNumber("amount"),from=interaction.options.getString("from").toUpperCase(),to=interaction.options.getString("to").toUpperCase();
         if(!amount||amount<=0)return interaction.editReply("Please enter a valid amount greater than 0.");
         const FIAT={USD:1,CAD:1.37,EUR:0.93,GBP:0.79};
-        const fromNorm=from.trim().toUpperCase(), toNorm=to.trim().toUpperCase();
-        if(!FIAT[fromNorm]&&!GECKO[fromNorm])return interaction.editReply(`\u274C **${fromNorm}** not recognised. Use coins like BTC, ETH, SOL or fiat like USD, CAD, EUR.`);
-        if(!FIAT[toNorm]&&!GECKO[toNorm])return interaction.editReply(`\u274C **${toNorm}** not recognised. Use coins like BTC, ETH, SOL or fiat like USD, CAD, EUR.`);
+        const fromNorm=from.trim().toUpperCase(),toNorm=to.trim().toUpperCase();
+        if(!FIAT[fromNorm]&&!GECKO[fromNorm])return interaction.editReply(`\u274C **${fromNorm}** not recognised.`);
+        if(!FIAT[toNorm]&&!GECKO[toNorm])return interaction.editReply(`\u274C **${toNorm}** not recognised.`);
         let amtUSD;
-        if(FIAT[fromNorm]){amtUSD=amount/FIAT[fromNorm];}
-        else{
-          const p=await getPrice(fromNorm);
-          if(!p)return interaction.editReply(`\u274C Could not fetch price for **${fromNorm}** right now. Try again in a moment.`);
-          amtUSD=amount*p;
-        }
+        if(FIAT[fromNorm]){amtUSD=amount/FIAT[fromNorm];}else{const p=await getPrice(fromNorm);if(!p)return interaction.editReply(`\u274C Could not fetch price for **${fromNorm}**.`);amtUSD=amount*p;}
         let result;
-        if(FIAT[toNorm]){result=amtUSD*FIAT[toNorm];}
-        else{
-          const p=await getPrice(toNorm);
-          if(!p)return interaction.editReply(`\u274C Could not fetch price for **${toNorm}** right now. Try again in a moment.`);
-          result=amtUSD/p;
-        }
-        const fee=calcFee(amtUSD,"send");
-        const toPrice=FIAT[toNorm]?(1/FIAT[toNorm]):(await getPrice(toNorm)||1);
-        const youGet=result-(fee/toPrice);
-        const isToFiat=!!FIAT[toNorm];
-        const receiveUSD=isToFiat?youGet:youGet*(await getPrice(toNorm)||1);
+        if(FIAT[toNorm]){result=amtUSD*FIAT[toNorm];}else{const p=await getPrice(toNorm);if(!p)return interaction.editReply(`\u274C Could not fetch price for **${toNorm}**.`);result=amtUSD/p;}
+        const fee=calcFee(amtUSD,"send"),toPrice=FIAT[toNorm]?(1/FIAT[toNorm]):(await getPrice(toNorm)||1),youGet=result-(fee/toPrice);
+        const isToFiat=!!FIAT[toNorm],receiveUSD=isToFiat?youGet:youGet*(await getPrice(toNorm)||1);
         const youGetDisplay=isToFiat?fmtUSD(youGet):`${youGet.toFixed(6)} ${toNorm}`;
         const usdDisplay=isToFiat?fmtUSD(youGet):`\u2248${fmtUSD(receiveUSD)}`;
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR)
-          .setAuthor({name:"Konvert Exchange  \u2022  Conversion",iconURL:IMG.LOGO})
-          .setTitle(`${fromNorm} \u2192 ${toNorm}`)
-          .setThumbnail(COIN_LOGO[fromNorm]||COIN_LOGO[toNorm]||IMG.LOGO)
-          .setDescription(`Estimated conversion for **${amount} ${fromNorm}** to **${toNorm}**\n\u200b`)
-          .addFields(
-            {name:"\uD83D\uDCE4  You Send",    value:`**${amount} ${fromNorm}**`,  inline:true},
-            {name:"\uD83D\uDCB8  Est. Fee",    value:`**${fmtUSD(fee)}**`,         inline:true},
-            {name:"\uD83D\uDCE5  You Receive", value:`**${youGetDisplay}**`,       inline:true},
-            {name:"\uD83D\uDCB5  USD Value",   value:`**${usdDisplay}**`,          inline:true},
-          )
-          .setImage(IMG.BANNER)
-          .setFooter({text:"Estimate only  \u2022  Konvert Exchange  \u2022  Open a ticket to begin"})
-          .setTimestamp()]});
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange  \u2022  Conversion",iconURL:IMG.LOGO}).setTitle(`${fromNorm} \u2192 ${toNorm}`).setThumbnail(COIN_LOGO[fromNorm]||COIN_LOGO[toNorm]||IMG.LOGO).setDescription(`Estimated conversion for **${amount} ${fromNorm}** to **${toNorm}**\n\u200b`).addFields({name:"\uD83D\uDCE4  You Send",value:`**${amount} ${fromNorm}**`,inline:true},{name:"\uD83D\uDCB8  Est. Fee",value:`**${fmtUSD(fee)}**`,inline:true},{name:"\uD83D\uDCE5  You Receive",value:`**${youGetDisplay}**`,inline:true},{name:"\uD83D\uDCB5  USD Value",value:`**${usdDisplay}**`,inline:true}).setImage(IMG.BANNER).setFooter({text:"Estimate only  \u2022  Konvert Exchange  \u2022  Open a ticket to begin"}).setTimestamp()]});
       }
 
-      // /stats -- uses unified getUserVolume (includes adjustments netted correctly)
       if(cmd==="stats"){
         await interaction.deferReply();
         const target=interaction.options.getUser("user")||interaction.user;
         const isSelf=target.id===interaction.user.id;
         const DONE_STATUS=["vouched","completed"];
         const allT=Object.values(_mem.tickets||load("tickets"));
-        // Count only real trades (not adjustment entries) for trade count / avg / top method
         const realTrades=allT.filter(t=>t.userId===target.id&&DONE_STATUS.includes(t.status)&&t.amountUSD&&t.method!=="adjustment");
         const volume=getUserVolume(target.id);
         const avg=realTrades.length>0?realTrades.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0)/realTrades.length:0;
@@ -1170,61 +731,26 @@ client.on(Events.InteractionCreate, async interaction => {
         const topM=Object.entries(methods).sort((a,b)=>b[1]-a[1])[0];
         const coins={};realTrades.forEach(t=>{if(t.coin)coins[t.coin]=(coins[t.coin]||0)+1;});
         const topC=Object.entries(coins).sort((a,b)=>b[1]-a[1])[0];
-        const tier=getTier(volume),nextTier=getNextTier(volume);
-        const needed=nextTier?Math.max(nextTier.min-volume,0):0;
+        const tier=getTier(volume),nextTier=getNextTier(volume),needed=nextTier?Math.max(nextTier.min-volume,0):0;
         await applyTierRole(interaction.guild,target.id,volume);
         const last=realTrades.length>0?[...realTrades].sort((a,b)=>(b.completedAt||0)-(a.completedAt||0))[0]:null;
-        // Check if any adjustments applied
         const adjEntries=allT.filter(t=>t.userId===target.id&&DONE_STATUS.includes(t.status)&&t.method==="adjustment");
         const adjTotal=adjEntries.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
         const adjNote=adjTotal!==0?`\n> *Volume adjusted ${adjTotal>0?"+":""}${fmtUSD(adjTotal)} by staff*`:"";
-        const tierStatus=nextTier
-          ? `${tier.emoji} **${tier.label}** — ${fmtUSD(needed)} away from ${nextTier.emoji} **${nextTier.label}**`
-          : `${tier.emoji} **${tier.label}** — Maximum tier reached`;
-        const embed=new EmbedBuilder()
-          .setColor(tier.min>=1000?0xFFD700:CONFIG.COLOR)
-          .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
-          .setTitle(isSelf?"Your Exchange Stats":`${target.username}'s Stats`)
-          .setThumbnail(target.displayAvatarURL({size:256}))
-          .setDescription(`${tierStatus}${adjNote}\n\u200b`)
-          .addFields(
-            {name:"Completed Trades", value:`**${realTrades.length}**`,                                    inline:true},
-            {name:"Total Volume",     value:`**${volume>0?fmtUSD(volume):"$0.00"}**`,                      inline:true},
-            {name:"Average Deal",     value:`**${avg>0?fmtUSD(avg):"—"}**`,                               inline:true},
-            {name:"Top Method",       value:topM?`**${getMethod(topM[0])?.label||topM[0]}**`:"—",         inline:true},
-            {name:"Top Coin",         value:topC?`**${topC[0]}**`:"—",                                    inline:true},
-            {name:"Last Trade",       value:last?.completedAt?`<t:${Math.floor(last.completedAt/1000)}:R>`:"—",inline:true},
-          )
-          .setImage(IMG.BANNER)
-          .setFooter({text:`${tier.emoji} ${tier.label}  ·  Konvert Exchange`})
-          .setTimestamp();
-        return interaction.editReply({embeds:[embed]});
+        const tierStatus=nextTier?`${tier.emoji} **${tier.label}** \u2014 ${fmtUSD(needed)} away from ${nextTier.emoji} **${nextTier.label}**`:`${tier.emoji} **${tier.label}** \u2014 Maximum tier reached`;
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(tier.min>=1000?0xFFD700:CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle(isSelf?"Your Exchange Stats":`${target.username}'s Stats`).setThumbnail(target.displayAvatarURL({size:256})).setDescription(`${tierStatus}${adjNote}\n\u200b`).addFields({name:"Completed Trades",value:`**${realTrades.length}**`,inline:true},{name:"Total Volume",value:`**${volume>0?fmtUSD(volume):"$0.00"}**`,inline:true},{name:"Average Deal",value:`**${avg>0?fmtUSD(avg):"\u2014"}**`,inline:true},{name:"Top Method",value:topM?`**${getMethod(topM[0])?.label||topM[0]}**`:"\u2014",inline:true},{name:"Top Coin",value:topC?`**${topC[0]}**`:"\u2014",inline:true},{name:"Last Trade",value:last?.completedAt?`<t:${Math.floor(last.completedAt/1000)}:R>`:"\u2014",inline:true}).setImage(IMG.BANNER).setFooter({text:`${tier.emoji} ${tier.label}  \u00b7  Konvert Exchange`}).setTimestamp()]});
       }
 
-      // /leaderboard -- FIXED: uses buildLeaderboardVolumes which nets adjustments correctly
       if(cmd==="leaderboard"){
         await interaction.deferReply();
         const byUser=buildLeaderboardVolumes();
-        if(!Object.keys(byUser).length)return interaction.editReply({embeds:[new EmbedBuilder()
-          .setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
-          .setTitle("Client Leaderboard").setThumbnail(IMG.LOGO)
-          .setDescription("No completed trades on record yet.\n\nComplete a trade to appear here.\n\u200b")
-          .setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  \u2022  Leaderboard"}).setTimestamp()]});
+        if(!Object.keys(byUser).length)return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Client Leaderboard").setThumbnail(IMG.LOGO).setDescription("No completed trades on record yet.\n\nComplete a trade to appear here.\n\u200b").setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  \u2022  Leaderboard"}).setTimestamp()]});
         const ranked=Object.entries(byUser).sort((a,b)=>b[1]-a[1]).slice(0,10);
         for(const [uid,vol] of ranked){applyTierRole(interaction.guild,uid,vol).catch(()=>{});}
         const medals=["🥇","🥈","🥉"];
-        const lines=ranked.map(([uid,vol],i)=>
-          `${medals[i]||`**${i+1}.**`}  <@${uid}>  —  **${fmtUSD(vol)}**`
-        ).join("\n");
+        const lines=ranked.map(([uid,vol],i)=>`${medals[i]||`**${i+1}.**`}  <@${uid}>  \u2014  **${fmtUSD(vol)}**`).join("\n");
         const totalVol=ranked.reduce((s,[,v])=>s+v,0);
-        return interaction.editReply({embeds:[new EmbedBuilder()
-          .setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
-          .setTitle("Client Leaderboard")
-          .setDescription(`The Top ${ranked.length} Client${ranked.length!==1?"s":""} at Konvert\n\u200b`)
-          .setThumbnail(IMG.LOGO)
-          .addFields({name:"\u200b",value:lines,inline:false})
-          .setImage(IMG.BANNER)
-          .setFooter({text:`Total Volume: ${fmtUSD(totalVol)}  ·  Konvert Exchange`}).setTimestamp()]});
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Client Leaderboard").setDescription(`The Top ${ranked.length} Client${ranked.length!==1?"s":""} at Konvert\n\u200b`).setThumbnail(IMG.LOGO).addFields({name:"\u200b",value:lines,inline:false}).setImage(IMG.BANNER).setFooter({text:`Total Volume: ${fmtUSD(totalVol)}  \u00b7  Konvert Exchange`}).setTimestamp()]});
       }
 
       if(cmd==="market"){
@@ -1236,16 +762,11 @@ client.on(Events.InteractionCreate, async interaction => {
         const gainers=[...rows].sort((a,b)=>b.change-a.change).slice(0,3),losers=[...rows].sort((a,b)=>a.change-b.change).slice(0,3);
         const avg=(rows.reduce((s,r)=>s+r.change,0)/rows.length).toFixed(2);
         const fmt2=n=>n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
-        return interaction.editReply({embeds:[base("Market Summary").setThumbnail(IMG.LOGO)
-          .addFields(
-            {name:"Market Sentiment",value:`**${parseFloat(avg)>=0?"Bullish \u25B2":"Bearish \u25BC"}**  \u00b7  Avg 24h: **${avg}%**`,inline:false},
-            {name:"Top Gainers",     value:gainers.map(r=>`\`${r.coin.padEnd(5)}\` **\u25B2 ${r.change.toFixed(2)}%**  $${fmt2(r.price)}`).join("\n"),inline:true},
-            {name:"Top Losers",      value:losers.map(r=>`\`${r.coin.padEnd(5)}\` **\u25BC ${Math.abs(r.change).toFixed(2)}%**  $${fmt2(r.price)}`).join("\n"),inline:true},
-          ).setImage(IMG.RATES).setFooter({text:"Live market data  \u2022  Konvert"})]});
+        return interaction.editReply({embeds:[base("Market Summary").setThumbnail(IMG.LOGO).addFields({name:"Market Sentiment",value:`**${parseFloat(avg)>=0?"Bullish \u25B2":"Bearish \u25BC"}**  \u00b7  Avg 24h: **${avg}%**`,inline:false},{name:"Top Gainers",value:gainers.map(r=>`\`${r.coin.padEnd(5)}\` **\u25B2 ${r.change.toFixed(2)}%**  $${fmt2(r.price)}`).join("\n"),inline:true},{name:"Top Losers",value:losers.map(r=>`\`${r.coin.padEnd(5)}\` **\u25BC ${Math.abs(r.change).toFixed(2)}%**  $${fmt2(r.price)}`).join("\n"),inline:true}).setImage(IMG.RATES).setFooter({text:"Live market data  \u2022  Konvert"})]});
       }
 
       if(cmd==="wallets"){const w=load("wallets"),fields=Object.entries(w).length?Object.entries(w).map(([coin,addr])=>({name:coin,value:`\`${addr}\``,inline:true})):[{name:"No wallets set",value:"Owner: use /setwallet to add addresses.",inline:false}];return interaction.reply({embeds:[base("Deposit Wallets").setThumbnail(IMG.LOGO).setDescription("Send funds **only** to addresses confirmed by staff **inside your ticket**.\n__Never send to any address given outside of your ticket.__\n\u200b").addFields(fields).setFooter({text:"Always verify with staff before sending  \u2022  Konvert"})],ephemeral:true});}
-      if(cmd==="mm"){return interaction.reply({embeds:[base("Middleman Guide").setDescription("A **middleman (MM)** holds crypto between both parties during a trade -- protecting everyone from scams.\n\u200b").addFields({name:"How to Pick an MM",value:"Agree with your exchanger on a trusted MM you both know. Konvert supports any reputable third-party MM.",inline:false},{name:"Owner Override Only",value:"The **only** time you skip an MM is if **@jswaps** or **@3uce** explicitly says so in your ticket.",inline:false},{name:"Stay Safe",value:"**Staff will never DM you first.** All MM arrangements happen in your ticket only.",inline:false}).setImage(IMG.RULES).setFooter({text:"Konvert  \u2022  Trade safely, always"})]});}
+      if(cmd==="mm"){return interaction.reply({embeds:[base("Middleman Guide").setDescription("A **middleman (MM)** holds crypto between both parties during a trade -- protecting everyone from scams.\n\u200b").addFields({name:"How to Pick an MM",value:"Agree with your exchanger on a trusted MM you both know.",inline:false},{name:"Owner Override Only",value:"The **only** time you skip an MM is if **@jswaps** or **@3uce** explicitly says so in your ticket.",inline:false},{name:"Stay Safe",value:"**Staff will never DM you first.** All MM arrangements happen in your ticket only.",inline:false}).setImage(IMG.RULES).setFooter({text:"Konvert  \u2022  Trade safely, always"})]});}
 
       if(cmd==="mine"){
         const userId=interaction.user.id,cooldownMs=3*60*60*1000,remaining=cooldownMs-(Date.now()-(state.cooldowns[userId]||0));
@@ -1253,11 +774,7 @@ client.on(Events.InteractionCreate, async interaction => {
         state.cooldowns[userId]=Date.now();
         const pos=Array.from({length:25},(_,i)=>i).sort(()=>Math.random()-0.5);
         state.mineGames[userId]={diamonds:pos.slice(0,3),bombs:pos.slice(3,8),revealed:[],found:0,tries:0,over:false};
-        return interaction.reply({embeds:[base("Konvert Mine").setThumbnail(IMG.LOGO)
-          .setDescription("A **5\u00D75** grid lies before you.\n\n\uD83D\uDC8E **3 diamonds** are hidden among the cells.\n\uD83D\uDCA3 **5 bombs** are also hidden -- hit one and it's over.\n\nYou have **3 tries**. Find all 3 diamonds to win a **Free Exchange Pass**.\n\u200b")
-          .addFields({name:"Tries Remaining",value:"**3**",inline:true},{name:"Diamonds Found",value:"**0 / 3**",inline:true},{name:"Win Condition",value:"All 3 \uD83D\uDC8E with no \uD83D\uDCA3",inline:true})
-          .setFooter({text:"Konvert Mine  \u2022  Find all 3 diamonds  \u2022  Cooldown: 3 hours"})],
-          components:buildMineGrid(userId,state.mineGames[userId]),ephemeral:true});
+        return interaction.reply({embeds:[base("Konvert Mine").setThumbnail(IMG.LOGO).setDescription("A **5\u00D75** grid lies before you.\n\n\uD83D\uDC8E **3 diamonds** are hidden among the cells.\n\uD83D\uDCA3 **5 bombs** are also hidden -- hit one and it's over.\n\nYou have **3 tries**. Find all 3 diamonds to win a **Free Exchange Pass**.\n\u200b").addFields({name:"Tries Remaining",value:"**3**",inline:true},{name:"Diamonds Found",value:"**0 / 3**",inline:true},{name:"Win Condition",value:"All 3 \uD83D\uDC8E with no \uD83D\uDCA3",inline:true}).setFooter({text:"Konvert Mine  \u2022  Find all 3 diamonds  \u2022  Cooldown: 3 hours"})],components:buildMineGrid(userId,state.mineGames[userId]),ephemeral:true});
       }
 
       if(cmd==="vouch"){
@@ -1265,178 +782,65 @@ client.on(Events.InteractionCreate, async interaction => {
         const message=interaction.options.getString("message"),method=interaction.options.getString("method"),amount=interaction.options.getNumber("amount"),rating=interaction.options.getInteger("rating")||5;
         const vt=load("tickets");
         vt["manual_"+Date.now()]={userId:clientUser.id,userTag:clientUser.tag,method,direction:null,coin:null,amountUSD:amount,feeUSD:calcFee(amount,"send"),walletInfo:"manual",notes:"Manual vouch via /vouch",status:"vouched",completedBy:exchUser.id,completedAt:Date.now(),createdAt:Date.now()};
-        _mem.tickets=vt;
-        save("tickets",vt);
+        _mem.tickets=vt;save("tickets",vt);
         await postVouch(interaction.guild,{clientId:clientUser.id,exchangerId:exchUser.id,method,amountUSD:amount,direction:null,coin:null,message,rating});
         await handleReferralTrade(interaction.guild,clientUser.id,amount);
-        const vol=getUserVolume(clientUser.id);
-        await applyTierRole(interaction.guild,clientUser.id,vol);
+        const vol=getUserVolume(clientUser.id);await applyTierRole(interaction.guild,clientUser.id,vol);
         const _allVouched=Object.values(_mem.tickets).filter(t=>t.userId===clientUser.id&&["vouched","completed"].includes(t.status)&&t.method!=="adjustment");
         await sendReceiptDM(clientUser.id,exchUser.id,{method,direction:null,coin:null,amountUSD:amount,feeUSD:calcFee(amount,"send")},_allVouched.length,vol);
-        return interaction.reply({content:`Vouch recorded — <@${clientUser.id}> exchanged with <@${exchUser.id}>.`,ephemeral:true});
+        return interaction.reply({content:`Vouch recorded \u2014 <@${clientUser.id}> exchanged with <@${exchUser.id}>.`,ephemeral:true});
       }
 
       if(cmd==="alert"){const coin=interaction.options.getString("coin").toUpperCase(),price=interaction.options.getNumber("price"),dir=interaction.options.getString("direction");if(!COINS.includes(coin))return interaction.reply({content:`Unsupported coin: ${coin}`,ephemeral:true});state.alerts.push({userId:interaction.user.id,coin,target:price,direction:dir});return interaction.reply({embeds:[base("Price Alert Set").setThumbnail(COIN_LOGO[coin]||IMG.LOGO).setDescription(`You will be DM'd when **${coin}** goes **${dir}** **$${price.toLocaleString("en-US")}**.`).setFooter({text:"Konvert  \u2022  Price Alerts"})],ephemeral:true});}
-
       if(cmd==="ticket"){const tickets=load("tickets"),found=Object.entries(tickets).find(([,t])=>t.userId===interaction.user.id&&t.status==="open");if(!found)return interaction.reply({content:"You don't have an open ticket. Use **Exchange Now** to start one.",ephemeral:true});const [channelId,t]=found,m=getMethod(t.method);return interaction.reply({embeds:[base("Your Open Ticket").setThumbnail(IMG.LOGO).addFields({name:"Channel",value:`<#${channelId}>`,inline:true},{name:"Method",value:`**${m?.label||t.method}**`,inline:true},{name:"Amount",value:`**${fmtUSD(t.amountUSD)}**`,inline:true},{name:"Coin",value:`**${t.coin||"--"}**`,inline:true},{name:"Direction",value:t.direction==="send"?"Fiat \u2192 Crypto":"Crypto \u2192 Fiat",inline:true},{name:"Opened",value:`<t:${Math.floor(t.createdAt/1000)}:R>`,inline:true}).setFooter({text:"Konvert  \u2022  All communication stays in your ticket"})],ephemeral:true});}
-
       if(cmd==="howto"){return interaction.reply({embeds:[base("How to Use Konvert").setThumbnail(IMG.LOGO).setDescription("New to Konvert? Here's how a trade works step by step.\n\u200b").addFields({name:"1.  Check Rates",value:"Use **Live Rates** or type `$BTC` / `$ETH` etc. in any channel to see the current price.",inline:false},{name:"2.  Calculate Fee",value:"Use **Calculate Fee** to estimate your cost. Fees range from **5% - 10%** depending on amount.",inline:false},{name:"3.  Open a Ticket",value:"Click **Exchange Now**, pick your payment method, fill in details, confirm. A private ticket opens instantly.",inline:false},{name:"4.  Agree on an MM",value:"A **middleman** is required on all trades. Agree on one with your exchanger inside your ticket.",inline:false},{name:"5.  Send & Confirm",value:"Staff confirms the deal. You send funds and share proof. Once confirmed, you receive your crypto or payment.",inline:false},{name:"Stay Safe",value:"Staff never DM you first. Anyone doing so is an impersonator. All communication stays in your ticket.",inline:false}).setFooter({text:"Konvert  \u2022  Questions? Ask in your ticket"})],ephemeral:true});}
-
       if(cmd==="ping"){const sent=Date.now();await interaction.deferReply({ephemeral:true});return interaction.editReply({embeds:[base("Bot Status").setThumbnail(IMG.LOGO).setDescription("**All systems operational.** Konvert is online and ready.\n\u200b").addFields({name:"Status",value:"**Online**",inline:true},{name:"Latency",value:`**${Date.now()-sent}ms**`,inline:true},{name:"API Latency",value:`**${client.ws.ping}ms**`,inline:true}).setFooter({text:"Konvert  \u2022  Bot Status"})]});}
-
       if(cmd==="supported"){return interaction.reply({embeds:[base("Supported Methods & Coins").setThumbnail(IMG.LOGO).addFields({name:"\uD83D\uDCB3  Payment Methods",value:METHODS.map(m=>`**${m.label}**`).join("  \u00b7  "),inline:false},{name:"\uD83E\uDE99  Cryptocurrencies",value:COINS.map(c=>`\`${c}\``).join("  ")+"\n\n*Don't see your coin? Ask in your ticket -- we support most major coins.*",inline:false}).setFooter({text:"Don't see your method or coin? Open a ticket and ask  \u2022  Konvert"})],ephemeral:true});}
-
       if(cmd==="review"){const modal=new ModalBuilder().setCustomId("modal_review").setTitle("Leave a Review for Konvert");modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("review_text").setLabel("Your experience with Konvert").setStyle(TextInputStyle.Paragraph).setPlaceholder("Fast, legit, smooth -- describe your experience").setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("review_rating").setLabel("Rating out of 5").setStyle(TextInputStyle.Short).setPlaceholder("5").setRequired(true)));return interaction.showModal(modal);}
-
       if(cmd==="remind"){const mins=interaction.options.getInteger("minutes"),message=interaction.options.getString("message");if(mins<1||mins>1440)return interaction.reply({content:"Reminder must be between 1 minute and 24 hours.",ephemeral:true});await interaction.reply({content:`Got it. I'll remind you about **"${message}"** in **${mins} minute${mins!==1?"s":""}**.`,ephemeral:true});setTimeout(async()=>{try{const user=await client.users.fetch(interaction.user.id);await user.send({embeds:[base("Reminder").setDescription(`**"${message}"**\n\nThis is your reminder from **${mins} minute${mins!==1?"s":""}** ago.`).setFooter({text:"Konvert  \u2022  Reminder"})]});}catch{}},mins*60*1000);return;}
-
       if(cmd==="uptime"){const ms=process.uptime()*1000,hrs=Math.floor(ms/3600000),min=Math.floor((ms%3600000)/60000),sec=Math.floor((ms%60000)/1000),str=`${hrs}h ${min}m ${sec}s`;return interaction.reply({embeds:[base("Bot Uptime").setThumbnail(IMG.LOGO).setDescription(`Konvert Bot has been online for **${str}**.\n\u200b`).addFields({name:"Status",value:"**Online**",inline:true},{name:"Uptime",value:`**${str}**`,inline:true},{name:"Latency",value:`**${client.ws.ping}ms**`,inline:true}).setFooter({text:"Konvert  \u2022  Bot Status"})],ephemeral:true});}
-
-      // ── REFERRAL COMMANDS ────────────────────────────────────────────────────
 
       if(cmd==="referral"){
         await interaction.deferReply({ephemeral:true});
-        const userId=interaction.user.id;
-        const ref=getReferrals();
+        const userId=interaction.user.id,ref=getReferrals();
         if(ref.blacklist?.[userId])return interaction.editReply({content:"You are not eligible for the Konvert referral program.",ephemeral:true});
-        const pts=ref.points[userId]?.balance||0;
-        const dollarVal=pointsToDollars(pts);
-        const pending=ref.points[userId]?.pendingPayout||false;
-        // Check for existing valid invite
+        const pts=ref.points[userId]?.balance||0,dollarVal=pointsToDollars(pts),pending=ref.points[userId]?.pendingPayout||false;
         let existingInvite=null;
         const existing=ref.inviteCodes[userId];
-        if(existing&&existing.code){
-          // Verify invite still exists on Discord
-          try{
-            const guild=interaction.guild;
-            const invites=await guild.invites.fetch();
-            const found=invites.find(i=>i.code===existing.code);
-            if(found)existingInvite=found;
-          }catch{}
-        }
+        if(existing&&existing.code){try{const invites=await interaction.guild.invites.fetch();const found=invites.find(i=>i.code===existing.code);if(found)existingInvite=found;}catch{}}
         let invite=existingInvite;
-        if(!invite){
-          // Create new invite in the exchange channel
-          try{
-            const guild=interaction.guild;
-            const ch=guild.channels.cache.get(CONFIG.EXCHANGE_CHANNEL)||guild.channels.cache.first();
-            invite=await ch.createInvite({maxAge:0,maxUses:0,unique:true,reason:`Konvert referral link for ${interaction.user.tag}`});
-            ref.invites[invite.code]=userId;
-            ref.inviteCodes[userId]={code:invite.code,expiresAt:0,uses:0};
-            saveReferrals(ref);
-            _inviteCache.set(invite.code,invite.uses);
-          }catch(e){
-            return interaction.editReply({content:`❌ Could not create invite link: ${e.message}`,ephemeral:true});
-          }
-        }
-        const expiresTimestamp=Math.floor((ref.inviteCodes[userId]?.expiresAt||Date.now())/1000);
+        if(!invite){try{const guild=interaction.guild;const ch=guild.channels.cache.get(CONFIG.EXCHANGE_CHANNEL)||guild.channels.cache.first();invite=await ch.createInvite({maxAge:0,maxUses:0,unique:true,reason:`Konvert referral link for ${interaction.user.tag}`});ref.invites[invite.code]=userId;ref.inviteCodes[userId]={code:invite.code,expiresAt:0,uses:0};saveReferrals(ref);_inviteCache.set(invite.code,invite.uses);}catch(e){return interaction.editReply({content:`\u274C Could not create invite link: ${e.message}`,ephemeral:true});}}
         const referredCount=Object.values(ref.referred).filter(r=>r===userId).length;
-        const embed=new EmbedBuilder()
-          .setColor(0x7C4DFF)
-          .setAuthor({name:"Konvert  ·  Referral Program",iconURL:PTS_IMG})
-          .setTitle("🔗  Your Referral Link")
-          .setThumbnail(IMG.LOGO)
-          .setDescription(`Share your link below. When someone joins through it and completes a trade, you earn points automatically.\n\u200b`)
-          .addFields(
-            {name:"Your Invite",value:`**https://discord.gg/${invite.code}**`,inline:false},
-            {name:"Link",value:"**Permanent** \u2014 never expires",inline:true},
-            {name:"People Referred",value:`**${referredCount}**`,inline:true},
-            {name:"\u200b",value:"\u200b",inline:true},
-            {name:"Your Balance",value:`**${pts} pts**`,inline:true},
-            {name:"USD Value",value:`**$${dollarVal}**`,inline:true},
-            {name:"Status",value:pending?"⏳ Payout pending":pts>=MIN_WITHDRAW_POINTS?"✅ Ready to withdraw":"Need **"+`${MIN_WITHDRAW_POINTS-pts}`+"** more pts",inline:true},
-          )
-          .addFields({name:"\u200b",value:`**How it works**\n💸  **${POINTS_PER_100} pts** earned per **$100** exchanged by your referral\n💰  **${POINTS_PER_DOLLAR} pts = $1**  ·  Minimum withdrawal: **${MIN_WITHDRAW_POINTS} pts ($${(MIN_WITHDRAW_POINTS/POINTS_PER_DOLLAR).toFixed(0)})**\n📬  You get a DM every time they trade`,inline:false})
-          .setImage(IMG.BANNER)
-          .setFooter({text:"Konvert Referrals  •  Earn while your network trades"})
-          .setTimestamp();
-        return interaction.editReply({embeds:[embed]});
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert  \u00b7  Referral Program",iconURL:PTS_IMG}).setTitle("\uD83D\uDD17  Your Referral Link").setThumbnail(IMG.LOGO).setDescription(`Share your link below. When someone joins through it and completes a trade, you earn points automatically.\n\u200b`).addFields({name:"Your Invite",value:`**https://discord.gg/${invite.code}**`,inline:false},{name:"Link",value:"**Permanent** \u2014 never expires",inline:true},{name:"People Referred",value:`**${referredCount}**`,inline:true},{name:"\u200b",value:"\u200b",inline:true},{name:"Your Balance",value:`**${pts} pts**`,inline:true},{name:"USD Value",value:`**$${dollarVal}**`,inline:true},{name:"Status",value:pending?"⏳ Payout pending":pts>=MIN_WITHDRAW_POINTS?"✅ Ready to withdraw":"Need **"+`${MIN_WITHDRAW_POINTS-pts}`+"** more pts",inline:true}).addFields({name:"\u200b",value:`**How it works**\n💸  **${POINTS_PER_100} pts** earned per **$100** exchanged by your referral\n💰  **${POINTS_PER_DOLLAR} pts = $1**  \u00b7  Minimum withdrawal: **${MIN_WITHDRAW_POINTS} pts ($${(MIN_WITHDRAW_POINTS/POINTS_PER_DOLLAR).toFixed(0)})**\n📬  You get a DM every time they trade`,inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert Referrals  \u2022  Earn while your network trades"}).setTimestamp()]});
       }
 
       if(cmd==="mypoints"){
         await interaction.deferReply({ephemeral:true});
-        const userId=interaction.user.id;
-        const ref=getReferrals();
+        const userId=interaction.user.id,ref=getReferrals();
         const data=ref.points[userId]||{balance:0,paid:0,history:[],pendingPayout:false};
-        const bal=data.balance||0;
-        const paid=data.paid||0;
-        const history=(data.history||[]).slice(-10).reverse(); // last 10 events, newest first
+        const bal=data.balance||0,paid=data.paid||0;
+        const history=(data.history||[]).slice(-10).reverse();
         const referredCount=Object.values(ref.referred).filter(r=>r===userId).length;
         const readyToWithdraw=bal>=MIN_WITHDRAW_POINTS&&!data.pendingPayout;
-
         let historyText="No activity yet.";
-        if(history.length){
-          historyText=history.map(h=>{
-            if(h.type==="earned")return `+**${h.points} pts**  ·  $${fmtUSD(h.amountUSD||0)} trade  ·  <t:${Math.floor((h.at||Date.now())/1000)}:R>`;
-            if(h.type==="paid")return `💵  **Paid out ${h.points} pts**  ·  <t:${Math.floor((h.at||Date.now())/1000)}:R>`;
-            return `**${h.points} pts**`;
-          }).join("\n");
-        }
-
-        const withdrawStatusMp=data.pendingPayout
-          ?"⏳  Payout requested — staff will process shortly"
-          :readyToWithdraw
-            ?`✅  **Ready to withdraw** — open a ticket in <#${SUPPORT_CH}>`
-            :`**${MIN_WITHDRAW_POINTS-bal} pts** to go  (${bal}/${MIN_WITHDRAW_POINTS} pts)`;
-        const embed=new EmbedBuilder()
-          .setColor(bal>=MIN_WITHDRAW_POINTS?0x22c55e:0x7C4DFF)
-          .setAuthor({name:"Konvert  ·  Referral Program",iconURL:PTS_IMG})
-          .setTitle("My Points")
-          .setThumbnail(PTS_IMG)
-          .setDescription(`**${interaction.user.username}**, here's a full breakdown of your referral earnings.\n\u200b`)
-          .addFields(
-            {name:"💰  Balance",value:`**${bal} pts**  ·  **${pointsToDollars(bal)}**`,inline:true},
-            {name:"👥  Referred",value:`**${referredCount}** member${referredCount!==1?"s":""}`,inline:true},
-            {name:"💵  All-Time Paid",value:`**${pointsToDollars(paid)}**`,inline:true},
-            {name:"📬  Withdraw Status",value:withdrawStatusMp,inline:false},
-            {name:"📋  Recent Activity",value:historyText,inline:false},
-          )
-          .setImage(IMG.BANNER)
-          .setFooter({text:"Konvert Referral Program  ·  10 pts = $1  ·  Min: 50 pts"})
-          .setTimestamp();
+        if(history.length){historyText=history.map(h=>{if(h.type==="earned")return `+**${h.points} pts**  \u00b7  $${fmtUSD(h.amountUSD||0)} trade  \u00b7  <t:${Math.floor((h.at||Date.now())/1000)}:R>`;if(h.type==="paid")return `💵  **Paid out ${h.points} pts**  \u00b7  <t:${Math.floor((h.at||Date.now())/1000)}:R>`;return `**${h.points} pts**`;}).join("\n");}
+        const withdrawStatusMp=data.pendingPayout?"⏳  Payout requested \u2014 staff will process shortly":readyToWithdraw?`\u2705  **Ready to withdraw** \u2014 open a ticket in <#${SUPPORT_CH}>`:`**${MIN_WITHDRAW_POINTS-bal} pts** to go  (${bal}/${MIN_WITHDRAW_POINTS} pts)`;
+        const embed=new EmbedBuilder().setColor(bal>=MIN_WITHDRAW_POINTS?0x22c55e:0x7C4DFF).setAuthor({name:"Konvert  \u00b7  Referral Program",iconURL:PTS_IMG}).setTitle("My Points").setThumbnail(PTS_IMG).setDescription(`**${interaction.user.username}**, here's a full breakdown of your referral earnings.\n\u200b`).addFields({name:"💰  Balance",value:`**${bal} pts**  \u00b7  **${pointsToDollars(bal)}**`,inline:true},{name:"👥  Referred",value:`**${referredCount}** member${referredCount!==1?"s":""}`,inline:true},{name:"💵  All-Time Paid",value:`**${pointsToDollars(paid)}**`,inline:true},{name:"📬  Withdraw Status",value:withdrawStatusMp,inline:false},{name:"📋  Recent Activity",value:historyText,inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert Referral Program  \u00b7  10 pts = $1  \u00b7  Min: 50 pts"}).setTimestamp();
         const components=[];
-        if(readyToWithdraw){
-          components.push(new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId("btn_request_payout").setLabel("Request Payout").setEmoji("💸").setStyle(ButtonStyle.Success)
-          ));
-        }
+        if(readyToWithdraw){components.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_request_payout").setLabel("Request Payout").setEmoji("💸").setStyle(ButtonStyle.Success)));}
         return interaction.editReply({embeds:[embed],components});
       }
 
       if(cmd==="postref"){
-        const embed=new EmbedBuilder()
-          .setColor(0x7C4DFF)
-          .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
-          .setTitle("🔗  Konvert Referral Program")
-          .setThumbnail(IMG.LOGO)
-          .setDescription(
-            "**Refer people to Konvert and earn real money every time they trade.**\n\n" +
-            "Share your link. When someone joins and completes a trade, you earn points automatically. No manual tracking, no asking staff.\n\u200b"
-          )
-          .addFields(
-            {name:"💸  How Points Work",value:"> **"+POINTS_PER_100+" points** earned per **$100** your referral exchanges\n> **"+POINTS_PER_DOLLAR+" points = $1**\n> Minimum payout: **"+MIN_WITHDRAW_POINTS+" points = $"+(MIN_WITHDRAW_POINTS/POINTS_PER_DOLLAR).toFixed(0)+"**\n\u200b",inline:false},
-            {name:"📋  Example",value:"> Referral completes a **$500** trade\n> You earn **"+calcReferralPoints(500)+" points** ($"+pointsToDollars(calcReferralPoints(500))+")\n> Lands in your balance instantly\n\u200b",inline:false},
-            {name:"⚡  Commands",value:"`/referral` — Get your invite link + view balance\n`/mypoints` — Full history, balance, request payout\n`/referraltop` — Top referrers leaderboard\n\u200b",inline:false},
-            {name:"📬  You Get a DM Every Time",value:"— Someone joins using your link\n— They complete a trade (points shown)\n— Your payout is processed\n\u200b",inline:false},
-            {name:"💡  No Limits",value:"Refer as many people as you want. Every trade they ever complete earns you points forever.\n\u200b",inline:false},
-          )
-          .setImage(IMG.BANNER)
-          .setFooter({text:"Konvert Referrals  •  Earn while your network trades"})
-          .setTimestamp();
-        const refRow=new ActionRowBuilder().addComponents(
-          new ButtonBuilder().setCustomId("btn_get_referral_link").setLabel("Get My Referral Link").setEmoji("🔗").setStyle(ButtonStyle.Primary),
-          new ButtonBuilder().setCustomId("btn_check_points").setLabel("Check My Points").setEmoji("💰").setStyle(ButtonStyle.Secondary),
-        );
+        const embed=new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("\uD83D\uDD17  Konvert Referral Program").setThumbnail(IMG.LOGO).setDescription("**Refer people to Konvert and earn real money every time they trade.**\n\nShare your link. When someone joins and completes a trade, you earn points automatically. No manual tracking, no asking staff.\n\u200b").addFields({name:"💸  How Points Work",value:`> **${POINTS_PER_100} points** earned per **$100** your referral exchanges\n> **${POINTS_PER_DOLLAR} points = $1**\n> Minimum payout: **${MIN_WITHDRAW_POINTS} points = $${(MIN_WITHDRAW_POINTS/POINTS_PER_DOLLAR).toFixed(0)}**\n\u200b`,inline:false},{name:"📋  Example",value:`> Referral completes a **$500** trade\n> You earn **${calcReferralPoints(500)} points** ($${pointsToDollars(calcReferralPoints(500))})\n> Lands in your balance instantly\n\u200b`,inline:false},{name:"⚡  Commands",value:"`/referral` \u2014 Get your invite link + view balance\n`/mypoints` \u2014 Full history, balance, request payout\n`/referraltop` \u2014 Top referrers leaderboard\n\u200b",inline:false},{name:"📬  You Get a DM Every Time",value:"\u2014 Someone joins using your link\n\u2014 They complete a trade (points shown)\n\u2014 Your payout is processed\n\u200b",inline:false},{name:"💡  No Limits",value:"Refer as many people as you want. Every trade they ever complete earns you points forever.\n\u200b",inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert Referrals  \u2022  Earn while your network trades"}).setTimestamp();
+        const refRow=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_get_referral_link").setLabel("Get My Referral Link").setEmoji("\uD83D\uDD17").setStyle(ButtonStyle.Primary),new ButtonBuilder().setCustomId("btn_check_points").setLabel("Check My Points").setEmoji("💰").setStyle(ButtonStyle.Secondary));
         await interaction.channel.send({embeds:[embed],components:[refRow]});
         return interaction.reply({content:"Referral program embed posted.",ephemeral:true});
       }
 
-
       if(cmd==="adjustpoints"){
         await interaction.deferReply({ephemeral:true});
-        const target=interaction.options.getUser("user");
-        const amount=interaction.options.getNumber("amount");
-        const reason=interaction.options.getString("reason")||"Staff adjustment";
+        const target=interaction.options.getUser("user"),amount=interaction.options.getNumber("amount"),reason=interaction.options.getString("reason")||"Staff adjustment";
         if(amount===0)return interaction.editReply({content:"Amount cannot be 0.",ephemeral:true});
         const ref=getReferrals();
         if(!ref.points[target.id])ref.points[target.id]={balance:0,paid:0,history:[],pendingPayout:false};
@@ -1445,188 +849,55 @@ client.on(Events.InteractionCreate, async interaction => {
         ref.points[target.id].history.push({type:"adjustment",points:amount,reason,by:interaction.user.id,at:Date.now()});
         saveReferrals(ref);
         const after=ref.points[target.id].balance;
-        // DM the user
-        try{
-          const u=await client.users.fetch(target.id);
-          await u.send({embeds:[new EmbedBuilder()
-            .setColor(amount>0?0x22c55e:0xef4444)
-            .setAuthor({name:"Konvert  ·  Referral Program",iconURL:PTS_IMG})
-            .setTitle("Points Adjusted by Staff").setThumbnail(PTS_IMG)
-            .setDescription(`A staff member has adjusted your referral points balance.\n\u200b`)
-            .addFields(
-              {name:"Adjustment",value:`**${amount>0?"+":""}${amount} pts**`,inline:true},
-              {name:"New Balance",value:`**${after} pts** (${pointsToDollars(after)})`,inline:true},
-              {name:"Reason",value:reason,inline:false},
-            )
-            .setFooter({text:"Konvert Referral Program"}).setTimestamp()]});
-        }catch{}
-        return interaction.editReply({embeds:[new EmbedBuilder()
-          .setColor(0x7C4DFF).setAuthor({name:"Konvert  ·  Referral Admin",iconURL:PTS_IMG})
-          .setTitle("Points Adjusted").setThumbnail(target.displayAvatarURL({size:128}))
-          .setDescription(`Referral points adjusted for <@${target.id}>.\n\u200b`)
-          .addFields(
-            {name:"Before",value:`**${before} pts**`,inline:true},
-            {name:"Adjustment",value:`**${amount>0?"+":""}${amount} pts**`,inline:true},
-            {name:"After",value:`**${after} pts** (${pointsToDollars(after)})`,inline:true},
-            {name:"Reason",value:reason,inline:false},
-          )
-          .setFooter({text:`Adjusted by ${interaction.user.tag}  ·  Konvert Referral Program`}).setTimestamp()]});
+        try{const u=await client.users.fetch(target.id);await u.send({embeds:[new EmbedBuilder().setColor(amount>0?0x22c55e:0xef4444).setAuthor({name:"Konvert  \u00b7  Referral Program",iconURL:PTS_IMG}).setTitle("Points Adjusted by Staff").setThumbnail(PTS_IMG).setDescription(`A staff member has adjusted your referral points balance.\n\u200b`).addFields({name:"Adjustment",value:`**${amount>0?"+":""}${amount} pts**`,inline:true},{name:"New Balance",value:`**${after} pts** (${pointsToDollars(after)})`,inline:true},{name:"Reason",value:reason,inline:false}).setFooter({text:"Konvert Referral Program"}).setTimestamp()]});}catch{}
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert  \u00b7  Referral Admin",iconURL:PTS_IMG}).setTitle("Points Adjusted").setThumbnail(target.displayAvatarURL({size:128})).setDescription(`Referral points adjusted for <@${target.id}>.\n\u200b`).addFields({name:"Before",value:`**${before} pts**`,inline:true},{name:"Adjustment",value:`**${amount>0?"+":""}${amount} pts**`,inline:true},{name:"After",value:`**${after} pts** (${pointsToDollars(after)})`,inline:true},{name:"Reason",value:reason,inline:false}).setFooter({text:`Adjusted by ${interaction.user.tag}  \u00b7  Konvert Referral Program`}).setTimestamp()]});
       }
 
       if(cmd==="blacklistref"){
         await interaction.deferReply({ephemeral:true});
-        const target=interaction.options.getUser("user");
-        const reason=interaction.options.getString("reason")||"No reason given";
-        const ref=getReferrals();
-        if(!ref.blacklist)ref.blacklist={};
-        ref.blacklist[target.id]={reason,by:interaction.user.tag,at:Date.now()};
-        saveReferrals(ref);
-        try{
-          const u=await client.users.fetch(target.id);
-          await u.send({embeds:[new EmbedBuilder()
-            .setColor(0xef4444).setAuthor({name:"Konvert  ·  Referral Program",iconURL:PTS_IMG})
-            .setTitle("Referral Access Removed")
-            .setDescription(`Your access to the Konvert referral program has been removed by staff.\n**Reason:** ${reason}\n\nContact support if you believe this is a mistake.`)
-            .setFooter({text:"Konvert Referral Program"}).setTimestamp()]});
-        }catch{}
+        const target=interaction.options.getUser("user"),reason=interaction.options.getString("reason")||"No reason given";
+        const ref=getReferrals();if(!ref.blacklist)ref.blacklist={};ref.blacklist[target.id]={reason,by:interaction.user.tag,at:Date.now()};saveReferrals(ref);
+        try{const u=await client.users.fetch(target.id);await u.send({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert  \u00b7  Referral Program",iconURL:PTS_IMG}).setTitle("Referral Access Removed").setDescription(`Your access to the Konvert referral program has been removed by staff.\n**Reason:** ${reason}\n\nContact support if you believe this is a mistake.`).setFooter({text:"Konvert Referral Program"}).setTimestamp()]});}catch{}
         return interaction.editReply({content:`**${target.username}** has been blacklisted from the referral program. Reason: ${reason}`,ephemeral:true});
       }
 
-      if(cmd==="unblacklistref"){
-        await interaction.deferReply({ephemeral:true});
-        const target=interaction.options.getUser("user");
-        const ref=getReferrals();
-        if(!ref.blacklist)ref.blacklist={};
-        delete ref.blacklist[target.id];
-        saveReferrals(ref);
-        return interaction.editReply({content:`**${target.username}** has been removed from the referral blacklist.`,ephemeral:true});
-      }
+      if(cmd==="unblacklistref"){await interaction.deferReply({ephemeral:true});const target=interaction.options.getUser("user");const ref=getReferrals();if(!ref.blacklist)ref.blacklist={};delete ref.blacklist[target.id];saveReferrals(ref);return interaction.editReply({content:`**${target.username}** has been removed from the referral blacklist.`,ephemeral:true});}
 
       if(cmd==="referraltop"){
         await interaction.deferReply();
         const ref=getReferrals();
-        const entries=Object.entries(ref.points||{})
-          .map(([uid,data])=>({uid,balance:data.balance||0,paid:data.paid||0,total:(data.balance||0)+(data.paid||0)}))
-          .filter(e=>e.total>0)
-          .sort((a,b)=>b.total-a.total)
-          .slice(0,10);
-
-        if(!entries.length){
-          return interaction.editReply({embeds:[new EmbedBuilder()
-            .setColor(0x7C4DFF).setAuthor({name:"Konvert  ·  Referral Program",iconURL:PTS_IMG})
-            .setTitle("Referral Leaderboard").setThumbnail(PTS_IMG)
-            .setDescription("No referral activity yet. Be the first to refer someone and start earning.\n\nUse `/referral` to get your personal invite link.\n\u200b")
-            .setImage(IMG.BANNER).setFooter({text:"Konvert Referral Program  ·  Top referrers by lifetime points"}).setTimestamp()]});
-        }
-
+        const entries=Object.entries(ref.points||{}).map(([uid,data])=>({uid,balance:data.balance||0,paid:data.paid||0,total:(data.balance||0)+(data.paid||0)})).filter(e=>e.total>0).sort((a,b)=>b.total-a.total).slice(0,10);
+        if(!entries.length){return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert  \u00b7  Referral Program",iconURL:PTS_IMG}).setTitle("Referral Leaderboard").setThumbnail(PTS_IMG).setDescription("No referral activity yet. Be the first to refer someone and start earning.\n\nUse `/referral` to get your personal invite link.\n\u200b").setImage(IMG.BANNER).setFooter({text:"Konvert Referral Program  \u00b7  Top referrers by lifetime points"}).setTimestamp()]});}
         const medals=["🥇","🥈","🥉"];
-        const lines=entries.map((e,i)=>{
-          const referredCount=Object.values(ref.referred).filter(r=>r===e.uid).length;
-          return `${medals[i]||`**${i+1}.**`}  <@${e.uid}>  —  **${e.total} pts** ($${pointsToDollars(e.total)})  ·  ${referredCount} referred`;
-        }).join("\n");
-
+        const lines=entries.map((e,i)=>{const referredCount=Object.values(ref.referred).filter(r=>r===e.uid).length;return `${medals[i]||`**${i+1}.**`}  <@${e.uid}>  \u2014  **${e.total} pts** ($${pointsToDollars(e.total)})  \u00b7  ${referredCount} referred`;}).join("\n");
         const totalPts=entries.reduce((s,e)=>s+e.total,0);
-        return interaction.editReply({embeds:[new EmbedBuilder()
-          .setColor(0x7C4DFF).setAuthor({name:"Konvert  ·  Referral Program",iconURL:PTS_IMG})
-          .setTitle("Referral Leaderboard")
-          .setDescription(`Ranked by lifetime points earned. Top ${entries.length} referrers at Konvert.\n\u200b`)
-          .setThumbnail(PTS_IMG)
-          .addFields({name:"Rankings",value:lines,inline:false})
-          .setImage(IMG.BANNER)
-          .setFooter({text:`${totalPts} total pts earned across all referrers  ·  Konvert Referral Program`}).setTimestamp()]});
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert  \u00b7  Referral Program",iconURL:PTS_IMG}).setTitle("Referral Leaderboard").setDescription(`Ranked by lifetime points earned. Top ${entries.length} referrers at Konvert.\n\u200b`).setThumbnail(PTS_IMG).addFields({name:"Rankings",value:lines,inline:false}).setImage(IMG.BANNER).setFooter({text:`${totalPts} total pts earned across all referrers  \u00b7  Konvert Referral Program`}).setTimestamp()]});
       }
 
       if(cmd==="referraladmin"){
         await interaction.deferReply({ephemeral:true});
         const ref=getReferrals();
-        const pending=Object.entries(ref.points||{})
-          .filter(([,d])=>(d.balance||0)>=MIN_WITHDRAW_POINTS)
-          .sort((a,b)=>(b[1].balance||0)-(a[1].balance||0));
-
-        if(!pending.length){
-          return interaction.editReply({embeds:[new EmbedBuilder()
-            .setColor(0x7C4DFF).setAuthor({name:"Konvert  ·  Referral Admin",iconURL:PTS_IMG})
-            .setTitle("Pending Payouts").setThumbnail(PTS_IMG)
-            .setDescription("No pending payouts at this time.\n\nAll referrers are either below the **"+MIN_WITHDRAW_POINTS+" pt** minimum or already paid out.\n\u200b")
-            .setFooter({text:"Konvert Referral Program  ·  Admin Panel"}).setTimestamp()
-          ]});
-        }
-
-        const lines=pending.map(([uid,d],i)=>{
-          const referredCount=Object.values(ref.referred).filter(r=>r===uid).length;
-          const flag=d.pendingPayout?"⏳":"💰";
-          return `${flag} **${i+1}.** <@${uid}>  —  **${d.balance} pts** ($${pointsToDollars(d.balance)})  ·  ${referredCount} referred`;
-        }).join("\n");
-
-        return interaction.editReply({embeds:[new EmbedBuilder()
-          .setColor(0xf59e0b).setAuthor({name:"Konvert  ·  Referral Admin",iconURL:PTS_IMG})
-          .setTitle("Pending Payouts").setThumbnail(PTS_IMG)
-          .setDescription(`**${pending.length}** referrer${pending.length!==1?"s":""} with **${MIN_WITHDRAW_POINTS}+ pts** ready for payout.\nUse \`/paypoints @user\` to mark as paid and notify them.\n\u200b`)
-          .addFields({name:"Queue",value:lines,inline:false})
-          .setImage(IMG.BANNER)
-          .setFooter({text:`Konvert Referral Program  ·  Admin Panel  ·  ${pending.length} pending`}).setTimestamp()
-        ]});
+        const pending=Object.entries(ref.points||{}).filter(([,d])=>(d.balance||0)>=MIN_WITHDRAW_POINTS).sort((a,b)=>(b[1].balance||0)-(a[1].balance||0));
+        if(!pending.length){return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert  \u00b7  Referral Admin",iconURL:PTS_IMG}).setTitle("Pending Payouts").setThumbnail(PTS_IMG).setDescription("No pending payouts at this time.\n\nAll referrers are either below the **"+MIN_WITHDRAW_POINTS+" pt** minimum or already paid out.\n\u200b").setFooter({text:"Konvert Referral Program  \u00b7  Admin Panel"}).setTimestamp()]});}
+        const lines=pending.map(([uid,d],i)=>{const referredCount=Object.values(ref.referred).filter(r=>r===uid).length;const flag=d.pendingPayout?"⏳":"💰";return `${flag} **${i+1}.** <@${uid}>  \u2014  **${d.balance} pts** ($${pointsToDollars(d.balance)})  \u00b7  ${referredCount} referred`;}).join("\n");
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0xf59e0b).setAuthor({name:"Konvert  \u00b7  Referral Admin",iconURL:PTS_IMG}).setTitle("Pending Payouts").setThumbnail(PTS_IMG).setDescription(`**${pending.length}** referrer${pending.length!==1?"s":""} with **${MIN_WITHDRAW_POINTS}+ pts** ready for payout.\nUse \`/paypoints @user\` to mark as paid and notify them.\n\u200b`).addFields({name:"Queue",value:lines,inline:false}).setImage(IMG.BANNER).setFooter({text:`Konvert Referral Program  \u00b7  Admin Panel  \u00b7  ${pending.length} pending`}).setTimestamp()]});
       }
 
       if(cmd==="paypoints"){
         await interaction.deferReply({ephemeral:true});
-        const target=interaction.options.getUser("user");
-        const ref=getReferrals();
-        const data=ref.points[target.id];
-        if(!data||!data.balance||data.balance<=0){
-          return interaction.editReply({content:`**${target.username}** has no points to pay out.`,ephemeral:true});
-        }
-        const paidPts=data.balance;
-        const paidUSD=pointsToDollars(paidPts);
-        data.paid=(data.paid||0)+paidPts;
-        data.history=(data.history||[]);
-        data.history.push({type:"paid",points:paidPts,at:Date.now(),paidBy:interaction.user.id});
-        data.balance=0;
-        data.pendingPayout=false;
-        ref.points[target.id]=data;
-        saveReferrals(ref);
-        // DM the recipient
-        try{
-          const embed=new EmbedBuilder()
-            .setColor(0x00C853)
-            .setAuthor({name:"Konvert  ·  Referral Program",iconURL:PTS_IMG})
-            .setTitle("Payout Complete")
-            .setThumbnail(PTS_IMG)
-            .setDescription(`Your referral points have been paid out. Thank you for growing the Konvert community!\n\u200b`)
-            .addFields(
-              {name:"💰  Points Paid",value:`**${paidPts} pts**`,inline:true},
-              {name:"💵  USD Value",value:`**${paidUSD}**`,inline:true},
-              {name:"💳  Processed By",value:`<@${interaction.user.id}>`,inline:true},
-              {name:"📊  New Balance",value:"**0 pts**",inline:true},
-              {name:"🏆  All-Time Earned",value:`**${pointsToDollars(data.paid)}**`,inline:true},
-            )
-            .setImage(IMG.BANNER)
-            .setFooter({text:"Konvert Referral Program  ·  Keep sharing your link to keep earning"})
-            .setTimestamp();
-          await target.send({embeds:[embed]});
-        }catch{}
-        return interaction.editReply({embeds:[new EmbedBuilder()
-          .setColor(0x22c55e).setAuthor({name:"Konvert  ·  Referral Admin",iconURL:PTS_IMG})
-          .setTitle("Payout Recorded").setThumbnail(target.displayAvatarURL({size:128}))
-          .setDescription(`Payout confirmed for <@${target.id}>. They have been notified via DM.\n\u200b`)
-          .addFields(
-            {name:"💰  Paid Out",value:`**${paidPts} pts** (${paidUSD})`,inline:true},
-            {name:"📊  New Balance",value:"**0 pts**",inline:true},
-            {name:"🏆  All-Time",value:`**${pointsToDollars(data.paid)}**`,inline:true},
-          )
-          .setFooter({text:`Processed by ${interaction.user.tag}  ·  Konvert Referral Program`}).setTimestamp()
-        ]});
+        const target=interaction.options.getUser("user"),ref=getReferrals(),data=ref.points[target.id];
+        if(!data||!data.balance||data.balance<=0){return interaction.editReply({content:`**${target.username}** has no points to pay out.`,ephemeral:true});}
+        const paidPts=data.balance,paidUSD=pointsToDollars(paidPts);
+        data.paid=(data.paid||0)+paidPts;data.history=(data.history||[]);data.history.push({type:"paid",points:paidPts,at:Date.now(),paidBy:interaction.user.id});data.balance=0;data.pendingPayout=false;ref.points[target.id]=data;saveReferrals(ref);
+        try{await target.send({embeds:[new EmbedBuilder().setColor(0x00C853).setAuthor({name:"Konvert  \u00b7  Referral Program",iconURL:PTS_IMG}).setTitle("Payout Complete").setThumbnail(PTS_IMG).setDescription(`Your referral points have been paid out. Thank you for growing the Konvert community!\n\u200b`).addFields({name:"💰  Points Paid",value:`**${paidPts} pts**`,inline:true},{name:"💵  USD Value",value:`**${paidUSD}**`,inline:true},{name:"💳  Processed By",value:`<@${interaction.user.id}>`,inline:true},{name:"📊  New Balance",value:"**0 pts**",inline:true},{name:"🏆  All-Time Earned",value:`**${pointsToDollars(data.paid)}**`,inline:true}).setImage(IMG.BANNER).setFooter({text:"Konvert Referral Program  \u00b7  Keep sharing your link to keep earning"}).setTimestamp()]});}catch{}
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x22c55e).setAuthor({name:"Konvert  \u00b7  Referral Admin",iconURL:PTS_IMG}).setTitle("Payout Recorded").setThumbnail(target.displayAvatarURL({size:128})).setDescription(`Payout confirmed for <@${target.id}>. They have been notified via DM.\n\u200b`).addFields({name:"💰  Paid Out",value:`**${paidPts} pts** (${paidUSD})`,inline:true},{name:"📊  New Balance",value:"**0 pts**",inline:true},{name:"🏆  All-Time",value:`**${pointsToDollars(data.paid)}**`,inline:true}).setFooter({text:`Processed by ${interaction.user.tag}  \u00b7  Konvert Referral Program`}).setTimestamp()]});
       }
 
-      // ── OWNER COMMANDS ────────────────────────────────────────────────────────
-
       if(cmd==="calc"){await interaction.deferReply({ephemeral:true});if(!CONFIG.RATES_CHANNEL)return interaction.editReply("RATES_CHANNEL_ID not configured.");const ch=interaction.guild.channels.cache.get(CONFIG.RATES_CHANNEL);if(!ch)return interaction.editReply("Rates channel not found.");const embed=await buildRatesEmbed();if(ratesMsgId){const msg=await ch.messages.fetch(ratesMsgId).catch(()=>null);if(msg){await msg.edit({embeds:[embed]});}else{const s=await ch.send({embeds:[embed]});ratesMsgId=s.id;}}else{const s=await ch.send({embeds:[embed]});ratesMsgId=s.id;}return interaction.editReply("Rates posted.");}
-
       if(cmd==="setwallet"){const coin=interaction.options.getString("coin").toUpperCase(),addr=interaction.options.getString("address");const w=load("wallets");w[coin]=addr;save("wallets",w);log(interaction.guild,`WALLET: ${interaction.user.tag} set ${coin} to ${addr}`);return interaction.reply({content:`**${coin}** deposit address updated to \`${addr}\``,ephemeral:true});}
       if(cmd==="announce"){const message=interaction.options.getString("message"),channelId=interaction.options.getString("channel"),ping=interaction.options.getString("ping")||"none",ch=interaction.guild.channels.cache.get(channelId);if(!ch)return interaction.reply({content:"Channel not found.",ephemeral:true});const pingStr=ping==="everyone"?"@everyone ":ping==="here"?"@here ":"";await ch.send({content:pingStr||undefined,embeds:[base("Konvert Announcement").setThumbnail(IMG.LOGO).setDescription(message).setFooter({text:`Announced by ${interaction.user.tag}  \u2022  Konvert`})]});return interaction.reply({content:"Announced.",ephemeral:true});}
       if(cmd==="blacklist"){const target=interaction.options.getUser("user"),reason=interaction.options.getString("reason")||"No reason given";const bl=load("blacklist");bl[target.id]={tag:target.tag,reason,by:interaction.user.tag,at:Date.now()};save("blacklist",bl);log(interaction.guild,`BLACKLIST: ${target.tag} -- ${reason}`);return interaction.reply({content:`**${target.tag}** blacklisted. Reason: ${reason}`,ephemeral:true});}
       if(cmd==="unblacklist"){const target=interaction.options.getUser("user");const bl=load("blacklist");delete bl[target.id];save("blacklist",bl);return interaction.reply({content:`**${target.tag}** removed from blacklist.`,ephemeral:true});}
-
       if(cmd==="closeticket"){const reason=interaction.options.getString("reason")||"Completed";await interaction.deferReply();await doCloseTicket(interaction.channel,interaction.guild,interaction.user,reason);await interaction.editReply({embeds:[new EmbedBuilder().setColor(0xFF4444).setTitle("Ticket Closed").setDescription(`Closed by staff.\n**Reason:** ${reason}\n\nDeleting in 10 seconds.`).setTimestamp()]});setTimeout(()=>interaction.channel.delete().catch(()=>{}),10000);return;}
       if(cmd==="cancelticket"){const reason=interaction.options.getString("reason")||"Cancelled by staff";await interaction.deferReply();const tickets=load("tickets");if(tickets[interaction.channel.id]){tickets[interaction.channel.id].status="cancelled";tickets[interaction.channel.id].cancelledAt=Date.now();save("tickets",tickets);const t=tickets[interaction.channel.id];try{const mem=await interaction.guild.members.fetch(t.userId).catch(()=>null);if(mem)await mem.send({embeds:[base("Ticket Cancelled").setDescription(`Your Konvert exchange ticket has been cancelled by staff.\n**Reason:** ${reason}\n\nIf this is a mistake, please open a new ticket.`).setFooter({text:"Konvert"})]}).catch(()=>{});}catch{}}await interaction.editReply({embeds:[new EmbedBuilder().setColor(0xFF6600).setTitle("Ticket Cancelled").setDescription(`Cancelled by ${interaction.user.tag}\n**Reason:** ${reason}\n\nDeleting in 10 seconds.`).setTimestamp()]});log(interaction.guild,`CANCELLED: #${interaction.channel.name} by ${interaction.user.tag}`);setTimeout(()=>interaction.channel.delete().catch(()=>{}),10000);return;}
 
@@ -1639,126 +910,59 @@ client.on(Events.InteractionCreate, async interaction => {
       }
 
       if(cmd==="note"){const text=interaction.options.getString("text");await interaction.channel.send({embeds:[new EmbedBuilder().setColor(0xFFB347).setAuthor({name:`Staff Note -- ${interaction.user.tag}`,iconURL:interaction.user.displayAvatarURL()}).setDescription(text).setTimestamp().setFooter({text:"Konvert  \u2022  Staff Note"})]});return interaction.reply({content:"Note added.",ephemeral:true});}
-
       if(cmd==="tradelog"){const limit=interaction.options.getInteger("limit")||5;const done=Object.values(load("tickets")).filter(t=>t.status==="vouched"&&t.completedAt&&t.method!=="adjustment").sort((a,b)=>b.completedAt-a.completedAt).slice(0,limit);if(!done.length)return interaction.reply({content:"No completed trades yet.",ephemeral:true});const lines=done.map((t,i)=>{const m=getMethod(t.method);return `**${i+1}.** <@${t.userId}>  \u00b7  ${m?.label||t.method}  \u00b7  ${fmtUSD(t.amountUSD)}  \u00b7  <t:${Math.floor(t.completedAt/1000)}:R>`;}).join("\n");return interaction.reply({embeds:[base(`Last ${done.length} Completed Trades`).setDescription(lines).setFooter({text:"Konvert  \u2022  Trade Log"})],ephemeral:true});}
-
       if(cmd==="volume"){const all=Object.values(load("tickets")),done=all.filter(t=>t.status==="vouched"&&t.amountUSD&&t.method!=="adjustment"),totalVol=done.reduce((s,t)=>s+(t.amountUSD||0),0),totalFees=done.reduce((s,t)=>s+(t.feeUSD||0),0),open=all.filter(t=>t.status==="open").length,today=done.filter(t=>t.completedAt&&Date.now()-t.completedAt<86400000),methods={};done.forEach(t=>{if(t.method)methods[t.method]=(methods[t.method]||0)+1;});const topMethod=Object.entries(methods).sort((a,b)=>b[1]-a[1])[0];return interaction.reply({embeds:[base("Konvert Volume Stats").setThumbnail(IMG.LOGO).addFields({name:"Total Completed",value:`**${done.length}** trades`,inline:true},{name:"Total Volume",value:`**${fmtUSD(totalVol)}**`,inline:true},{name:"Total Fees",value:`**${fmtUSD(totalFees)}**`,inline:true},{name:"Open Tickets",value:`**${open}**`,inline:true},{name:"Today's Volume",value:`**${fmtUSD(today.reduce((s,t)=>s+(t.amountUSD||0),0))}** (${today.length} trades)`,inline:true},{name:"Top Method",value:topMethod?`**${getMethod(topMethod[0])?.label||topMethod[0]}** (${topMethod[1]})`:"--",inline:true}).setFooter({text:"Konvert  \u2022  Server Volume Statistics"})],ephemeral:true});}
 
       if(cmd==="snapshot"){
         await interaction.deferReply({ephemeral:true});
         const guild=interaction.guild,all=Object.values(load("tickets")),done=all.filter(t=>t.status==="vouched"&&t.amountUSD&&t.method!=="adjustment"),open=all.filter(t=>t.status==="open"),today=done.filter(t=>t.completedAt&&Date.now()-t.completedAt<86400000),week=done.filter(t=>t.completedAt&&Date.now()-t.completedAt<7*86400000),totalVol=done.reduce((s,t)=>s+(t.amountUSD||0),0);
-        const methods={},coins={},byEx={};
-        done.forEach(t=>{if(t.method)methods[t.method]=(methods[t.method]||0)+1;if(t.coin)coins[t.coin]=(coins[t.coin]||0)+1;if(t.completedBy)byEx[t.completedBy]=(byEx[t.completedBy]||0)+1;});
+        const methods={},coins={},byEx={};done.forEach(t=>{if(t.method)methods[t.method]=(methods[t.method]||0)+1;if(t.coin)coins[t.coin]=(coins[t.coin]||0)+1;if(t.completedBy)byEx[t.completedBy]=(byEx[t.completedBy]||0)+1;});
         const topMethod=Object.entries(methods).sort((a,b)=>b[1]-a[1])[0],topCoin=Object.entries(coins).sort((a,b)=>b[1]-a[1])[0],topEx=Object.entries(byEx).sort((a,b)=>b[1]-a[1])[0];
         await guild.members.fetch();
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert  \u2022  Server Snapshot",iconURL:IMG.LOGO}).setTitle("Server Snapshot").setThumbnail(IMG.LOGO)
-          .setDescription(`Snapshot taken <t:${Math.floor(Date.now()/1000)}:F>\n\u200b`)
-          .addFields(
-            {name:"\uD83D\uDC65  Members",       value:`**${guild.memberCount}**`,                                                               inline:true},
-            {name:"\uD83C\uDF9F  Open Tickets",  value:`**${open.length}**`,                                                                     inline:true},
-            {name:"\u2705  Completed",           value:`**${done.length}** trades`,                                                               inline:true},
-            {name:"\uD83D\uDCB0  Total Volume",  value:`**${fmtUSD(totalVol)}**`,                                                                 inline:true},
-            {name:"\uD83D\uDCC5  Today",         value:`**${today.length}** trades  \u00b7  ${fmtUSD(today.reduce((s,t)=>s+(t.amountUSD||0),0))}`,inline:true},
-            {name:"\uD83D\uDCC6  This Week",     value:`**${week.length}** trades  \u00b7  ${fmtUSD(week.reduce((s,t)=>s+(t.amountUSD||0),0))}`,  inline:true},
-            {name:"\uD83D\uDCB3  Top Method",    value:topMethod?`**${getMethod(topMethod[0])?.label||topMethod[0]}** (${topMethod[1]})`:"--",    inline:true},
-            {name:"\uD83E\uDE99  Top Coin",      value:topCoin?`**${topCoin[0]}** (${topCoin[1]})`:"--",                                          inline:true},
-            {name:"\uD83C\uDFC6  Top Exchanger", value:topEx?`<@${topEx[0]}> (${topEx[1]} trades)`:"--",                                          inline:true},
-          ).setFooter({text:"Konvert  \u2022  Snapshot"}).setTimestamp()]});
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert  \u2022  Server Snapshot",iconURL:IMG.LOGO}).setTitle("Server Snapshot").setThumbnail(IMG.LOGO).setDescription(`Snapshot taken <t:${Math.floor(Date.now()/1000)}:F>\n\u200b`).addFields({name:"\uD83D\uDC65  Members",value:`**${guild.memberCount}**`,inline:true},{name:"\uD83C\uDF9F  Open Tickets",value:`**${open.length}**`,inline:true},{name:"\u2705  Completed",value:`**${done.length}** trades`,inline:true},{name:"\uD83D\uDCB0  Total Volume",value:`**${fmtUSD(totalVol)}**`,inline:true},{name:"\uD83D\uDCC5  Today",value:`**${today.length}** trades  \u00b7  ${fmtUSD(today.reduce((s,t)=>s+(t.amountUSD||0),0))}`,inline:true},{name:"\uD83D\uDCC6  This Week",value:`**${week.length}** trades  \u00b7  ${fmtUSD(week.reduce((s,t)=>s+(t.amountUSD||0),0))}`,inline:true},{name:"\uD83D\uDCB3  Top Method",value:topMethod?`**${getMethod(topMethod[0])?.label||topMethod[0]}** (${topMethod[1]})`:"--",inline:true},{name:"\uD83E\uDE99  Top Coin",value:topCoin?`**${topCoin[0]}** (${topCoin[1]})`:"--",inline:true},{name:"\uD83C\uDFC6  Top Exchanger",value:topEx?`<@${topEx[0]}> (${topEx[1]} trades)`:"--",inline:true}).setFooter({text:"Konvert  \u2022  Snapshot"}).setTimestamp()]});
       }
 
       if(cmd==="exchangerboard"){const done=Object.values(load("tickets")).filter(t=>t.status==="vouched"&&t.completedBy&&t.method!=="adjustment"),byEx={};done.forEach(t=>{if(!byEx[t.completedBy])byEx[t.completedBy]={trades:0,volume:0};byEx[t.completedBy].trades+=1;byEx[t.completedBy].volume+=(t.amountUSD||0);});const ranked=Object.entries(byEx).sort((a,b)=>b[1].trades-a[1].trades).slice(0,10);if(!ranked.length)return interaction.reply({content:"No completed trades yet.",ephemeral:true});const medals=["\uD83E\uDD47","\uD83E\uDD48","\uD83E\uDD49"];const lines=ranked.map(([uid,d],i)=>`${medals[i]||`**${i+1}.**`}  <@${uid}>  --  **${d.trades}** trade${d.trades!==1?"s":""}  \u00b7  ${fmtUSD(d.volume)}`).join("\n");return interaction.reply({embeds:[base("Exchanger Leaderboard").setThumbnail(IMG.LOGO).setDescription("Top Konvert exchangers ranked by completed trades.\n\u200b").addFields({name:"Rankings",value:lines,inline:false}).setFooter({text:"Konvert  \u2022  Exchanger Leaderboard"}).setTimestamp()],ephemeral:true});}
 
       if(cmd==="thankclient"){
         const target=interaction.options.getUser("client"),amount=interaction.options.getNumber("amount")||null;
-        const vol=getUserVolume(target.id);
-        const clientDone=Object.values(load("tickets")).filter(t=>t.userId===target.id&&t.status==="vouched"&&t.method!=="adjustment");
-        const tradeCount=clientDone.length,tier=getTier(vol);
-        const feePreview=amount?`Your rate on your next **${fmtUSD(amount)}** trade: **${feeRate(amount,"send")}%**`:null;
-        try{
-          await target.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Thank You for Trading with Us").setThumbnail(IMG.LOGO)
-            .setDescription(`Hey <@${target.id}> -- your trade has been completed successfully.\n\nWe appreciate your trust in **Konvert Exchange**. Every deal matters to us and we look forward to trading with you again.\n\u200b`)
-            .addFields(
-              {name:"Your Tier",       value:`${tier.emoji} **${tier.label}**`,               inline:true},
-              {name:"Trades With Us",  value:`**${tradeCount}** completed`,                   inline:true},
-              {name:"Total Exchanged", value:vol>0?`**${fmtUSD(vol)}**`:"--",                 inline:true},
-              {name:"Come Back Anytime",value:"Head to our exchange channel anytime.\n**Fast  \u00b7  Safe  \u00b7  Simple  \u00b7  Private**",inline:false},
-              ...(feePreview?[{name:"Your Rate Preview",value:feePreview,inline:false}]:[]),
-            ).setImage(IMG.DEAL).setFooter({text:"Konvert Exchange  \u2022  Thank you for your business"}).setTimestamp()]});
-          return interaction.reply({content:`Thank-you card sent to **${target.tag}**.`,ephemeral:true});
-        }catch{return interaction.reply({content:`Could not DM **${target.tag}**. They may have DMs disabled.`,ephemeral:true});}
+        const vol=getUserVolume(target.id),clientDone=Object.values(load("tickets")).filter(t=>t.userId===target.id&&t.status==="vouched"&&t.method!=="adjustment");
+        const tradeCount=clientDone.length,tier=getTier(vol),feePreview=amount?`Your rate on your next **${fmtUSD(amount)}** trade: **${feeRate(amount,"send")}%**`:null;
+        try{await target.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Thank You for Trading with Us").setThumbnail(IMG.LOGO).setDescription(`Hey <@${target.id}> -- your trade has been completed successfully.\n\nWe appreciate your trust in **Konvert Exchange**. Every deal matters to us and we look forward to trading with you again.\n\u200b`).addFields({name:"Your Tier",value:`${tier.emoji} **${tier.label}**`,inline:true},{name:"Trades With Us",value:`**${tradeCount}** completed`,inline:true},{name:"Total Exchanged",value:vol>0?`**${fmtUSD(vol)}**`:"--",inline:true},{name:"Come Back Anytime",value:"Head to our exchange channel anytime.\n**Fast  \u00b7  Safe  \u00b7  Simple  \u00b7  Private**",inline:false},...(feePreview?[{name:"Your Rate Preview",value:feePreview,inline:false}]:[])).setImage(IMG.DEAL).setFooter({text:"Konvert Exchange  \u2022  Thank you for your business"}).setTimestamp()]});return interaction.reply({content:`Thank-you card sent to **${target.tag}**.`,ephemeral:true});}
+        catch{return interaction.reply({content:`Could not DM **${target.tag}**. They may have DMs disabled.`,ephemeral:true});}
       }
 
       if(cmd==="passes"){const holders=Object.entries(state.passes).filter(([,v])=>v>0);if(!holders.length)return interaction.reply({content:"No exchange passes have been won yet.",ephemeral:true});return interaction.reply({embeds:[base("Exchange Pass Holders").setThumbnail(IMG.LOGO).setDescription(holders.map(([uid,c])=>`<@${uid}> -- **${c}** pass${c!==1?"es":""}`).join("\n")).setFooter({text:"Konvert Mine  \u2022  Won by finding all 3 diamonds"})],ephemeral:true});}
-
       if(cmd==="lookup"){const query=interaction.options.getString("name").toLowerCase().trim(),tickets=load("tickets"),match=Object.entries(tickets).find(([id,t])=>{const chName=interaction.guild.channels.cache.get(id)?.name||"";return chName.includes(query)||id===query;});if(!match)return interaction.reply({content:`No ticket found matching **${query}**.`,ephemeral:true});const [channelId,t]=match,m=getMethod(t.method),se=t.status==="vouched"?"\u2705":t.status==="open"?"\uD83D\uDFE1":"\uD83D\uDD34";return interaction.reply({embeds:[base("Ticket Lookup").setThumbnail(IMG.LOGO).addFields({name:"Client",value:`<@${t.userId}>`,inline:true},{name:"Status",value:`${se} **${t.status==="vouched"?"Completed":t.status==="open"?"Open":"Closed"}**`,inline:true},{name:"Method",value:m?.label||t.method,inline:true},{name:"Amount",value:fmtUSD(t.amountUSD||0),inline:true},{name:"Coin",value:t.coin||"--",inline:true},{name:"Opened",value:t.createdAt?`<t:${Math.floor(t.createdAt/1000)}:R>`:"--",inline:true},{name:"Completed",value:t.completedAt?`<t:${Math.floor(t.completedAt/1000)}:R>`:"--",inline:true},{name:"Channel",value:`<#${channelId}>`,inline:true}).setFooter({text:"Konvert  \u2022  Ticket Lookup"})],ephemeral:true});}
-
-      if(cmd==="postkonvault"){const inviteUrl="https://discord.gg/jnT63k4UA7";const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("\uD83D\uDE80  Konvault\u2122").setDescription("**The Ultimate Crypto Wagering Hub**\n-- Owned by Konvert Exchange\n-- Free MM service  \u00b7  0% fee\n\n*Flip, win, repeat. It's that simple.*\n\u200b").addFields({name:"What We Offer",value:"\uD83D\uDCB0  Choose any amount of crypto to wager\n\uD83E\uDE99  Fair coin flips -- winner takes all\n\uD83D\uDD12  Funds securely held by trusted middlemen\n\u26A1  Active agents & support 24/7\n\uD83C\uDF10  Supports ALL cryptocurrencies\n\uD83D\uDD0D  Full transparency -- proof provided for every wager\n\u2705  0 fees -- tips are always welcome",inline:false},{name:"\uD83C\uDF89  Join Now",value:"Click the button below to join Konvault and start flipping!",inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvault by Konvert Exchange  \u2022  Free MM  \u2022  0% Fee"}).setTimestamp();await interaction.channel.send({embeds:[embed],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel("Join Konvault").setEmoji("\uD83D\uDE80").setStyle(ButtonStyle.Link).setURL(inviteUrl))]});return interaction.reply({content:"Konvault embed posted.",ephemeral:true});}
-
-      if(cmd==="postinfo"){const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Info").setThumbnail(IMG.LOGO).setDescription("Konvert is a **fast and reliable exchange community** for converting value across platforms.\n\nEasily exchange **PayPal, Crypto, Cash App, Zelle, E-Transfer**, and other payment methods -- both directions -- with **low fees** and **quick processing**.\n\nOur agents are available **24/7**, backed by a friendly, active community and real-time crypto price updates to keep you informed. We also run **giveaways of cryptocurrency** which can be won regularly.\n\nSay goodbye to slow exchangers and high fees -- hello to convenience and 24/7 replies.\n\u200b").addFields({name:"\uD83D\uDCB8  Fees",value:"5% - 10%  \u00b7  Tiered by amount  \u00b7  Min $5",inline:true},{name:"\u26A1  Speed",value:"Usually under 10 minutes",inline:true},{name:"\uD83E\uDD1D  Support",value:"24/7 agents always available",inline:true}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  \u2022  Fast  \u00b7  Safe  \u00b7  Simple  \u00b7  Private"});await interaction.channel.send({embeds:[embed]});return interaction.reply({content:"Info embed posted.",ephemeral:true});}
-
-      if(cmd==="posttos"){const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Terms of Service").setThumbnail(IMG.LOGO).setDescription("**Konvert -- Exchange Policies**\n\u200b").addFields({name:"1. Lawful Use",value:"Konvert strictly prohibits the use of its services for any unlawful activity, including but not limited to fraud, scams, chargebacks, or abuse of payment systems. Transactions deemed suspicious, unauthorized, or high-risk can be rejected and denied.",inline:false},{name:"2. Fees & Pricing",value:"All exchanges are subject to a minimum service fee of **$5 USD**, and a tiered rate based on amount.\n\n**Fiat → Crypto:** $0–150 = 10%  ·  $150–350 = 9%  ·  $350–600 = 8%  ·  $600–800 = 7%  ·  $800+ = 6%\n**Crypto → Fiat:** $0–150 = 9%  ·  $150–350 = 8%  ·  $350–600 = 7%  ·  $600–800 = 6%  ·  $800+ = 5%\n\nFees are **non-refundable** if:\n- The exchange is confirmed completed by both parties\n- Payment details provided are inaccurate or unverifiable\n- The client withdraws after the exchange process has begun\n\nRefunds only in cases of verified error, reported within 24 hours.",inline:false},{name:"3. On-Platform Transactions Only",value:"All exchanges must be conducted exclusively through the Konvert server and official ticket system. Transactions arranged outside of Konvert are **strictly prohibited**.\n\nKonvert will not provide support or refund for any off-platform transactions.",inline:false},{name:"4. Accepted Payment Methods",value:"PayPal  \u00b7  Cash App  \u00b7  Venmo  \u00b7  Interac e-Transfer  \u00b7  Zelle  \u00b7  IBAN  \u00b7  Bank Transfer  \u00b7  Crypto\n\nAdditional fees may apply for card or bank-based payments. All fees will be clearly disclosed before deal is taken.",inline:false},{name:"5. Disputes & Enforcement",value:"Any attempt to chargeback, make false claims, abuse staff, or bypass policies will result in an **immediate ban** from the server.",inline:false}).setFooter({text:"Konvert  \u2022  By using our services you agree to these terms"});await interaction.channel.send({embeds:[embed]});return interaction.reply({content:"Terms of Service embed posted.",ephemeral:true});}
-
+      if(cmd==="postkonvault"){const inviteUrl="https://discord.gg/jnT63k4UA7";const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("\uD83D\uDE80  Konvault\u2122").setDescription("**The Ultimate Crypto Wagering Hub**\n-- Owned by Konvert Exchange\n-- Free MM service  \u00b7  0% fee\n\n*Flip, win, repeat. It's that simple.*\n\u200b").addFields({name:"What We Offer",value:"\uD83D\uDCB0  Choose any amount of crypto to wager\n\uD83E\uDE99  Fair coin flips -- winner takes all\n\uD83D\uDD12  Funds securely held by trusted middlemen\n\u26A1  Active agents & support 24/7\n\uD83C\uDF10  Supports ALL cryptocurrencies\n\u2705  0 fees -- tips are always welcome",inline:false},{name:"\uD83C\uDF89  Join Now",value:"Click the button below to join Konvault and start flipping!",inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvault by Konvert Exchange  \u2022  Free MM  \u2022  0% Fee"}).setTimestamp();await interaction.channel.send({embeds:[embed],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel("Join Konvault").setEmoji("\uD83D\uDE80").setStyle(ButtonStyle.Link).setURL(inviteUrl))]});return interaction.reply({content:"Konvault embed posted.",ephemeral:true});}
+      if(cmd==="postinfo"){const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Info").setThumbnail(IMG.LOGO).setDescription("Konvert is a **fast and reliable exchange community** for converting value across platforms.\n\nEasily exchange **PayPal, Crypto, Cash App, Zelle, E-Transfer**, and other payment methods -- both directions -- with **low fees** and **quick processing**.\n\nOur agents are available **24/7**, backed by a friendly, active community and real-time crypto price updates to keep you informed.\n\u200b").addFields({name:"\uD83D\uDCB8  Fees",value:"5% - 10%  \u00b7  Tiered by amount  \u00b7  Min $5",inline:true},{name:"\u26A1  Speed",value:"Usually under 10 minutes",inline:true},{name:"\uD83E\uDD1D  Support",value:"24/7 agents always available",inline:true}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  \u2022  Fast  \u00b7  Safe  \u00b7  Simple  \u00b7  Private"});await interaction.channel.send({embeds:[embed]});return interaction.reply({content:"Info embed posted.",ephemeral:true});}
+      if(cmd==="posttos"){const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Terms of Service").setThumbnail(IMG.LOGO).setDescription("**Konvert -- Exchange Policies**\n\u200b").addFields({name:"1. Lawful Use",value:"Konvert strictly prohibits the use of its services for any unlawful activity, including but not limited to fraud, scams, chargebacks, or abuse of payment systems.",inline:false},{name:"2. Fees & Pricing",value:"All exchanges are subject to a minimum service fee of **$5 USD**, and a tiered rate based on amount.\n\n**Fiat \u2192 Crypto:** $0\u2013150 = 10%  \u00b7  $150\u2013350 = 9%  \u00b7  $350\u2013600 = 8%  \u00b7  $600\u2013800 = 7%  \u00b7  $800+ = 6%\n**Crypto \u2192 Fiat:** $0\u2013150 = 9%  \u00b7  $150\u2013350 = 8%  \u00b7  $350\u2013600 = 7%  \u00b7  $600\u2013800 = 6%  \u00b7  $800+ = 5%\n\nFees are **non-refundable** if the exchange is confirmed completed by both parties.",inline:false},{name:"3. On-Platform Transactions Only",value:"All exchanges must be conducted exclusively through the Konvert server and official ticket system.",inline:false},{name:"4. Accepted Payment Methods",value:"PayPal  \u00b7  Cash App  \u00b7  Venmo  \u00b7  Interac e-Transfer  \u00b7  Zelle  \u00b7  IBAN  \u00b7  Bank Transfer  \u00b7  Crypto",inline:false},{name:"5. Disputes & Enforcement",value:"Any attempt to chargeback, make false claims, abuse staff, or bypass policies will result in an **immediate ban** from the server.",inline:false}).setFooter({text:"Konvert  \u2022  By using our services you agree to these terms"});await interaction.channel.send({embeds:[embed]});return interaction.reply({content:"Terms of Service embed posted.",ephemeral:true});}
       if(cmd==="postlinks"){const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Official Links for Konvert").setThumbnail(IMG.LOGO).setDescription("All official Konvert social media. Follow us for updates, announcements, and giveaways.\n\u200b").addFields({name:"\uD835\uDD4F  Twitter / X",value:"[**@KonvertNow**](https://x.com/konvertnow)",inline:true},{name:"\uD83D\uDCF8  Instagram",value:"[**@KonvertNow**](https://www.instagram.com/konvertnow/)",inline:true},{name:"\u26A0\uFE0F  Stay Safe",value:"Only interact with accounts listed here. Any other account claiming to be Konvert is an impersonator.",inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert  \u2022  Official Links  \u2022  Follow us for updates"});await interaction.channel.send({embeds:[embed]});return interaction.reply({content:"Official links embed posted.",ephemeral:true});}
 
-      // /adjuststats -- FIXED: saves negative amounts as real ticket entries so leaderboard nets them correctly
       if(cmd==="adjuststats"){
         const target=interaction.options.getUser("user"),amount=interaction.options.getNumber("amount"),reason=interaction.options.getString("reason")||"Staff adjustment";
         if(amount===0)return interaction.reply({content:"Amount cannot be 0.",ephemeral:true});
         const tickets=Object.keys(_mem.tickets||{}).length>0?{..._mem.tickets}:load("tickets");
         const key=`adj_${target.id}_${Date.now()}`;
-        // Save as a vouched ticket entry — positive OR negative amount
-        // buildLeaderboardVolumes() and getUserVolume() will sum these naturally
-        tickets[key]={
-          userId:target.id,userTag:target.tag||target.username,
-          method:"adjustment",direction:null,coin:null,
-          amountUSD:amount, // can be negative
-          feeUSD:0,walletInfo:"staff",
-          notes:reason,status:"vouched",
-          completedBy:interaction.user.id,
-          completedAt:Date.now(),createdAt:Date.now(),
-        };
-        _mem.tickets=tickets;
-        save("tickets",tickets);
-        const newVol=getUserVolume(target.id);
-        await applyTierRole(interaction.guild,target.id,newVol);
+        tickets[key]={userId:target.id,userTag:target.tag||target.username,method:"adjustment",direction:null,coin:null,amountUSD:amount,feeUSD:0,walletInfo:"staff",notes:reason,status:"vouched",completedBy:interaction.user.id,completedAt:Date.now(),createdAt:Date.now()};
+        _mem.tickets=tickets;save("tickets",tickets);
+        const newVol=getUserVolume(target.id);await applyTierRole(interaction.guild,target.id,newVol);
         const tier=getTier(newVol);
         log(interaction.guild,`ADJUSTSTATS: ${interaction.user.tag} adjusted ${target.tag||target.username} by ${amount>0?"+":""}${fmtUSD(amount)} | New total: ${fmtUSD(newVol)} | Reason: ${reason}`);
-        return interaction.reply({embeds:[base("Stats Adjusted").setThumbnail(target.displayAvatarURL({size:128}))
-          .setDescription(`Stats updated for <@${target.id}>.\n\u200b`)
-          .addFields(
-            {name:"Adjustment",value:`**${amount>0?"+":""}${fmtUSD(amount)}**`,inline:true},
-            {name:"New Volume",value:`**${fmtUSD(newVol)}**`,inline:true},
-            {name:"New Tier",value:`${tier.emoji} **${tier.label}**`,inline:true},
-            {name:"Reason",value:reason,inline:false},
-          ).setFooter({text:`Adjusted by ${interaction.user.tag}  \u2022  Konvert`})],ephemeral:true});
+        return interaction.reply({embeds:[base("Stats Adjusted").setThumbnail(target.displayAvatarURL({size:128})).setDescription(`Stats updated for <@${target.id}>.\n\u200b`).addFields({name:"Adjustment",value:`**${amount>0?"+":""}${fmtUSD(amount)}**`,inline:true},{name:"New Volume",value:`**${fmtUSD(newVol)}**`,inline:true},{name:"New Tier",value:`${tier.emoji} **${tier.label}**`,inline:true},{name:"Reason",value:reason,inline:false}).setFooter({text:`Adjusted by ${interaction.user.tag}  \u2022  Konvert`})],ephemeral:true});
       }
 
       if(cmd==="resetstats"){
         const target=interaction.options.getUser("user");
-        // Remove all adjustment entries for this user
         const tickets=Object.keys(_mem.tickets||{}).length>0?{..._mem.tickets}:load("tickets");
         let removed=0;
-        for(const [key,t] of Object.entries(tickets)){
-          if(t.userId===target.id&&t.method==="adjustment"){
-            delete tickets[key];
-            removed++;
-          }
-        }
-        _mem.tickets=tickets;
-        save("tickets",tickets);
-        const newVol=getUserVolume(target.id);
-        await applyTierRole(interaction.guild,target.id,newVol);
+        for(const [key,t] of Object.entries(tickets)){if(t.userId===target.id&&t.method==="adjustment"){delete tickets[key];removed++;}}
+        _mem.tickets=tickets;save("tickets",tickets);
+        const newVol=getUserVolume(target.id);await applyTierRole(interaction.guild,target.id,newVol);
         return interaction.reply({content:`Stats reset for **${target.tag||target.username}**. Removed **${removed}** adjustment entr${removed!==1?"ies":"y"}. Volume is now **${fmtUSD(newVol)}** from real trades only.`,ephemeral:true});
       }
 
-      if(cmd==="clearleaderboard"){
-        await interaction.deferReply({ephemeral:true});
-        _mem.tickets={};
-        save("tickets",{});
-        state.volumeAdj={};
-        return interaction.editReply("✅ Leaderboard and stats have been cleared. All trade data wiped.");
-      }
-
+      if(cmd==="clearleaderboard"){await interaction.deferReply({ephemeral:true});_mem.tickets={};save("tickets",{});state.volumeAdj={};return interaction.editReply("\u2705 Leaderboard and stats have been cleared. All trade data wiped.");}
 
       if(cmd==="search"){
         await interaction.deferReply({ephemeral:true});
@@ -1766,173 +970,52 @@ client.on(Events.InteractionCreate, async interaction => {
         const allT=Object.entries(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
         const userTickets=allT.filter(([,t])=>t.userId===target.id).sort((a,b)=>(b[1].createdAt||0)-(a[1].createdAt||0));
         if(!userTickets.length)return interaction.editReply({content:`No tickets found for **${target.username}**.`,ephemeral:true});
-        const volume=getUserVolume(target.id);
-        const tier=getTier(volume);
+        const volume=getUserVolume(target.id),tier=getTier(volume);
         const completed=userTickets.filter(([,t])=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment");
         const adjustments=userTickets.filter(([,t])=>t.method==="adjustment");
         const adjTotal=adjustments.reduce((s,[,t])=>s+(parseFloat(t.amountUSD)||0),0);
         const open=userTickets.filter(([,t])=>t.status==="open");
-        // Build ticket list (last 8)
-        const lines=userTickets.slice(0,8).map(([id,t])=>{
-          const m=getMethod(t.method);
-          const statusEmoji=t.status==="vouched"?"✅":t.status==="open"?"🟡":t.status==="cancelled"?"🚫":"🔴";
-          const amt=t.method==="adjustment"?(parseFloat(t.amountUSD)>0?"+":"")+`${fmtUSD(parseFloat(t.amountUSD))}`:fmtUSD(t.amountUSD||0);
-          return `${statusEmoji} **${m?.label||t.method||"—"}**  ·  ${amt}  ·  <t:${Math.floor((t.createdAt||Date.now())/1000)}:d>`;
-        }).join("\n");
+        const lines=userTickets.slice(0,8).map(([id,t])=>{const m=getMethod(t.method);const statusEmoji=t.status==="vouched"?"\u2705":t.status==="open"?"\uD83D\uDFE1":t.status==="cancelled"?"\uD83D\uDEAB":"\uD83D\uDD34";const amt=t.method==="adjustment"?(parseFloat(t.amountUSD)>0?"+":"")+`${fmtUSD(parseFloat(t.amountUSD))}`:fmtUSD(t.amountUSD||0);return `${statusEmoji} **${m?.label||t.method||"\u2014"}**  \u00b7  ${amt}  \u00b7  <t:${Math.floor((t.createdAt||Date.now())/1000)}:d>`;}).join("\n");
         const vipActive=isVipVolume(volume);
-        return interaction.editReply({embeds:[new EmbedBuilder()
-          .setColor(tier.min>=1000?0xFFD700:0x7C4DFF)
-          .setAuthor({name:"Konvert  ·  User Search",iconURL:IMG.LOGO})
-          .setTitle(`${target.username}'s Full History`)
-          .setThumbnail(target.displayAvatarURL({size:256}))
-          .setDescription(`${tier.emoji} **${tier.label}**${vipActive?" ⚡ VIP":""}
-​`)
-          .addFields(
-            {name:"💰  Total Volume",value:`**${fmtUSD(volume)}**`,inline:true},
-            {name:"✅  Completed",value:`**${completed.length}** trade${completed.length!==1?"s":""}`,inline:true},
-            {name:"🟡  Open",value:`**${open.length}**`,inline:true},
-            {name:"📊  Adjustments",value:adjustments.length?`**${adjustments.length}** entries  ·  net ${adjTotal>=0?"+":""}${fmtUSD(adjTotal)}`:"None",inline:true},
-            {name:"⚡  VIP Discount",value:vipActive?"Active — 0.75% off all trades":"Not yet (requires $7,000+)",inline:true},
-            {name:"🔗  Referred By",value:(()=>{const r=getReferrals();const ref=r.referred[target.id];return ref?`<@${ref}>`:"No referral";})(),inline:true},
-            {name:`Last ${Math.min(userTickets.length,8)} Tickets`,value:lines||"—",inline:false},
-          )
-          .setFooter({text:`${userTickets.length} total tickets  ·  Konvert Exchange`})
-          .setTimestamp()]});
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(tier.min>=1000?0xFFD700:0x7C4DFF).setAuthor({name:"Konvert  \u00b7  User Search",iconURL:IMG.LOGO}).setTitle(`${target.username}'s Full History`).setThumbnail(target.displayAvatarURL({size:256})).setDescription(`${tier.emoji} **${tier.label}**${vipActive?" \u26A1 VIP":""}\n\u200b`).addFields({name:"\uD83D\uDCB0  Total Volume",value:`**${fmtUSD(volume)}**`,inline:true},{name:"\u2705  Completed",value:`**${completed.length}** trade${completed.length!==1?"s":""}`,inline:true},{name:"\uD83D\uDFE1  Open",value:`**${open.length}**`,inline:true},{name:"\uD83D\uDCCA  Adjustments",value:adjustments.length?`**${adjustments.length}** entries  \u00b7  net ${adjTotal>=0?"+":""}${fmtUSD(adjTotal)}`:"None",inline:true},{name:"\u26A1  VIP Discount",value:vipActive?"Active \u2014 0.75% off all trades":"Not yet (requires $7,000+)",inline:true},{name:"\uD83D\uDD17  Referred By",value:(()=>{const r=getReferrals();const ref=r.referred[target.id];return ref?`<@${ref}>`:"No referral";})(),inline:true},{name:`Last ${Math.min(userTickets.length,8)} Tickets`,value:lines||"\u2014",inline:false}).setFooter({text:`${userTickets.length} total tickets  \u00b7  Konvert Exchange`}).setTimestamp()]});
       }
 
       if(cmd==="vipstatus"){
         await interaction.deferReply({ephemeral:true});
-        const vol=getUserVolume(interaction.user.id);
-        const vip=isVipVolume(vol);
-        const tier=getTier(vol);
-        const needed=vip?0:Math.max(7000-vol,0);
-        return interaction.editReply({embeds:[new EmbedBuilder()
-          .setColor(vip?0xFFD700:0x7C4DFF)
-          .setAuthor({name:"Konvert Exchange  ·  VIP Status",iconURL:IMG.LOGO})
-          .setTitle(vip?"⚡  VIP Rate Active":"VIP Rate — Not Yet Unlocked")
-          .setThumbnail(IMG.LOGO)
-          .setDescription(vip
-            ?"Your account has been upgraded. You receive a **0.75% fee discount** on every trade automatically.\n\u200b"
-            :`You're **${fmtUSD(needed)}** away from unlocking VIP status and a permanent fee discount.\n\u200b`)
-          .addFields(
-            {name:"Your Tier",value:`${tier.emoji} **${tier.label}**`,inline:true},
-            {name:"Your Volume",value:`**${fmtUSD(vol)}**`,inline:true},
-            {name:"VIP Threshold",value:"**$7,000+** (⚡ Godly Client)",inline:true},
-            {name:"VIP Perk",value:"**0.75% off** every trade — both directions, automatically applied",inline:false},
-          )
-          .setImage(IMG.BANNER)
-          .setFooter({text:"Konvert Exchange  ·  VIP benefits apply to all future trades"})
-          .setTimestamp()]});
+        const vol=getUserVolume(interaction.user.id),vip=isVipVolume(vol),tier=getTier(vol),needed=vip?0:Math.max(7000-vol,0);
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(vip?0xFFD700:0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  VIP Status",iconURL:IMG.LOGO}).setTitle(vip?"\u26A1  VIP Rate Active":"VIP Rate \u2014 Not Yet Unlocked").setThumbnail(IMG.LOGO).setDescription(vip?"Your account has been upgraded. You receive a **0.75% fee discount** on every trade automatically.\n\u200b":`You're **${fmtUSD(needed)}** away from unlocking VIP status and a permanent fee discount.\n\u200b`).addFields({name:"Your Tier",value:`${tier.emoji} **${tier.label}**`,inline:true},{name:"Your Volume",value:`**${fmtUSD(vol)}**`,inline:true},{name:"VIP Threshold",value:"**$7,000+** (\u26A1 Godly Client)",inline:true},{name:"VIP Perk",value:"**0.75% off** every trade \u2014 both directions, automatically applied",inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  \u00b7  VIP benefits apply to all future trades"}).setTimestamp()]});
       }
-
 
       if(cmd==="wipestats"){
         await interaction.deferReply({ephemeral:true});
-        const target=interaction.options.getUser("user");
-        const confirm=interaction.options.getString("confirm");
-        if(confirm!=="CONFIRM"){
-          return interaction.editReply({content:'❌ You must type **CONFIRM** exactly in the confirm field to wipe a user. This cannot be undone.',ephemeral:true});
-        }
+        const target=interaction.options.getUser("user"),confirm=interaction.options.getString("confirm");
+        if(confirm!=="CONFIRM"){return interaction.editReply({content:'\u274C You must type **CONFIRM** exactly in the confirm field to wipe a user. This cannot be undone.',ephemeral:true});}
         const tickets=Object.keys(_mem.tickets||{}).length>0?{..._mem.tickets}:load("tickets");
-        const before=Object.keys(tickets).length;
-        // Remove ALL ticket entries for this user (trades + adjustments)
         let removed=0;
-        for(const [key,t] of Object.entries(tickets)){
-          if(t.userId===target.id){delete tickets[key];removed++;}
-        }
-        _mem.tickets=tickets;
-        save("tickets",tickets);
-        // Remove referral points too
-        const ref=getReferrals();
-        delete ref.points[target.id];
-        delete ref.referred[target.id];
-        // Remove any invite codes they owned
+        for(const [key,t] of Object.entries(tickets)){if(t.userId===target.id){delete tickets[key];removed++;}}
+        _mem.tickets=tickets;save("tickets",tickets);
+        const ref=getReferrals();delete ref.points[target.id];delete ref.referred[target.id];
         for(const [code,uid] of Object.entries(ref.invites||{})){if(uid===target.id)delete ref.invites[code];}
-        delete ref.inviteCodes[target.id];
-        saveReferrals(ref);
-        // Remove tier roles
-        try{
-          const member=await interaction.guild.members.fetch(target.id).catch(()=>null);
-          if(member){for(const t of TIERS){if(t.role&&member.roles.cache.has(t.role))await member.roles.remove(t.role).catch(()=>{});}}
-        }catch{}
-        // DM the user
-        try{
-          await target.send({embeds:[new EmbedBuilder()
-            .setColor(0xef4444)
-            .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
-            .setTitle("Account Reset")
-            .setDescription("Your exchange history and stats have been reset by staff.\n\nIf you believe this is a mistake, please open a support ticket.")
-            .setFooter({text:"Konvert Exchange"}).setTimestamp()]});
-        }catch{}
-        log(interaction.guild,`WIPESTATS: ${interaction.user.tag} wiped ALL data for ${target.tag||target.username} — ${removed} entries removed`);
-        return interaction.editReply({embeds:[new EmbedBuilder()
-          .setColor(0xef4444)
-          .setAuthor({name:"Konvert  ·  Admin",iconURL:IMG.LOGO})
-          .setTitle("User Wiped")
-          .setThumbnail(target.displayAvatarURL({size:128}))
-          .setDescription(`All data for <@${target.id}> has been permanently removed.\n\u200b`)
-          .addFields(
-            {name:"Entries Removed",value:`**${removed}**`,inline:true},
-            {name:"Referral Points",value:"**Cleared**",inline:true},
-            {name:"Tier Roles",value:"**Removed**",inline:true},
-          )
-          .setFooter({text:`Wiped by ${interaction.user.tag}  ·  Konvert Exchange`}).setTimestamp()]});
+        delete ref.inviteCodes[target.id];saveReferrals(ref);
+        try{const member=await interaction.guild.members.fetch(target.id).catch(()=>null);if(member){for(const t of TIERS){if(t.role&&member.roles.cache.has(t.role))await member.roles.remove(t.role).catch(()=>{});}}}catch{}
+        try{await target.send({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Account Reset").setDescription("Your exchange history and stats have been reset by staff.\n\nIf you believe this is a mistake, please open a support ticket.").setFooter({text:"Konvert Exchange"}).setTimestamp()]});}catch{}
+        log(interaction.guild,`WIPESTATS: ${interaction.user.tag} wiped ALL data for ${target.tag||target.username} \u2014 ${removed} entries removed`);
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert  \u00b7  Admin",iconURL:IMG.LOGO}).setTitle("User Wiped").setThumbnail(target.displayAvatarURL({size:128})).setDescription(`All data for <@${target.id}> has been permanently removed.\n\u200b`).addFields({name:"Entries Removed",value:`**${removed}**`,inline:true},{name:"Referral Points",value:"**Cleared**",inline:true},{name:"Tier Roles",value:"**Removed**",inline:true}).setFooter({text:`Wiped by ${interaction.user.tag}  \u00b7  Konvert Exchange`}).setTimestamp()]});
       }
-
 
       if(cmd==="dispute"){
         await interaction.deferReply({ephemeral:true});
         const tickets=Object.keys(_mem.tickets||{}).length?_mem.tickets:load("tickets");
         const ticket=Object.entries(tickets).find(([id,t])=>id===interaction.channel.id&&t.status==="open");
-        if(!ticket){
-          return interaction.editReply({content:"This command can only be used inside your open ticket channel.",ephemeral:true});
-        }
+        if(!ticket){return interaction.editReply({content:"This command can only be used inside your open ticket channel.",ephemeral:true});}
         const [channelId,t]=ticket;
-        // Lock the channel for everyone except owners/staff
-        try{
-          await interaction.channel.permissionOverwrites.edit(interaction.user.id,{SendMessages:false});
-          if(CONFIG.EXCHANGER_ROLE)await interaction.channel.permissionOverwrites.edit(CONFIG.EXCHANGER_ROLE,{SendMessages:false}).catch(()=>{});
-        }catch{}
-        // Post dispute embed in the ticket
-        const disputeEmbed=new EmbedBuilder()
-          .setColor(0xef4444)
-          .setAuthor({name:"Konvert Exchange  ·  Dispute Filed",iconURL:IMG.LOGO})
-          .setTitle("⚠️  Dispute Filed")
-          .setDescription(`<@${interaction.user.id}> has flagged an issue with this trade.\n\nThis ticket has been **locked** pending staff review. Only owners can unlock it.\n\u200b`)
-          .addFields(
-            {name:"Filed By",value:`<@${interaction.user.id}>`,inline:true},
-            {name:"Time",value:`<t:${Math.floor(Date.now()/1000)}:F>`,inline:true},
-            {name:"Status",value:"🔴 **Under Review**",inline:true},
-          )
-          .setFooter({text:"Konvert Exchange  ·  Do not close this ticket until resolved"})
-          .setTimestamp();
-        await interaction.channel.send({embeds:[disputeEmbed]});
-        // Mark in storage
-        tickets[channelId].status="dispute";
-        _mem.tickets=tickets;
-        save("tickets",tickets);
-        // DM all owners
-        for(const oid of CONFIG.OWNER_IDS){
-          try{
-            const owner=await client.users.fetch(oid);
-            await owner.send({embeds:[new EmbedBuilder()
-              .setColor(0xef4444)
-              .setAuthor({name:"Konvert  ·  Dispute Alert",iconURL:IMG.LOGO})
-              .setTitle("⚠️  Dispute Filed")
-              .setDescription(`A client has filed a dispute in a ticket.\n\u200b`)
-              .addFields(
-                {name:"Client",value:`<@${interaction.user.id}>`,inline:true},
-                {name:"Channel",value:`<#${channelId}>`,inline:true},
-                {name:"Method",value:getMethod(t.method)?.label||t.method||"—",inline:true},
-                {name:"Amount",value:fmtUSD(t.amountUSD||0),inline:true},
-              )
-              .setFooter({text:"Konvert Exchange  ·  Review immediately"}).setTimestamp()]});
-          }catch{}
-        }
+        try{await interaction.channel.permissionOverwrites.edit(interaction.user.id,{SendMessages:false});if(CONFIG.EXCHANGER_ROLE)await interaction.channel.permissionOverwrites.edit(CONFIG.EXCHANGER_ROLE,{SendMessages:false}).catch(()=>{});}catch{}
+        await interaction.channel.send({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange  \u00b7  Dispute Filed",iconURL:IMG.LOGO}).setTitle("\u26A0\uFE0F  Dispute Filed").setDescription(`<@${interaction.user.id}> has flagged an issue with this trade.\n\nThis ticket has been **locked** pending staff review. Only owners can unlock it.\n\u200b`).addFields({name:"Filed By",value:`<@${interaction.user.id}>`,inline:true},{name:"Time",value:`<t:${Math.floor(Date.now()/1000)}:F>`,inline:true},{name:"Status",value:"\uD83D\uDD34 **Under Review**",inline:true}).setFooter({text:"Konvert Exchange  \u00b7  Do not close this ticket until resolved"}).setTimestamp()]});
+        tickets[channelId].status="dispute";_mem.tickets=tickets;save("tickets",tickets);
+        for(const oid of CONFIG.OWNER_IDS){try{const owner=await client.users.fetch(oid);await owner.send({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert  \u00b7  Dispute Alert",iconURL:IMG.LOGO}).setTitle("\u26A0\uFE0F  Dispute Filed").setDescription(`A client has filed a dispute in a ticket.\n\u200b`).addFields({name:"Client",value:`<@${interaction.user.id}>`,inline:true},{name:"Channel",value:`<#${channelId}>`,inline:true},{name:"Method",value:getMethod(t.method)?.label||t.method||"\u2014",inline:true},{name:"Amount",value:fmtUSD(t.amountUSD||0),inline:true}).setFooter({text:"Konvert Exchange  \u00b7  Review immediately"}).setTimestamp()]});}catch{}}
         log(interaction.guild,`DISPUTE: ${interaction.user.tag} filed dispute in #${interaction.channel.name}`);
         return interaction.editReply({content:"Your dispute has been filed. Staff have been notified and will review shortly. The ticket has been locked.",ephemeral:true});
       }
-
 
       if(cmd==="broadcast"){
         await interaction.deferReply({ephemeral:true});
@@ -1940,156 +1023,60 @@ client.on(Events.InteractionCreate, async interaction => {
         const msg=interaction.options.getString("message");
         const cutoff=Date.now()-(days*24*60*60*1000);
         const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
-        const uniqueIds=[...new Set(
-          allT.filter(t=>["vouched","completed"].includes(t.status)&&(t.completedAt||0)>=cutoff&&t.method!=="adjustment")
-              .map(t=>t.userId)
-        )];
+        const uniqueIds=[...new Set(allT.filter(t=>["vouched","completed"].includes(t.status)&&(t.completedAt||0)>=cutoff&&t.method!=="adjustment").map(t=>t.userId))];
         if(!uniqueIds.length)return interaction.editReply({content:`No clients found who traded in the last ${days} days.`});
-        await interaction.editReply({content:`📨 Sending to **${uniqueIds.length}** clients...`});
+        await interaction.editReply({content:`\uD83D\uDCE8 Sending to **${uniqueIds.length}** clients...`});
         let sent=0,failed=0;
-        for(const uid of uniqueIds){
-          try{
-            const u=await client.users.fetch(uid);
-            await u.send({embeds:[new EmbedBuilder()
-              .setColor(0x7C4DFF)
-              .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
-              .setTitle("Message from Konvert")
-              .setDescription(msg)
-              .setImage(IMG.BANNER)
-              .setFooter({text:"Konvert Exchange  ·  Thank you for trading with us"}).setTimestamp()]});
-            sent++;
-            await new Promise(r=>setTimeout(r,800)); // rate limit safety
-          }catch{failed++;}
-        }
-        return interaction.followUp({content:`✅ Broadcast complete — **${sent}** sent, **${failed}** failed (DMs closed).`,ephemeral:true});
+        for(const uid of uniqueIds){try{const u=await client.users.fetch(uid);await u.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Message from Konvert").setDescription(msg).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  \u00b7  Thank you for trading with us"}).setTimestamp()]});sent++;await new Promise(r=>setTimeout(r,800));}catch{failed++;}}
+        return interaction.followUp({content:`\u2705 Broadcast complete \u2014 **${sent}** sent, **${failed}** failed (DMs closed).`,ephemeral:true});
       }
-
 
       if(cmd==="mytrades"){
         await interaction.deferReply({ephemeral:true});
         const userId=interaction.user.id;
         const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
-        const done=allT.filter(t=>t.userId===userId&&["vouched","completed"].includes(t.status)&&t.method!=="adjustment")
-          .sort((a,b)=>(b.completedAt||0)-(a.completedAt||0));
-        const volume=getUserVolume(userId);
-        const tier=getTier(volume);
-        const nextT=getNextTier(volume);
-        const vip=isVipVolume(volume);
-        if(!done.length){
-          return interaction.editReply({embeds:[new EmbedBuilder()
-            .setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  My Trades",iconURL:IMG.LOGO})
-            .setTitle("No Trades Yet")
-            .setDescription("You haven't completed any trades with Konvert yet.\n\nHead to the exchange channel to get started.\n\u200b")
-            .setImage(IMG.BANNER).setFooter({text:"Konvert Exchange"}).setTimestamp()]});
-        }
-        const last5=done.slice(0,5).map((t,i)=>{
-          const m=getMethod(t.method);
-          return `${i+1}. **${m?.label||t.method}** · ${fmtUSD(t.amountUSD)} · <t:${Math.floor((t.completedAt||Date.now())/1000)}:d>`;
-        }).join("\n");
-        // method breakdown
+        const done=allT.filter(t=>t.userId===userId&&["vouched","completed"].includes(t.status)&&t.method!=="adjustment").sort((a,b)=>(b.completedAt||0)-(a.completedAt||0));
+        const volume=getUserVolume(userId),tier=getTier(volume),nextT=getNextTier(volume),vip=isVipVolume(volume);
+        if(!done.length){return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  My Trades",iconURL:IMG.LOGO}).setTitle("No Trades Yet").setDescription("You haven't completed any trades with Konvert yet.\n\nHead to the exchange channel to get started.\n\u200b").setImage(IMG.BANNER).setFooter({text:"Konvert Exchange"}).setTimestamp()]});}
+        const last5=done.slice(0,5).map((t,i)=>{const m=getMethod(t.method);return `${i+1}. **${m?.label||t.method}** \u00b7 ${fmtUSD(t.amountUSD)} \u00b7 <t:${Math.floor((t.completedAt||Date.now())/1000)}:d>`;}).join("\n");
         const methods={};done.forEach(t=>{if(t.method)methods[t.method]=(methods[t.method]||0)+1;});
         const topM=Object.entries(methods).sort((a,b)=>b[1]-a[1])[0];
         const avg=done.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0)/done.length;
-        const ref=getReferrals();
-        const refPts=ref.points[userId]?.balance||0;
-        return interaction.editReply({embeds:[new EmbedBuilder()
-          .setColor(tier.min>=1000?0xFFD700:0x7C4DFF)
-          .setAuthor({name:"Konvert Exchange  ·  My Trade History",iconURL:IMG.LOGO})
-          .setTitle("My Trades")
-          .setThumbnail(interaction.user.displayAvatarURL({size:256}))
-          .setDescription(`${tier.emoji} **${tier.label}**${vip?" ⚡ VIP":""}${nextT?`  ·  ${fmtUSD(Math.max(nextT.min-volume,0))} to ${nextT.emoji} ${nextT.label}`:"  ·  Max tier reached"}\n\u200b`)
-          .addFields(
-            {name:"✅  Total Trades",value:`**${done.length}**`,inline:true},
-            {name:"💰  Total Volume",value:`**${fmtUSD(volume)}**`,inline:true},
-            {name:"📊  Avg Trade",value:`**${fmtUSD(avg)}**`,inline:true},
-            {name:"🏆  Top Method",value:topM?`**${getMethod(topM[0])?.label||topM[0]}** (${topM[1]}x)`:"—",inline:true},
-            {name:"🔗  Referral Points",value:`**${refPts} pts** (${pointsToDollars(refPts)})`,inline:true},
-            {name:"⚡  VIP Discount",value:vip?"Active — 0.75% off":"Not yet ($7,000+ required)",inline:true},
-            {name:"📋  Last 5 Trades",value:last5,inline:false},
-          )
-          .setImage(IMG.BANNER)
-          .setFooter({text:"Konvert Exchange  ·  Use /stats for full tier details"})
-          .setTimestamp()]});
+        const ref=getReferrals(),refPts=ref.points[userId]?.balance||0;
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(tier.min>=1000?0xFFD700:0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  My Trade History",iconURL:IMG.LOGO}).setTitle("My Trades").setThumbnail(interaction.user.displayAvatarURL({size:256})).setDescription(`${tier.emoji} **${tier.label}**${vip?" \u26A1 VIP":""}${nextT?`  \u00b7  ${fmtUSD(Math.max(nextT.min-volume,0))} to ${nextT.emoji} ${nextT.label}`:"  \u00b7  Max tier reached"}\n\u200b`).addFields({name:"\u2705  Total Trades",value:`**${done.length}**`,inline:true},{name:"\uD83D\uDCB0  Total Volume",value:`**${fmtUSD(volume)}**`,inline:true},{name:"\uD83D\uDCCA  Avg Trade",value:`**${fmtUSD(avg)}**`,inline:true},{name:"\uD83C\uDFC6  Top Method",value:topM?`**${getMethod(topM[0])?.label||topM[0]}** (${topM[1]}x)`:"\u2014",inline:true},{name:"\uD83D\uDD17  Referral Points",value:`**${refPts} pts** ($${pointsToDollars(refPts)})`,inline:true},{name:"\u26A1  VIP Discount",value:vip?"Active \u2014 0.75% off":"Not yet ($7,000+ required)",inline:true},{name:"\uD83D\uDCCB  Last 5 Trades",value:last5,inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  \u00b7  Use /stats for full tier details"}).setTimestamp()]});
       }
-
 
       if(cmd==="estimate"){
         await interaction.deferReply({ephemeral:true});
-        const amount=interaction.options.getNumber("amount");
-        const methodRaw=interaction.options.getString("method").toLowerCase().trim();
-        const coinRaw=interaction.options.getString("coin").toUpperCase().trim();
-        const direction=interaction.options.getString("direction");
+        const amount=interaction.options.getNumber("amount"),methodRaw=interaction.options.getString("method").toLowerCase().trim(),coinRaw=interaction.options.getString("coin").toUpperCase().trim(),direction=interaction.options.getString("direction");
         const m=METHODS.find(x=>x.label.toLowerCase().includes(methodRaw)||x.value.includes(methodRaw));
-        if(!m)return interaction.editReply({content:`❌ Method **${methodRaw}** not recognised. Try: PayPal, Interac, Zelle, Cash App etc.`});
-        if(!COINS.includes(coinRaw))return interaction.editReply({content:`❌ Coin **${coinRaw}** not supported. Try BTC, ETH, SOL, LTC etc.`});
-        const vol=getUserVolume(interaction.user.id);
-        const vip=isVipVolume(vol);
-        const fee=calcFee(amount,direction,vip);
-        const rate=feeRate(amount,direction,vip);
-        const receive=amount-fee;
-        const coinPrice=await getPrice(coinRaw);
-        const tier=getTier(vol);
+        if(!m)return interaction.editReply({content:`\u274C Method **${methodRaw}** not recognised. Try: PayPal, Interac, Zelle, Cash App etc.`});
+        if(!COINS.includes(coinRaw))return interaction.editReply({content:`\u274C Coin **${coinRaw}** not supported. Try BTC, ETH, SOL, LTC etc.`});
+        const vol=getUserVolume(interaction.user.id),vip=isVipVolume(vol);
+        const fee=calcFee(amount,direction,vip),rate=feeRate(amount,direction,vip),receive=amount-fee;
+        const coinPrice=await getPrice(coinRaw),tier=getTier(vol);
         let coinLine="";
-        if(coinPrice){
-          if(direction==="send"){
-            coinLine=`**~${(receive/coinPrice).toFixed(6)} ${coinRaw}**  (≈${fmtUSD(receive)})`;
-          } else {
-            coinLine=`**${fmtUSD(receive)}** via ${m.label}`;
-          }
-        }
+        if(coinPrice){coinLine=direction==="send"?`**~${(receive/coinPrice).toFixed(6)} ${coinRaw}**  (\u2248${fmtUSD(receive)})`:`**${fmtUSD(receive)}** via ${m.label}`;}
         const sendStr=direction==="send"?`**${fmtUSD(amount)}** via **${m.label}**`:`**${coinRaw}** worth **${fmtUSD(amount)}**`;
         const receiveStr=coinLine||(direction==="send"?`~${fmtUSD(receive)} worth of ${coinRaw}`:`${fmtUSD(receive)} via ${m.label}`);
-        const embed=new EmbedBuilder()
-          .setColor(0x7C4DFF)
-          .setAuthor({name:"Konvert Exchange  ·  Trade Estimate",iconURL:IMG.LOGO})
-          .setTitle(`${m.label}  ↔  ${coinRaw}  —  Estimate`)
-          .setThumbnail(COIN_LOGO[coinRaw]||IMG.LOGO)
-          .setDescription(`Live quote for your proposed trade. Open a ticket to proceed.\n\u200b`)
-          .addFields(
-            {name:"📤  You Send",value:sendStr,inline:true},
-            {name:"📥  You Receive",value:receiveStr,inline:true},
-            {name:"​",value:"​",inline:true},
-            {name:"💸  Fee",value:`**${rate}%**${vip?" ⚡ VIP":""} — ${fmtUSD(fee)}`,inline:true},
-            {name:`📈  ${coinRaw} Price`,value:coinPrice?`**${fmtUSD(coinPrice)}**`:"Unavailable",inline:true},
-{name:`${tier.emoji}  Your Tier`,value:`**${tier.label}**`,inline:true},
-          )
-          .setImage(IMG.BANNER)
-          .setFooter({text:"Estimate only  ·  Final rate confirmed in your ticket  ·  Konvert Exchange"})
-          .setTimestamp();
-        return interaction.editReply({embeds:[embed]});
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  Trade Estimate",iconURL:IMG.LOGO}).setTitle(`${m.label}  \u2194  ${coinRaw}  \u2014  Estimate`).setThumbnail(COIN_LOGO[coinRaw]||IMG.LOGO).setDescription(`Live quote for your proposed trade. Open a ticket to proceed.\n\u200b`).addFields({name:"\uD83D\uDCE4  You Send",value:sendStr,inline:true},{name:"\uD83D\uDCE5  You Receive",value:receiveStr,inline:true},{name:"\u200b",value:"\u200b",inline:true},{name:"\uD83D\uDCB8  Fee",value:`**${rate}%**${vip?" \u26A1 VIP":""} \u2014 ${fmtUSD(fee)}`,inline:true},{name:`\uD83D\uDCC8  ${coinRaw} Price`,value:coinPrice?`**${fmtUSD(coinPrice)}**`:"Unavailable",inline:true},{name:`${tier.emoji}  Your Tier`,value:`**${tier.label}**`,inline:true}).setImage(IMG.BANNER).setFooter({text:"Estimate only  \u00b7  Final rate confirmed in your ticket  \u00b7  Konvert Exchange"}).setTimestamp()]});
       }
 
       if(cmd==="testbackup"){
         await interaction.deferReply({ephemeral:true});
         const channelId=process.env.BACKUP_CHANNEL_ID;
-        if(!channelId)return interaction.editReply("❌ `BACKUP_CHANNEL_ID` is not set in Railway Variables.");
-        try{
-          const ch=await client.channels.fetch(channelId).catch(()=>null);
-          if(!ch)return interaction.editReply(`❌ Cannot find channel \`${channelId}\`. Make sure the bot is in the same server and has access to this channel.`);
-          const tickets=_mem.tickets||load("tickets");
-          const json=JSON.stringify(tickets,null,2);
-          const buf=Buffer.from(json,"utf8");
-          await ch.send({
-            content:`**Test Backup** \`${new Date().toISOString()}\` — ${Object.keys(tickets).length} entries`,
-            files:[{attachment:buf,name:"konvert_tickets.json"}]
-          });
-          return interaction.editReply(`✅ Backup sent successfully to <#${channelId}> with **${Object.keys(tickets).length}** entries.`);
-        }catch(e){
-          return interaction.editReply(`❌ Backup failed: \`${e.message}\``);
-        }
+        if(!channelId)return interaction.editReply("\u274C `BACKUP_CHANNEL_ID` is not set in Railway Variables.");
+        try{const ch=await client.channels.fetch(channelId).catch(()=>null);if(!ch)return interaction.editReply(`\u274C Cannot find channel \`${channelId}\`.`);const tickets=_mem.tickets||load("tickets");const json=JSON.stringify(tickets,null,2);const buf=Buffer.from(json,"utf8");await ch.send({content:`**Test Backup** \`${new Date().toISOString()}\` \u2014 ${Object.keys(tickets).length} entries`,files:[{attachment:buf,name:"konvert_tickets.json"}]});return interaction.editReply(`\u2705 Backup sent successfully to <#${channelId}> with **${Object.keys(tickets).length}** entries.`);}
+        catch(e){return interaction.editReply(`\u274C Backup failed: \`${e.message}\``);}
       }
 
       return;
-    } // end isChatInputCommand
+    }
 
-    // --- SELECT MENUS ---
     if(interaction.isStringSelectMenu()){
       if(interaction.customId==="select_method"){
         const method=interaction.values[0],_m=getMethod(method);
-        if(method==="crypto"){
-          const coinOpts=COINS.map(c=>new StringSelectMenuOptionBuilder().setLabel(c).setValue(c).setDescription(`Exchange ${c}`));
-          return interaction.update({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Crypto to Crypto").setDescription("Select the coin you are **sending** and the coin you want to **receive** below.\n\u200b").setFooter({text:"Step 2 of 3  \u2022  Konvert"})],components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("c2c_send").setPlaceholder("Select coin you are SENDING...").addOptions(coinOpts)),new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("c2c_recv").setPlaceholder("Select coin you want to RECEIVE...").addOptions(coinOpts))]});
-        }
+        if(method==="crypto"){const coinOpts=COINS.map(c=>new StringSelectMenuOptionBuilder().setLabel(c).setValue(c).setDescription(`Exchange ${c}`));return interaction.update({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Crypto to Crypto").setDescription("Select the coin you are **sending** and the coin you want to **receive** below.\n\u200b").setFooter({text:"Step 2 of 3  \u2022  Konvert"})],components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("c2c_send").setPlaceholder("Select coin you are SENDING...").addOptions(coinOpts)),new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("c2c_recv").setPlaceholder("Select coin you want to RECEIVE...").addOptions(coinOpts))]});}
         return interaction.update({embeds:[step2Embed(method)],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`dir_send__${method}`).setLabel(`Send Crypto \u2192 Get ${_m.label}`).setStyle(ButtonStyle.Primary),new ButtonBuilder().setCustomId(`dir_receive__${method}`).setLabel(`Send ${_m.label} \u2192 Get Crypto`).setStyle(ButtonStyle.Success))]});
       }
       if(interaction.customId==="c2c_send"||interaction.customId==="c2c_recv"){
@@ -2105,128 +1092,43 @@ client.on(Events.InteractionCreate, async interaction => {
       }
     }
 
-    // --- BUTTONS ---
     if(interaction.isButton()){
       if(interaction.customId==="btn_exchange_now"){const bl=load("blacklist");if(bl[interaction.user.id])return interaction.reply({content:"You are blacklisted from Konvert.",ephemeral:true});return interaction.reply({embeds:[step1Embed()],components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("select_method").setPlaceholder("Select your payment method...").addOptions(METHODS.map(m=>new StringSelectMenuOptionBuilder().setLabel(m.label).setValue(m.value).setDescription(`Exchange crypto with ${m.label}`))))],ephemeral:true});}
       if(interaction.customId==="btn_fee_calc"){const modal=new ModalBuilder().setCustomId("modal_fee").setTitle("Fee Calculator");modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("fee_amt").setLabel("Trade amount in USD").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 250").setRequired(true)));return interaction.showModal(modal);}
-      if(interaction.customId==="btn_rates_quick"){
-        await interaction.deferReply({ephemeral:true});
-        try{return interaction.editReply({embeds:[await buildRatesEmbed()]});}
-        catch(e){return interaction.editReply("Could not fetch rates right now. Try again in a moment.");}
-      }
-      if(interaction.customId==="btn_refresh_rates"){
-        await interaction.deferUpdate();
-        try{return interaction.editReply({embeds:[await buildRatesEmbed()],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_refresh_rates").setLabel("Refresh").setStyle(ButtonStyle.Secondary))]});}
-        catch(e){return interaction.editReply({content:"Could not fetch rates right now. Try again in a moment."});}
-      }
+      if(interaction.customId==="btn_rates_quick"){await interaction.deferReply({ephemeral:true});try{return interaction.editReply({embeds:[await buildRatesEmbed()]});}catch(e){return interaction.editReply("Could not fetch rates right now. Try again in a moment.");}}
+      if(interaction.customId==="btn_refresh_rates"){await interaction.deferUpdate();try{const _re=await buildRatesEmbed();return interaction.editReply({embeds:[_re],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_refresh_rates").setLabel("Refresh").setStyle(ButtonStyle.Secondary))]});}catch(e){return interaction.editReply({content:"Could not fetch rates right now."});} return;}
 
-      // Referral embed shortcut buttons
       if(interaction.customId==="btn_get_referral_link"){
-        // Redirect to /referral logic inline (ephemeral)
         await interaction.deferReply({ephemeral:true});
-        const userId=interaction.user.id;
-        const ref=getReferrals();
+        const userId=interaction.user.id,ref=getReferrals();
         const pts=ref.points[userId]?.balance||0;
         let existingInvite=null;
         const existing=ref.inviteCodes[userId];
-        if(existing&&existing.code){
-          try{const invites=await interaction.guild.invites.fetch();const found=invites.find(i=>i.code===existing.code);if(found)existingInvite=found;}catch{}
-        }
+        if(existing&&existing.code){try{const invites=await interaction.guild.invites.fetch();const found=invites.find(i=>i.code===existing.code);if(found)existingInvite=found;}catch{}}
         let invite=existingInvite;
-        if(!invite){
-          try{
-            const ch=interaction.guild.channels.cache.get(CONFIG.EXCHANGE_CHANNEL)||interaction.guild.channels.cache.first();
-            invite=await ch.createInvite({maxAge:0,maxUses:0,unique:true,reason:`Konvert referral for ${interaction.user.tag}`});
-            ref.invites[invite.code]=userId;
-            ref.inviteCodes[userId]={code:invite.code,expiresAt:0,uses:0};
-            saveReferrals(ref);
-            _inviteCache.set(invite.code,invite.uses);
-          }catch(e){return interaction.editReply({content:`❌ Could not create invite: ${e.message}`});}
-        }
-        const expiresTs=Math.floor((ref.inviteCodes[userId]?.expiresAt||Date.now())/1000);
+        if(!invite){try{const ch=interaction.guild.channels.cache.get(CONFIG.EXCHANGE_CHANNEL)||interaction.guild.channels.cache.first();invite=await ch.createInvite({maxAge:0,maxUses:0,unique:true,reason:`Konvert referral for ${interaction.user.tag}`});ref.invites[invite.code]=userId;ref.inviteCodes[userId]={code:invite.code,expiresAt:0,uses:0};saveReferrals(ref);_inviteCache.set(invite.code,invite.uses);}catch(e){return interaction.editReply({content:`\u274C Could not create invite: ${e.message}`});}}
         const referredCount=Object.values(ref.referred).filter(r=>r===userId).length;
-        return interaction.editReply({embeds:[new EmbedBuilder()
-          .setColor(0x7C4DFF).setAuthor({name:"Konvert  ·  Referral Program",iconURL:PTS_IMG})
-          .setTitle("🔗  Your Referral Link")
-          .setDescription("Share this link. Every trade your referrals complete earns you points.\n\u200b")
-          .addFields(
-            {name:"Your Invite",value:`**https://discord.gg/${invite.code}**`,inline:false},
-            {name:"Link",value:"**Permanent**",inline:true},
-            {name:"Referred",value:`**${referredCount}** people`,inline:true},
-            {name:"Balance",value:`**${pts} pts** (${pointsToDollars(pts)})`,inline:true},
-          )
-          .setFooter({text:"Konvert Referrals  •  Use /referral for full details"}).setTimestamp()]});
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert  \u00b7  Referral Program",iconURL:PTS_IMG}).setTitle("\uD83D\uDD17  Your Referral Link").setDescription("Share this link. Every trade your referrals complete earns you points.\n\u200b").addFields({name:"Your Invite",value:`**https://discord.gg/${invite.code}**`,inline:false},{name:"Link",value:"**Permanent**",inline:true},{name:"Referred",value:`**${referredCount}** people`,inline:true},{name:"Balance",value:`**${pts} pts** ($${pointsToDollars(pts)})`,inline:true}).setFooter({text:"Konvert Referrals  \u2022  Use /referral for full details"}).setTimestamp()]});
       }
 
       if(interaction.customId==="btn_check_points"){
         await interaction.deferReply({ephemeral:true});
-        const userId=interaction.user.id;
-        const ref=getReferrals();
+        const userId=interaction.user.id,ref=getReferrals();
         const data=ref.points[userId]||{balance:0,paid:0,history:[],pendingPayout:false};
-        const bal=data.balance||0;
-        const paid=data.paid||0;
-        const referredCount=Object.values(ref.referred).filter(r=>r===userId).length;
+        const bal=data.balance||0,paid=data.paid||0,referredCount=Object.values(ref.referred).filter(r=>r===userId).length;
         const readyToWithdraw=bal>=MIN_WITHDRAW_POINTS&&!data.pendingPayout;
-        const embed=new EmbedBuilder()
-          .setColor(bal>=MIN_WITHDRAW_POINTS?0x00C853:0x7C4DFF)
-          .setAuthor({name:"Konvert  ·  Referral Program",iconURL:PTS_IMG})
-          .setTitle("💰  My Points")
-          .addFields(
-            {name:"Balance",value:`**${bal} pts** (${pointsToDollars(bal)})`,inline:true},
-            {name:"Total Paid Out",value:`**${pointsToDollars(paid)}**`,inline:true},
-            {name:"People Referred",value:`**${referredCount}**`,inline:true},
-            {name:"Status",value:data.pendingPayout?"⏳ Payout pending":readyToWithdraw?"✅ Ready — use `/mypoints` to request":`**${MIN_WITHDRAW_POINTS-bal}** more pts to withdraw`,inline:false},
-          )
-          .setFooter({text:"Konvert Referrals  •  Use /mypoints for full history"}).setTimestamp();
-        const components=[];
-        if(readyToWithdraw){
-          components.push(new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId("btn_request_payout").setLabel("Request Payout").setEmoji("💸").setStyle(ButtonStyle.Success)
-          ));
-        }
+        const embed=new EmbedBuilder().setColor(bal>=MIN_WITHDRAW_POINTS?0x00C853:0x7C4DFF).setAuthor({name:"Konvert  \u00b7  Referral Program",iconURL:PTS_IMG}).setTitle("\uD83D\uDCB0  My Points").addFields({name:"Balance",value:`**${bal} pts** ($${pointsToDollars(bal)})`,inline:true},{name:"Total Paid Out",value:`**$${pointsToDollars(paid)}**`,inline:true},{name:"People Referred",value:`**${referredCount}**`,inline:true},{name:"Status",value:data.pendingPayout?"⏳ Payout pending":readyToWithdraw?"✅ Ready — use `/mypoints` to request":`**${MIN_WITHDRAW_POINTS-bal}** more pts to withdraw`,inline:false}).setFooter({text:"Konvert Referrals  \u2022  Use /mypoints for full history"}).setTimestamp();
+        const components=[];if(readyToWithdraw){components.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_request_payout").setLabel("Request Payout").setEmoji("💸").setStyle(ButtonStyle.Success)));}
         return interaction.editReply({embeds:[embed],components});
       }
 
-      // Referral payout request button
       if(interaction.customId==="btn_request_payout"){
-        const userId=interaction.user.id;
-        const ref=getReferrals();
-        const data=ref.points[userId];
+        const userId=interaction.user.id,ref=getReferrals(),data=ref.points[userId];
         if(!data||data.balance<MIN_WITHDRAW_POINTS)return interaction.reply({content:"You don't have enough points to request a payout.",ephemeral:true});
         if(data.pendingPayout)return interaction.reply({content:"You already have a pending payout request.",ephemeral:true});
-        data.pendingPayout=true;
-        ref.points[userId]=data;
-        saveReferrals(ref);
-        // DM owners
-        for(const oid of CONFIG.OWNER_IDS){
-          try{
-            const owner=await client.users.fetch(oid);
-            await owner.send({embeds:[new EmbedBuilder()
-              .setColor(0xFFB347)
-              .setColor(0xf59e0b)
-              .setAuthor({name:"Konvert  ·  Referral Admin",iconURL:PTS_IMG})
-              .setTitle("Payout Request").setThumbnail(PTS_IMG)
-              .setDescription(`<@${userId}> has requested a referral payout and is waiting.\n\u200b`)
-              .addFields(
-                {name:"💰  Amount",value:`**${data.balance} pts**  ·  **${pointsToDollars(data.balance)}**`,inline:true},
-                {name:"⚡  Action",value:`\`/paypoints @${interaction.user.username}\``,inline:true},
-              )
-              .setTimestamp()
-              .setFooter({text:"Konvert Referral Program  ·  Admin Notification"})
-            ]});
-          }catch{}
-        }
-        return interaction.reply({embeds:[new EmbedBuilder()
-          .setColor(0x22c55e).setAuthor({name:"Konvert  ·  Referral Program",iconURL:PTS_IMG})
-          .setTitle("Payout Requested").setThumbnail(PTS_IMG)
-          .setDescription(`Your payout request has been sent. Staff will process it and DM you once it's done.\n\u200b`)
-          .addFields(
-            {name:"💰  Amount Requested",value:`**${data.balance} pts**  ·  **${pointsToDollars(data.balance)}**`,inline:true},
-            {name:"📬  Next Step",value:"Wait for a DM from staff confirming payment.",inline:true},
-          )
-          .setImage(IMG.BANNER)
-          .setFooter({text:"Konvert Referral Program  ·  Thank you for referring people to Konvert"}).setTimestamp()
-        ],ephemeral:true});
+        data.pendingPayout=true;ref.points[userId]=data;saveReferrals(ref);
+        for(const oid of CONFIG.OWNER_IDS){try{const owner=await client.users.fetch(oid);await owner.send({embeds:[new EmbedBuilder().setColor(0xf59e0b).setAuthor({name:"Konvert  \u00b7  Referral Admin",iconURL:PTS_IMG}).setTitle("Payout Request").setThumbnail(PTS_IMG).setDescription(`<@${userId}> has requested a referral payout and is waiting.\n\u200b`).addFields({name:"\uD83D\uDCB0  Amount",value:`**${data.balance} pts**  \u00b7  **$${pointsToDollars(data.balance)}**`,inline:true},{name:"\u26A1  Action",value:`\`/paypoints @${interaction.user.username}\``,inline:true}).setTimestamp().setFooter({text:"Konvert Referral Program  \u00b7  Admin Notification"})]});}catch{}}
+        return interaction.reply({embeds:[new EmbedBuilder().setColor(0x22c55e).setAuthor({name:"Konvert  \u00b7  Referral Program",iconURL:PTS_IMG}).setTitle("Payout Requested").setThumbnail(PTS_IMG).setDescription(`Your payout request has been sent. Staff will process it and DM you once it's done.\n\u200b`).addFields({name:"\uD83D\uDCB0  Amount Requested",value:`**${data.balance} pts**  \u00b7  **$${pointsToDollars(data.balance)}**`,inline:true},{name:"\uD83D\uDCEC  Next Step",value:"Wait for a DM from staff confirming payment.",inline:true}).setImage(IMG.BANNER).setFooter({text:"Konvert Referral Program  \u00b7  Thank you for referring people to Konvert"}).setTimestamp()],ephemeral:true});
       }
 
       if(interaction.customId==="btn_c2c_confirm"){
@@ -2242,9 +1144,8 @@ client.on(Events.InteractionCreate, async interaction => {
 
       if(interaction.customId.startsWith("dir_send__")||interaction.customId.startsWith("dir_receive__")){
         const _isSendCrypto=interaction.customId.startsWith("dir_send__"),method=interaction.customId.replace("dir_send__","").replace("dir_receive__",""),m=getMethod(method);
-        // dir_send__ = Send Crypto->Fiat = direction receive; dir_receive__ = Send Fiat->Crypto = direction send
-const _direction=_isSendCrypto?"receive":"send";
-const modal=new ModalBuilder().setCustomId(`modal_amount__${method}__${_direction}`).setTitle(`${m.label} -- ${_isSendCrypto?"Send Crypto":"Receive Crypto"}`);
+        const _direction=_isSendCrypto?"receive":"send";
+        const modal=new ModalBuilder().setCustomId(`modal_amount__${method}__${_direction}`).setTitle(`${m.label} -- ${_isSendCrypto?"Send Crypto":"Receive Crypto"}`);
         modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_amount").setLabel("Trade amount in USD").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 150").setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_coin").setLabel("Which crypto? (BTC, ETH, SOL)").setStyle(TextInputStyle.Short).setPlaceholder("e.g. SOL").setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_wallet").setLabel(_isSendCrypto?"Your crypto receiving wallet":`Your ${m.label} receiving details`).setStyle(TextInputStyle.Short).setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_notes").setLabel("Notes (optional)").setStyle(TextInputStyle.Paragraph).setRequired(false)));
         return interaction.showModal(modal);
       }
@@ -2269,21 +1170,14 @@ const modal=new ModalBuilder().setCustomId(`modal_amount__${method}__${_directio
         if(ticket?.status==="vouched"||ticket?.status==="closed")return interaction.reply({content:"This ticket has already been completed.",ephemeral:true});
         if(!ticket?.amountUSD){
           const modal=new ModalBuilder().setCustomId(`modal_done__${interaction.channel.id}`).setTitle("Complete Trade");
-          modal.addComponents(
-            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("done_amount").setLabel("Trade amount in USD").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 250").setRequired(true)),
-            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("done_client").setLabel("Client's Discord ID or @mention").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 123456789012345678").setRequired(true)),
-            new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("done_method").setLabel("Payment method (e.g. PayPal, Zelle)").setStyle(TextInputStyle.Short).setPlaceholder("e.g. PayPal").setRequired(true)),
-          );
+          modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("done_amount").setLabel("Trade amount in USD").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 250").setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("done_client").setLabel("Client's Discord ID or @mention").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 123456789012345678").setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("done_method").setLabel("Payment method (e.g. PayPal, Zelle)").setStyle(TextInputStyle.Short).setPlaceholder("e.g. PayPal").setRequired(true)));
           return interaction.showModal(modal);
         }
-        await interaction.deferReply();
-        await completeTrade(interaction, ticket, tickets);
-        return;
+        await interaction.deferReply();await completeTrade(interaction,ticket,tickets);return;
       }
       if(interaction.customId==="btn_close"){
         if(!CONFIG.OWNER_IDS.includes(interaction.user.id)&&!(CONFIG.STAFF_ROLE&&interaction.member.roles.cache.has(CONFIG.STAFF_ROLE)))return interaction.reply({content:"Only owners or staff can close tickets.",ephemeral:true});
-        await interaction.deferReply();
-        await doCloseTicket(interaction.channel,interaction.guild,interaction.user,"Closed by staff");
+        await interaction.deferReply();await doCloseTicket(interaction.channel,interaction.guild,interaction.user,"Closed by staff");
         await interaction.editReply({embeds:[new EmbedBuilder().setColor(0xFF4444).setTitle("Ticket Closed").setDescription("This ticket has been closed.\nDeleting in 15 seconds.").setTimestamp()]});
         setTimeout(()=>interaction.channel.delete().catch(()=>{}),15000);return;
       }
@@ -2298,7 +1192,7 @@ const modal=new ModalBuilder().setCustomId(`modal_amount__${method}__${_directio
         game.revealed.push(idx);game.tries++;
         const isDiamond=game.diamonds.includes(idx),isBomb=game.bombs.includes(idx);
         if(isDiamond)game.found++;
-        if(isBomb){game.over=true;delete state.mineGames[userId];const rev={...game,revealed:Array.from({length:25},(_,i)=>i),over:true};return interaction.update({embeds:[base("Mine -- Bomb Hit").setColor(0xFF4444).setDescription("**BOOM!** You hit a bomb. The grid has been revealed.\n\nBetter luck next time -- you can try again in **3 hours**.\n\u200b").addFields({name:"Diamonds Found",value:`**${game.found} / 3**`,inline:true},{name:"Result",value:"No pass awarded",inline:true},{name:"Next Try",value:"In **3 hours**",inline:true}).setFooter({text:"Konvert Mine  \u2022  Try again in 3 hours"})],components:buildMineGrid(userId,rev)});}
+        if(isBomb){game.over=true;delete state.mineGames[userId];const rev={...game,revealed:Array.from({length:25},(_,i)=>i),over:true};return interaction.update({embeds:[base("Mine -- Bomb Hit").setColor(0xFF4444).setDescription("**BOOM!** You hit a bomb.\n\nBetter luck next time -- you can try again in **3 hours**.\n\u200b").addFields({name:"Diamonds Found",value:`**${game.found} / 3**`,inline:true},{name:"Result",value:"No pass awarded",inline:true},{name:"Next Try",value:"In **3 hours**",inline:true}).setFooter({text:"Konvert Mine  \u2022  Try again in 3 hours"})],components:buildMineGrid(userId,rev)});}
         const triesLeft=3-game.tries;
         if(triesLeft<=0&&game.found<3){game.over=true;delete state.mineGames[userId];const rev={...game,revealed:Array.from({length:25},(_,i)=>i),over:true};return interaction.update({embeds:[base("Mine -- Out of Tries").setDescription(`You used all **3 tries** and found **${game.found} / 3** diamonds.\nThe grid has been revealed. Try again in **3 hours**.\n\u200b`).addFields({name:"Diamonds Found",value:`**${game.found} / 3**`,inline:true},{name:"Result",value:"No pass awarded",inline:true},{name:"Next Try",value:"In **3 hours**",inline:true}).setFooter({text:"Konvert Mine  \u2022  Try again in 3 hours"})],components:buildMineGrid(userId,rev)});}
         if(game.found===3){
@@ -2309,9 +1203,8 @@ const modal=new ModalBuilder().setCustomId(`modal_amount__${method}__${_directio
         }
         return interaction.update({embeds:[base("Konvert Mine").setThumbnail(IMG.LOGO).setDescription(`${isDiamond?"**Diamond found!** Keep going.":"Nothing there. Keep looking."}\n\u200b`).addFields({name:"Diamonds Found",value:`**${game.found} / 3**`,inline:true},{name:"Tries Remaining",value:`**${triesLeft}**`,inline:true}).setFooter({text:`Konvert Mine  \u2022  ${triesLeft} tr${triesLeft!==1?"ies":"y"} left  \u2022  Hit a bomb = game over`})],components:buildMineGrid(userId,game)});
       }
-    } // end isButton
+    }
 
-    // --- MODALS ---
     if(interaction.isModalSubmit()){
       if(interaction.customId.startsWith("modal_done__")){
         await interaction.deferReply();
@@ -2320,18 +1213,11 @@ const modal=new ModalBuilder().setCustomId(`modal_amount__${method}__${_directio
         const clientRaw=interaction.fields.getTextInputValue("done_client").trim().replace(/[<@!>]/g,"");
         const method=interaction.fields.getTextInputValue("done_method").trim();
         if(isNaN(rawAmt)||rawAmt<=0)return interaction.editReply("Please enter a valid amount.");
-        let clientId=clientRaw;
-        try{const u=await client.users.fetch(clientRaw);clientId=u.id;}catch{}
+        let clientId=clientRaw;try{const u=await client.users.fetch(clientRaw);clientId=u.id;}catch{}
         const tickets=Object.keys(_mem.tickets||{}).length>0?{..._mem.tickets}:load("tickets");
-        if(!tickets[channelId]){
-          tickets[channelId]={userId:clientId,userTag:clientRaw,method:method.toLowerCase(),direction:null,coin:null,amountUSD:rawAmt,feeUSD:calcFee(rawAmt,"send"),walletInfo:"manual",notes:"Completed via modal",status:"open",createdAt:Date.now()};
-        }else{
-          if(!tickets[channelId].amountUSD||tickets[channelId].amountUSD===0)tickets[channelId].amountUSD=rawAmt;
-          if(!tickets[channelId].userId)tickets[channelId].userId=clientId;
-          if(!tickets[channelId].method)tickets[channelId].method=method.toLowerCase();
-        }
-        await completeTrade(interaction,tickets[channelId],tickets);
-        return;
+        if(!tickets[channelId]){tickets[channelId]={userId:clientId,userTag:clientRaw,method:method.toLowerCase(),direction:null,coin:null,amountUSD:rawAmt,feeUSD:calcFee(rawAmt,"send"),walletInfo:"manual",notes:"Completed via modal",status:"open",createdAt:Date.now()};}
+        else{if(!tickets[channelId].amountUSD||tickets[channelId].amountUSD===0)tickets[channelId].amountUSD=rawAmt;if(!tickets[channelId].userId)tickets[channelId].userId=clientId;if(!tickets[channelId].method)tickets[channelId].method=method.toLowerCase();}
+        await completeTrade(interaction,tickets[channelId],tickets);return;
       }
 
       if(interaction.customId==="modal_support"){
@@ -2353,17 +1239,8 @@ const modal=new ModalBuilder().setCustomId(`modal_amount__${method}__${_directio
         const fS=calcFee(raw,"send"),rS=feeRate(raw,"send"),fR=calcFee(raw,"receive"),rR=feeRate(raw,"receive");
         const [btcP,ethP,solP]=await Promise.all([getPrice("BTC"),getPrice("ETH"),getPrice("SOL")]);
         const recvS=raw-fS,coinLines=[];
-        if(btcP)coinLines.push(`BTC: **${(recvS/btcP).toFixed(6)}**`);
-        if(ethP)coinLines.push(`ETH: **${(recvS/ethP).toFixed(5)}**`);
-        if(solP)coinLines.push(`SOL: **${(recvS/solP).toFixed(4)}**`);
-        return interaction.editReply({embeds:[base("Fee Calculator").setThumbnail(IMG.LOGO)
-          .setDescription(`Estimate for **${fmtUSD(raw)}**\n*Final fee may vary slightly.*\n\u200b`)
-          .addFields(
-            {name:"Fiat \u2192 Crypto",value:`Rate: **${rS}%**\nFee: **${fmtUSD(fS)}**\nYou receive: **${fmtUSD(recvS)}**`,inline:true},
-            {name:"Crypto \u2192 Fiat",value:`Rate: **${rR}%**\nFee: **${fmtUSD(fR)}**\nYou receive: **${fmtUSD(raw-fR)}**`,inline:true},
-            {name:"\uD83E\uDE99 Coin Amounts",value:coinLines.length?coinLines.join("  \u00b7  "):"--",inline:false},
-
-          ).setImage(IMG.FEE).setFooter({text:"Konvert  \u2022  Open a ticket to begin"})]});
+        if(btcP)coinLines.push(`BTC: **${(recvS/btcP).toFixed(6)}**`);if(ethP)coinLines.push(`ETH: **${(recvS/ethP).toFixed(5)}**`);if(solP)coinLines.push(`SOL: **${(recvS/solP).toFixed(4)}**`);
+        return interaction.editReply({embeds:[base("Fee Calculator").setThumbnail(IMG.LOGO).setDescription(`Estimate for **${fmtUSD(raw)}**\n*Final fee may vary slightly.*\n\u200b`).addFields({name:"Fiat \u2192 Crypto",value:`Rate: **${rS}%**\nFee: **${fmtUSD(fS)}**\nYou receive: **${fmtUSD(recvS)}**`,inline:true},{name:"Crypto \u2192 Fiat",value:`Rate: **${rR}%**\nFee: **${fmtUSD(fR)}**\nYou receive: **${fmtUSD(raw-fR)}**`,inline:true},{name:"\uD83E\uDE99 Coin Amounts",value:coinLines.length?coinLines.join("  \u00b7  "):"--",inline:false}).setImage(IMG.FEE).setFooter({text:"Konvert  \u2022  Open a ticket to begin"})]});
       }
 
       if(interaction.customId.startsWith("modal_c2c__")){
@@ -2374,11 +1251,7 @@ const modal=new ModalBuilder().setCustomId(`modal_amount__${method}__${_directio
         if(!walletInf)return interaction.editReply("Please enter your receiving wallet address.");
         const fee=calcFee(rawAmt,"send"),rate=feeRate(rawAmt,"send");
         state.pending[interaction.user.id]={method:"crypto",direction:"send",rawAmt,coin:sendCoin,walletInf,notes,recvCoin};
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Confirm Crypto to Crypto Exchange").setThumbnail(COIN_LOGO[sendCoin]||IMG.LOGO)
-          .setDescription("Review your details below before confirming.\n\u200b")
-          .addFields({name:"You Send",value:`**${sendCoin}** worth **${fmtUSD(rawAmt)}**`,inline:true},{name:"You Receive",value:`**${recvCoin}**`,inline:true},{name:"Est. Fee",value:`**${rate}%** -- ${fmtUSD(fee)}`,inline:true},{name:"Receiving Wallet",value:`||${walletInf}||`,inline:false},...(notes?[{name:"Notes",value:notes,inline:false}]:[]))
-          .setFooter({text:"Fee is an estimate and may vary slightly  \u2022  Konvert"})],
-          components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_confirm_ticket").setLabel("Confirm & Open Ticket").setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId("btn_cancel_ticket").setLabel("Cancel").setStyle(ButtonStyle.Secondary))]});
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Confirm Crypto to Crypto Exchange").setThumbnail(COIN_LOGO[sendCoin]||IMG.LOGO).setDescription("Review your details below before confirming.\n\u200b").addFields({name:"You Send",value:`**${sendCoin}** worth **${fmtUSD(rawAmt)}**`,inline:true},{name:"You Receive",value:`**${recvCoin}**`,inline:true},{name:"Est. Fee",value:`**${rate}%** -- ${fmtUSD(fee)}`,inline:true},{name:"Receiving Wallet",value:`||${walletInf}||`,inline:false},...(notes?[{name:"Notes",value:notes,inline:false}]:[])).setFooter({text:"Fee is an estimate and may vary slightly  \u2022  Konvert"})],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_confirm_ticket").setLabel("Confirm & Open Ticket").setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId("btn_cancel_ticket").setLabel("Cancel").setStyle(ButtonStyle.Secondary))]});
       }
 
       if(interaction.customId.startsWith("modal_amount__")){
@@ -2394,20 +1267,9 @@ const modal=new ModalBuilder().setCustomId(`modal_amount__${method}__${_directio
         let recvLabel=direction==="send"?(recv<5?"To be discussed":`**~${fmtUSD(recv)}** worth of ${coin}`):(`**${fmtUSD(recv)}** via ${m.label}`);
         if(direction==="send"){try{const coinPrice=await getPrice(coin);if(coinPrice)recvLabel=`**~${(recv/coinPrice).toFixed(6)} ${coin}** (\u2248${fmtUSD(recv)})`;}catch{}}
         state.pending[interaction.user.id]={method,direction,rawAmt,coin,walletInf,notes};
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Confirm Your Exchange")
-          .setThumbnail(COIN_LOGO[coin]||IMG.LOGO).setDescription("Review your details below before confirming.\n\u200b")
-          .addFields(
-            {name:"Method",   value:`**${m.label}**`,                                              inline:true},
-            {name:"Crypto",   value:`**${coin}**`,                                                 inline:true},
-            {name:"Direction",value:`**${direction==="send"?"Fiat \u2192 Crypto":"Crypto \u2192 Fiat"}**`,inline:true},
-            {name:"Sending",  value:sendLabel,                                                     inline:true},
-            {name:"Receiving",value:recvLabel,                                                     inline:true},
-            {name:"Est. Fee", value:`**${rate}%** -- ${fmtUSD(fee)}`,                              inline:true},
-            {name:"Your Info",value:`||${walletInf}||`,                                            inline:false},
-          ).setFooter({text:"Fee is an estimate and may vary slightly  \u2022  Konvert"})],
-          components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_confirm_ticket").setLabel("Confirm & Open Ticket").setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId("btn_cancel_ticket").setLabel("Cancel").setStyle(ButtonStyle.Secondary))]});
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Confirm Your Exchange").setThumbnail(COIN_LOGO[coin]||IMG.LOGO).setDescription("Review your details below before confirming.\n\u200b").addFields({name:"Method",value:`**${m.label}**`,inline:true},{name:"Crypto",value:`**${coin}**`,inline:true},{name:"Direction",value:`**${direction==="send"?"Fiat \u2192 Crypto":"Crypto \u2192 Fiat"}**`,inline:true},{name:"Sending",value:sendLabel,inline:true},{name:"Receiving",value:recvLabel,inline:true},{name:"Est. Fee",value:`**${rate}%** -- ${fmtUSD(fee)}`,inline:true},{name:"Your Info",value:`||${walletInf}||`,inline:false}).setFooter({text:"Fee is an estimate and may vary slightly  \u2022  Konvert"})],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_confirm_ticket").setLabel("Confirm & Open Ticket").setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId("btn_cancel_ticket").setLabel("Cancel").setStyle(ButtonStyle.Secondary))]});
       }
-    } // end isModalSubmit
+    }
 
   }catch(err){
     console.error("Interaction error:",err);
@@ -2424,14 +1286,8 @@ async function autoRates(guild){
     const ch=guild.channels.cache.get(channelId)||await guild.channels.fetch(channelId).catch(()=>null);
     if(!ch){console.log("[autoRates] channel not found or deleted — skipping");ratesMsgId=null;return;}
     const embed=await buildRatesEmbed();
-    if(ratesMsgId){
-      const msg=await ch.messages.fetch(ratesMsgId).catch(()=>null);
-      if(msg){await msg.edit({embeds:[embed]});console.log("[autoRates] updated");return;}
-      ratesMsgId=null;
-    }
-    const sent=await ch.send({embeds:[embed]});
-    ratesMsgId=sent.id;
-    console.log("[autoRates] posted new rates message");
+    if(ratesMsgId){const msg=await ch.messages.fetch(ratesMsgId).catch(()=>null);if(msg){await msg.edit({embeds:[embed]});console.log("[autoRates] updated");return;}ratesMsgId=null;}
+    const sent=await ch.send({embeds:[embed]});ratesMsgId=sent.id;console.log("[autoRates] posted new rates message");
   }catch(e){console.log("[autoRates] skipped:",e.message);}
 }
 
@@ -2451,7 +1307,6 @@ async function checkAlerts(){
   }catch{}
 }
 
-
 const GENERAL_CHANNEL_ID="1454793385750560894";
 
 async function postDailyCryptoFact(guild){
@@ -2462,115 +1317,50 @@ async function postDailyCryptoFact(guild){
     const fact=facts[Math.floor(Math.random()*facts.length)];
     const coins=["BTC","ETH","SOL","XRP","BNB","ADA","DOGE","AVAX","LTC","DOT"];
     const featuredCoin=coins[Math.floor(Math.random()*coins.length)];
-    let priceStr="";
-    try{const p=await getPrice(featuredCoin);if(p)priceStr=` · **${featuredCoin}: ${fmtUSD(p)}**`;}catch{}
-    const embed=new EmbedBuilder()
-      .setColor(0x7C4DFF)
-      .setAuthor({name:"Konvert Exchange  ·  Daily Crypto Fact",iconURL:IMG.LOGO})
-      .setTitle("Did You Know?")
-      .setThumbnail(COIN_LOGO[featuredCoin]||IMG.LOGO)
-      .setDescription(`${fact}
-​`)
-      .addFields(
-        {name:"Live Price",value:`${featuredCoin}${priceStr||" — unavailable"}`,inline:true},
-        {name:"Trade Now",value:`Open a ticket in <#${CONFIG.EXCHANGE_CHANNEL}>`,inline:true},
-      )
-      .setImage(IMG.BANNER)
-      .setFooter({text:"Konvert Exchange  ·  Daily fact — come back tomorrow for another"})
-      .setTimestamp();
-    await ch.send({embeds:[embed]});
+    let priceStr="";try{const p=await getPrice(featuredCoin);if(p)priceStr=` \u00b7 **${featuredCoin}: ${fmtUSD(p)}**`;}catch{}
+    await ch.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  Daily Crypto Fact",iconURL:IMG.LOGO}).setTitle("Did You Know?").setThumbnail(COIN_LOGO[featuredCoin]||IMG.LOGO).setDescription(`${fact}\n\u200b`).addFields({name:"Live Price",value:`${featuredCoin}${priceStr||" \u2014 unavailable"}`,inline:true},{name:"Trade Now",value:`Open a ticket in <#${CONFIG.EXCHANGE_CHANNEL}>`,inline:true}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  \u00b7  Daily fact \u2014 come back tomorrow for another"}).setTimestamp()]});
     console.log("[dailyFact] posted");
   }catch(e){console.error("[dailyFact]",e.message);}
 }
 
 function scheduleDailyFact(guild){
-  function msUntil9am(){
-    const now=new Date();
-    const next=new Date(now);
-    next.setUTCHours(13,0,0,0); // 9am EST = 1pm UTC
-    if(next<=now)next.setUTCDate(next.getUTCDate()+1);
-    return next.getTime()-now.getTime();
-  }
-  const delay=msUntil9am();
-  console.log(`[dailyFact] first post in ${Math.round(delay/3600000)}h`);
-  setTimeout(()=>{
-    postDailyCryptoFact(guild).catch(()=>{});
-    setInterval(()=>postDailyCryptoFact(guild).catch(()=>{}),24*60*60*1000);
-  },delay);
+  function msUntil9am(){const now=new Date(),next=new Date(now);next.setUTCHours(13,0,0,0);if(next<=now)next.setUTCDate(next.getUTCDate()+1);return next.getTime()-now.getTime();}
+  const delay=msUntil9am();console.log(`[dailyFact] first post in ${Math.round(delay/3600000)}h`);
+  setTimeout(()=>{postDailyCryptoFact(guild).catch(()=>{});setInterval(()=>postDailyCryptoFact(guild).catch(()=>{}),24*60*60*1000);},delay);
 }
-
-
 
 async function postWeeklyReferralSummary(guild){
   try{
     const ch=guild.channels.cache.get(GENERAL_CHANNEL_ID)||await guild.channels.fetch(GENERAL_CHANNEL_ID).catch(()=>null);
     if(!ch){console.log("[weeklyRef] general channel not found");return;}
-    const ref=getReferrals();
-    const now=Date.now();
-    const weekAgo=now-(7*24*60*60*1000);
-    // Get pts earned this week per referrer
+    const ref=getReferrals(),now=Date.now(),weekAgo=now-(7*24*60*60*1000);
     const weekPts={};
-    for(const [uid,data] of Object.entries(ref.points||{})){
-      const earned=(data.history||[]).filter(h=>h.type==="earned"&&h.at>=weekAgo).reduce((s,h)=>s+(h.points||0),0);
-      if(earned>0)weekPts[uid]=earned;
-    }
+    for(const [uid,data] of Object.entries(ref.points||{})){const earned=(data.history||[]).filter(h=>h.type==="earned"&&h.at>=weekAgo).reduce((s,h)=>s+(h.points||0),0);if(earned>0)weekPts[uid]=earned;}
     const ranked=Object.entries(weekPts).sort((a,b)=>b[1]-a[1]).slice(0,5);
     const totalReferrers=Object.keys(ref.points||{}).filter(uid=>(ref.points[uid].balance||0)+(ref.points[uid].paid||0)>0).length;
     const totalReferred=Object.keys(ref.referred||{}).length;
     const weekTickets=Object.values(_mem.tickets||load("tickets")).filter(t=>["vouched","completed"].includes(t.status)&&t.completedAt&&t.completedAt>=weekAgo&&t.method!=="adjustment");
     const weekVolume=weekTickets.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
     const medals=["🥇","🥈","🥉","4.","5."];
-    const topLines=ranked.length
-      ?ranked.map(([uid,pts],i)=>`${medals[i]}  <@${uid}>  —  **${pts} pts** (${pointsToDollars(pts)})`).join("\n")
-      :"No referral activity this week.";
-    const embed=new EmbedBuilder()
-      .setColor(0x7C4DFF)
-      .setAuthor({name:"Konvert  ·  Weekly Referral Report",iconURL:PTS_IMG})
-      .setTitle("Weekly Referral Summary")
-      .setThumbnail(PTS_IMG)
-      .setDescription(`Here's how the referral program performed this week.\n\u200b`)
-      .addFields(
-        {name:"📊  This Week's Volume",value:`**${fmtUSD(weekVolume)}** across **${weekTickets.length}** trades`,inline:false},
-        {name:"👥  Total Referred Members",value:`**${totalReferred}**`,inline:true},
-        {name:"🔗  Active Referrers",value:`**${totalReferrers}**`,inline:true},
-        {name:"\u200b",value:"\u200b",inline:true},
-        {name:"🏆  Top Earners This Week",value:topLines,inline:false},
-        {name:"💡  Want to earn?",value:`Use \`/referral\` to get your personal invite link. You earn points every time someone you refer completes a trade.\n**${POINTS_PER_100} pts per $100 traded  ·  ${POINTS_PER_DOLLAR} pts = $1**`,inline:false},
-      )
-      .setImage(IMG.BANNER)
-      .setFooter({text:"Konvert Referral Program  ·  Every Monday"})
-      .setTimestamp();
-    await ch.send({embeds:[embed]});
+    const topLines=ranked.length?ranked.map(([uid,pts],i)=>`${medals[i]}  <@${uid}>  \u2014  **${pts} pts** ($${pointsToDollars(pts)})`).join("\n"):"No referral activity this week.";
+    await ch.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert  \u00b7  Weekly Referral Report",iconURL:PTS_IMG}).setTitle("Weekly Referral Summary").setThumbnail(PTS_IMG).setDescription(`Here's how the referral program performed this week.\n\u200b`).addFields({name:"\uD83D\uDCCA  This Week's Volume",value:`**${fmtUSD(weekVolume)}** across **${weekTickets.length}** trades`,inline:false},{name:"\uD83D\uDC65  Total Referred Members",value:`**${totalReferred}**`,inline:true},{name:"\uD83D\uDD17  Active Referrers",value:`**${totalReferrers}**`,inline:true},{name:"\u200b",value:"\u200b",inline:true},{name:"\uD83C\uDFC6  Top Earners This Week",value:topLines,inline:false},{name:"\uD83D\uDCA1  Want to earn?",value:`Use \`/referral\` to get your personal invite link. You earn points every time someone you refer completes a trade.\n**${POINTS_PER_100} pts per $100 traded  \u00b7  ${POINTS_PER_DOLLAR} pts = $1**`,inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert Referral Program  \u00b7  Every Monday"}).setTimestamp()]});
     console.log("[weeklyRef] summary posted");
   }catch(e){console.error("[weeklyRef]",e.message);}
 }
 
 function scheduleWeeklyReferralSummary(guild){
-  // Fire every Monday at 9am UTC
-  function msUntilNextMonday(){
-    const now=new Date();
-    const day=now.getUTCDay(); // 0=Sun,1=Mon
-    const daysUntilMon=day===1?7:(8-day)%7||7;
-    const next=new Date(now);
-    next.setUTCDate(now.getUTCDate()+daysUntilMon);
-    next.setUTCHours(9,0,0,0);
-    return next.getTime()-now.getTime();
-  }
-  const firstDelay=msUntilNextMonday();
-  console.log(`[weeklyRef] first post in ${Math.round(firstDelay/3600000)}h`);
-  setTimeout(()=>{
-    postWeeklyReferralSummary(guild).catch(()=>{});
-    setInterval(()=>postWeeklyReferralSummary(guild).catch(()=>{}),7*24*60*60*1000);
-  },firstDelay);
+  function msUntilNextMonday(){const now=new Date(),day=now.getUTCDay(),daysUntilMon=day===1?7:(8-day)%7||7,next=new Date(now);next.setUTCDate(now.getUTCDate()+daysUntilMon);next.setUTCHours(9,0,0,0);return next.getTime()-now.getTime();}
+  const firstDelay=msUntilNextMonday();console.log(`[weeklyRef] first post in ${Math.round(firstDelay/3600000)}h`);
+  setTimeout(()=>{postWeeklyReferralSummary(guild).catch(()=>{});setInterval(()=>postWeeklyReferralSummary(guild).catch(()=>{}),7*24*60*60*1000);},firstDelay);
 }
 
-client.once(Events.ClientReady, async () => {
+client.once(Events.ClientReady,async()=>{
   console.log(`Konvert Bot online -- ${client.user.tag}`);
   client.user.setPresence({activities:[{name:"Konvert",type:3}],status:"online"});
   const guild=client.guilds.cache.get(CONFIG.GUILD_ID);
   await restoreFromDiscord();
   if(guild){
-    await cacheInvites(guild); // cache invite counts for referral tracking
+    await cacheInvites(guild);
     await autoRates(guild).catch(e=>console.log("[autoRates startup]",e.message));
     setInterval(()=>autoRates(guild),30*60*1000);
     setInterval(()=>checkAlerts(),5*60*1000);
