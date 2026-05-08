@@ -187,44 +187,62 @@ async function restoreFromDiscord(){
     });
     if(!ch){console.log("[restore] backup channel not found — check BACKUP_CHANNEL_ID");return;}
     const msgs=await ch.messages.fetch({limit:50});
-    let ticketsRestored=false,referralsRestored=false;
+
+    // Collect ALL ticket and referral attachments across all messages
+    // then pick the one with the MOST entries (largest real dataset)
+    const ticketCandidates=[],refCandidates=[];
     for(const msg of msgs.values()){
       if(msg.attachments.size===0)continue;
-      if(!ticketsRestored){
-        const ticketAtt=msg.attachments.find(a=>a.name==="konvert_tickets.json");
-        if(ticketAtt){
-          try{
-            const res=await fetch(ticketAtt.url,{signal:AbortSignal.timeout(10000)});
-            if(res.ok){
-              const data=await res.json();
-              if(Object.keys(data).length>0){
-                _mem.tickets=data;
-                fs.writeFileSync(DB.tickets,JSON.stringify(data,null,2));
-                console.log(`[restore] tickets: restored ${Object.keys(data).length} entries`);
-                ticketsRestored=true;
-              }
-            }
-          }catch(e){console.error("[restore] ticket fetch error:",e.message);}
-        }
-      }
-      if(!referralsRestored){
-        const refAtt=msg.attachments.find(a=>a.name==="konvert_referrals.json");
-        if(refAtt){
-          try{
-            const res2=await fetch(refAtt.url,{signal:AbortSignal.timeout(10000)});
-            if(res2.ok){
-              const data2=await res2.json();
-              _mem.referrals=data2;
-              fs.writeFileSync(DB.referrals,JSON.stringify(data2,null,2));
-              console.log("[restore] referrals: restored");
-              referralsRestored=true;
-            }
-          }catch(e){console.error("[restore] referral fetch error:",e.message);}
-        }
-      }
-      if(ticketsRestored&&referralsRestored)break;
+      const ticketAtt=msg.attachments.find(a=>a.name==="konvert_tickets.json");
+      if(ticketAtt)ticketCandidates.push({url:ticketAtt.url,size:ticketAtt.size,msgId:msg.id});
+      const refAtt=msg.attachments.find(a=>a.name==="konvert_referrals.json");
+      if(refAtt)refCandidates.push({url:refAtt.url,size:refAtt.size,msgId:msg.id});
     }
-    if(!ticketsRestored)console.log("[restore] no ticket backup found in last 50 messages");
+
+    console.log(`[restore] found ${ticketCandidates.length} ticket backups, ${refCandidates.length} referral backups`);
+
+    // Pick the largest file — that's the most complete dataset
+    if(ticketCandidates.length>0){
+      ticketCandidates.sort((a,b)=>b.size-a.size);
+      const best=ticketCandidates[0];
+      console.log(`[restore] using ticket backup from msg ${best.msgId} (${best.size} bytes)`);
+      try{
+        const res=await fetch(best.url,{signal:AbortSignal.timeout(15000)});
+        if(res.ok){
+          const data=await res.json();
+          const count=Object.keys(data).length;
+          if(count>0){
+            _mem.tickets=data;
+            fs.writeFileSync(DB.tickets,JSON.stringify(data,null,2));
+            console.log(`[restore] ✅ tickets: restored ${count} entries`);
+          }else{
+            console.log("[restore] ⚠️ largest ticket backup was empty, trying next...");
+            // fallback: try second largest
+            if(ticketCandidates.length>1){
+              const res2=await fetch(ticketCandidates[1].url,{signal:AbortSignal.timeout(15000)});
+              if(res2.ok){const d2=await res2.json();if(Object.keys(d2).length>0){_mem.tickets=d2;fs.writeFileSync(DB.tickets,JSON.stringify(d2,null,2));console.log(`[restore] ✅ tickets (fallback): restored ${Object.keys(d2).length} entries`);}}
+            }
+          }
+        }
+      }catch(e){console.error("[restore] ticket fetch error:",e.message);}
+    }else{
+      console.log("[restore] no ticket backups found in last 50 messages");
+    }
+
+    if(refCandidates.length>0){
+      refCandidates.sort((a,b)=>b.size-a.size);
+      const best=refCandidates[0];
+      try{
+        const res=await fetch(best.url,{signal:AbortSignal.timeout(15000)});
+        if(res.ok){
+          const data=await res.json();
+          _mem.referrals=data;
+          fs.writeFileSync(DB.referrals,JSON.stringify(data,null,2));
+          console.log(`[restore] ✅ referrals: restored from msg ${best.msgId}`);
+        }
+      }catch(e){console.error("[restore] referral fetch error:",e.message);}
+    }
+
     console.log("[restore] scan complete");
   }catch(e){console.error("[restore error]",e.message);}
 }
