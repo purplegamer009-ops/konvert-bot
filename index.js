@@ -124,33 +124,34 @@ function progressBar(cur,min,max,len=12){
   return "\u2593".repeat(fill)+"\u2591".repeat(len-fill)+" "+Math.round(pct*100)+"%";
 }
 async function applyTierRole(guild,userId,volume){
+  // Silently updates roles — no DM spam
   try{
     const member=await guild.members.fetch(userId).catch(()=>null);if(!member)return;
     const tier=getTier(volume);
-    const isNewTier=tier.role&&!member.roles.cache.has(tier.role);
+    // Remove all old tier roles
     for(const t of TIERS){if(t.role&&member.roles.cache.has(t.role)&&t.role!==tier.role)await member.roles.remove(t.role).catch(()=>{});}
-    if(tier.role)await member.roles.add(tier.role).catch(()=>{});
-    if(isNewTier&&tier.min>0){
-      const nextTier=getNextTier(volume);
-      const vipNote=isVipVolume(volume)?"\n\n\u26A1 **VIP Perk Unlocked:** You now receive a **0.75% fee discount** on all future trades automatically.":"";
-      try{
-        await member.user.send({embeds:[new EmbedBuilder()
-          .setColor(0x7C4DFF)
-          .setAuthor({name:"Konvert Exchange  \u00b7  Tier Up",iconURL:"https://i.imgur.com/nrm5TW5.png"})
-          .setTitle("Tier Unlocked")
-          .setThumbnail(member.user.displayAvatarURL({size:256}))
-          .setDescription(`${tier.emoji} You've reached **${tier.label}**.${vipNote}\n\u200b`)
-          .addFields(
-            {name:"Tier",value:`${tier.emoji} **${tier.label}**`,inline:true},
-            {name:"Volume",value:`**${fmtUSD(volume)}**`,inline:true},
-            {name:nextTier?"Next":"Top",value:nextTier?`${nextTier.emoji} **${nextTier.label}** — ${fmtUSD(nextTier.min-volume)} away`:"You've reached the top.",inline:true},
-          )
-          .setImage(IMG.BANNER)
-          .setFooter({text:"Konvert Exchange"})
-          .setTimestamp()]});
-      }catch{}
-    }
+    // Add correct tier role
+    if(tier.role&&!member.roles.cache.has(tier.role))await member.roles.add(tier.role).catch(()=>{});
   }catch(e){console.log("[applyTierRole]",e.message);}
+}
+
+// Runs every hour — syncs ALL members' tier roles based on their current volume
+async function syncAllTierRoles(guild){
+  try{
+    const allTickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
+    // Get unique userIds who have any trades
+    const userIds=[...new Set(Object.values(allTickets).map(t=>t.userId).filter(Boolean))];
+    console.log(`[tierSync] syncing ${userIds.length} users...`);
+    let synced=0;
+    for(const userId of userIds){
+      const vol=getUserVolume(userId);
+      await applyTierRole(guild,userId,vol).catch(()=>{});
+      synced++;
+      // Small delay to avoid rate limiting
+      if(synced%10===0)await new Promise(r=>setTimeout(r,1000));
+    }
+    console.log(`[tierSync] done — ${synced} users synced`);
+  }catch(e){console.error("[tierSync error]",e.message);}
 }
 
 const METHODS=[
@@ -853,7 +854,6 @@ client.on(Events.InteractionCreate,async interaction=>{
         const coins={};realTrades.forEach(t=>{if(t.coin)coins[t.coin]=(coins[t.coin]||0)+1;});
         const topC=Object.entries(coins).sort((a,b)=>b[1]-a[1])[0];
         const tier=getTier(volume),nextTier=getNextTier(volume),needed=nextTier?Math.max(nextTier.min-volume,0):0;
-        await applyTierRole(interaction.guild,target.id,volume);
         const last=realTrades.length>0?[...realTrades].sort((a,b)=>(b.completedAt||0)-(a.completedAt||0))[0]:null;
         
         const tierStatus=nextTier?`${tier.emoji} **${tier.label}** \u2014 ${fmtUSD(needed)} away from ${nextTier.emoji} **${nextTier.label}**`:`${tier.emoji} **${tier.label}** \u2014 Maximum tier reached`;
@@ -881,7 +881,6 @@ client.on(Events.InteractionCreate,async interaction=>{
         const byUser=buildLeaderboardVolumes();
         if(!Object.keys(byUser).length)return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Client Leaderboard").setThumbnail(IMG.LOGO).setDescription("No completed trades on record yet.\n\nComplete a trade to appear here.\n\u200b").setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  \u2022  Leaderboard"}).setTimestamp()]});
         const ranked=Object.entries(byUser).sort((a,b)=>b[1]-a[1]).slice(0,10);
-        for(const [uid,vol] of ranked){applyTierRole(interaction.guild,uid,vol).catch(()=>{});}
         const medals=["🥇","🥈","🥉"];
         const lines=ranked.map(([uid,vol],i)=>`${medals[i]||`**${i+1}.**`}  <@${uid}>  \u2014  **${fmtUSD(vol)}**`).join("\n");
         const totalVol=ranked.reduce((s,[,v])=>s+v,0);
@@ -1085,42 +1084,29 @@ client.on(Events.InteractionCreate,async interaction=>{
           .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
           .setTitle("Terms of Service")
           .setThumbnail(IMG.LOGO)
-          .setDescription(
-            "By engaging in any exchange or service facilitated through Konvert, you acknowledge and agree to the following terms in full. "
-            +"These terms exist to protect all parties and ensure a safe, transparent trading environment.\n\u200b"
-          )
+          .setDescription("By using Konvert's services you agree to the following. These terms protect everyone involved and keep trades running smoothly.\n\u200b")
           .addFields(
-            {name:"\u00a7 1  \u2014  Eligibility & Lawful Use",
-             value:"Konvert services are available to individuals who can lawfully engage in cryptocurrency and fiat transactions in their jurisdiction. "
-             +"You agree not to use Konvert for any unlawful purpose, including but not limited to money laundering, fraud, unauthorized chargebacks, or circumvention of financial regulations. "
-             +"Konvert reserves the right to refuse service to any individual at its sole discretion.",
+            {name:"1. Use of Service",
+             value:"Konvert is available to anyone who can legally exchange cryptocurrency in their country. We reserve the right to refuse service to anyone at any time without explanation. Do not use Konvert for fraud, money laundering, or chargebacks.",
              inline:false},
-            {name:"\u00a7 2  \u2014  Service Fees",
-             value:"All transactions are subject to a service fee which is disclosed transparently before trade confirmation. A minimum fee applies to every exchange. "
-             +"Fees are considered earned upon mutual confirmation of a completed trade and are **non-refundable** at that point. "
-             +"Refund requests resulting from a verified error on Konvert\u2019s part must be submitted within 24 hours of trade completion.",
+            {name:"2. Fees",
+             value:"Every trade has a service fee that is shown to you before you confirm. The minimum fee is $5. Once both sides confirm a trade is done, the fee is non-refundable. If we made an error on our end, reach out within 24 hours.",
              inline:false},
-            {name:"\u00a7 3  \u2014  Platform Exclusivity",
-             value:"All exchanges must be initiated and completed exclusively within the Konvert Discord server via the official ticket system. "
-             +"Any transaction arranged outside of Konvert\u2019s platform is conducted entirely at the user\u2019s own risk. "
-             +"Konvert bears no liability for losses arising from off-platform arrangements and will provide no support or remediation for such incidents.",
+            {name:"3. Stay on Platform",
+             value:"All trades must go through Konvert's official ticket system. Anything arranged outside of this server is entirely at your own risk — we won't help or compensate for off-platform deals gone wrong.",
              inline:false},
-            {name:"\u00a7 4  \u2014  Middleman & Communication Policy",
-             value:"A trusted middleman is required on all trades unless explicitly waived by a Konvert owner within your active ticket. "
-             +"Staff will **never** contact you via direct message to initiate or facilitate a trade. Anyone doing so should be treated as an impersonator and reported immediately. "
-             +"All communication must remain within your assigned ticket channel.",
+            {name:"4. Use a Middleman",
+             value:"A middleman is required on all trades unless an owner specifically says otherwise inside your ticket. Staff will never DM you first. If someone messages you claiming to be Konvert, ignore them and report it.",
              inline:false},
-            {name:"\u00a7 5  \u2014  Disputes & Enforcement",
-             value:"Disputes must be raised through the official dispute process within your active ticket. Konvert staff will review all available evidence before issuing a determination. "
-             +"Abuse of the dispute process, chargebacks, fraudulent activity, staff abuse, or circumvention of these terms will result in **immediate and permanent removal** from the Konvert platform.",
+            {name:"5. Disputes",
+             value:"If something goes wrong, flag it inside your ticket. We'll review it and make a call. Abusing the dispute process, filing false claims, or trying to scam will get you permanently banned.",
              inline:false},
-            {name:"\u00a7 6  \u2014  Limitation of Liability",
-             value:"Konvert operates as a peer-facilitated exchange intermediary. While reasonable precautions are taken to ensure safe trading, Konvert does not guarantee outcomes and is not liable for losses arising from market volatility, user error, third-party failures, or events beyond its control. "
-             +"Use of Konvert\u2019s services is at your own discretion and risk.",
+            {name:"6. Liability",
+             value:"Konvert is a middleman service. We are not responsible for losses caused by market swings, mistakes you make, or anything outside our control. Trade at your own risk.",
              inline:false},
           )
           .setImage(IMG.BANNER)
-          .setFooter({text:"Konvert Exchange  \u2022  By proceeding you agree to these terms in full"});
+          .setFooter({text:"Konvert Exchange  \u2022  Using our service means you accept these terms"});
         await interaction.channel.send({embeds:[embed]});
         return interaction.reply({content:"Terms of Service embed posted.",ephemeral:true});
       }
@@ -1608,6 +1594,10 @@ client.once(Events.ClientReady,async()=>{
     },10*60*1000);
     // Discord backup every 30 min (secondary redundancy)
     setInterval(()=>{const t=load("tickets");if(Object.keys(t).length>0)_backupToDiscord(t).catch(()=>{});},30*60*1000);
+    // Sync ALL member tier roles every hour automatically
+    setInterval(()=>syncAllTierRoles(guild).catch(()=>{}),60*60*1000);
+    // Run once on startup after a short delay (let everything load first)
+    setTimeout(()=>syncAllTierRoles(guild).catch(()=>{}),30*1000);
     scheduleWeeklyReferralSummary(guild);
     scheduleDailyFact(guild);
   }
