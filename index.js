@@ -562,25 +562,27 @@ function buildMineGrid(userId,game){
   return rows;
 }
 
-function buildDealEmbed({clientId,exchangerId,method,amountUSD,direction,coin,message,rating,referredBy}){
-  const fromStr=direction==="send"?(coin||method||"—"):(method||"—");
-  const toStr=direction==="send"?(method||"—"):(coin||"—");
+function buildDealEmbed({clientId,exchangerId,method,amountUSD,direction,coin,message,rating}){
+  const dirStr=direction&&coin&&method
+    ?(direction==="send"?`${coin} \u2192 ${method}`:`${method} \u2192 ${coin}`)
+    :null;
   const embed=new EmbedBuilder()
     .setColor(0x7C4DFF)
-    .setAuthor({name:"Konvert Exchange  ·  Exchange Complete",iconURL:IMG.LOGO})
+    .setAuthor({name:"Konvert Exchange  \u00b7  Exchange Verified",iconURL:IMG.LOGO})
     .setTitle("Exchange Complete")
     .setThumbnail(IMG.LOGO)
-    .setDescription("​")
+    .setDescription("\u200b")
     .addFields(
-      {name:"From",value:`**${fromStr}**`,inline:true},
-      {name:"To",value:`**${toStr}**`,inline:true},
-      {name:"Amount",value:`**${fmtUSD(amountUSD||0)}**`,inline:true},
-      {name:"Exchanger",value:`<@${exchangerId}>`,inline:true},
       {name:"Client",value:`<@${clientId}>`,inline:true},
-      {name:"Referral",value:referredBy?`<@${referredBy}>`:"None",inline:true},
+      {name:"Exchanger",value:`<@${exchangerId}>`,inline:true},
+      {name:"\u200b",value:"\u200b",inline:true},
     );
-  if(message)embed.addFields({name:"Note",value:message,inline:false});
-  embed.setImage(IMG.BANNER).setTimestamp().setFooter({text:"Konvert Exchange  •  Verified"});
+  if(dirStr)embed.addFields({name:"Direction",value:`**${dirStr}**`,inline:true});
+  else if(method)embed.addFields({name:"Method",value:`**${method}**`,inline:true});
+  if(coin&&!dirStr)embed.addFields({name:"Coin",value:`**${coin}**`,inline:true});
+  if(amountUSD)embed.addFields({name:"Amount",value:`**${fmtUSD(amountUSD)}**`,inline:true});
+  if(message)embed.addFields({name:"\u200b",value:"\u200b",inline:false},{name:"Review",value:message,inline:false});
+  embed.setImage(IMG.BANNER).setTimestamp().setFooter({text:"Konvert Exchange  \u2022  Verified"});
   return embed;
 }
 
@@ -632,7 +634,31 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
     ticketEmbed.addFields({name:"Referral",value:"No referral",inline:true});
   }
   ticketEmbed.setImage(IMG.TICKET).setTimestamp().setFooter({text:"Konvert Exchange  \u2022  All communication stays in this ticket"});
-  const rulesEmbed=new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Before You Begin").setDescription("A **middleman is required** on all trades. Agree on one with your handler before sending anything.\n\nStaff will **never DM you first**. All communication stays in this ticket only.\n\nDo not send funds until your handler explicitly confirms in this channel.").setFooter({text:"Konvert Exchange  \u2022  Stay safe"});
+  const rulesEmbed=new EmbedBuilder().setColor(0x7C4DFF)
+    .setAuthor({name:"Konvert Exchange  \u00b7  Important",iconURL:IMG.LOGO})
+    .setTitle("Read Before Proceeding")
+    .setDescription("Please read the following carefully before sending anything.\n\u200b")
+    .addFields(
+      {name:"\uD83D\uDCB0  Exchanger Limits",
+       value:"Your exchanger has a **go-first limit** displayed next to their name in the server. "
+       +"If your exchange is **within that limit**, they can go first.\n"
+       +"If your exchange **exceeds their limit**, a middleman is required — no exceptions.",
+       inline:false},
+      {name:"\uD83E\uDD1D  Middleman — Astro MM",
+       value:"For exchanges above your exchanger's go-first limit, open an MM ticket here: "
+       +"<https://discord.com/channels/1432137319611105375/1480556937555742914>\n"
+       +"Wait for the MM to be confirmed before sending anything.",
+       inline:false},
+      {name:"\u2705  Owner Override",
+       value:"The only exception is if **@3uce** or **@jswaps** explicitly tells you to go first inside this ticket. "
+       +"No other staff member can authorize this.",
+       inline:false},
+      {name:"\uD83D\uDD12  Security",
+       value:"Staff will **never** DM you first. Anyone messaging you outside of this ticket claiming to be Konvert is an impersonator. "
+       +"All communication must stay inside this channel.",
+       inline:false},
+    )
+    .setFooter({text:"Konvert Exchange  \u2022  Protect yourself — follow these steps every time"});
   const btns=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_done").setLabel("Mark Exchange Complete").setEmoji("\u2705").setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId("btn_close").setLabel("Close Ticket").setEmoji("\uD83D\uDD12").setStyle(ButtonStyle.Danger));
   await ch.send({content:`<@${user.id}>`,embeds:[ticketEmbed,rulesEmbed],components:[btns]});
   const pings=[];
