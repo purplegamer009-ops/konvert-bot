@@ -18,6 +18,58 @@ const fs   = require("fs");
 const path = require("path");
 const axios = require("axios");
 const { google } = require("googleapis");
+const { Pool } = require("pg");
+
+// ── POSTGRES ─────────────────────────────────────────────────────────────────
+// Connects to Railway Postgres via DATABASE_URL env var.
+// Falls back to JSON files if DATABASE_URL is not set (local dev).
+const pgPool = process.env.DATABASE_URL
+  ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } })
+  : null;
+
+if(pgPool){
+  pgPool.on("error", (err) => console.error("[pg] idle client error:", err.message));
+}
+
+async function dbQuery(sql, params=[]){
+  if(!pgPool) return null;
+  try{
+    const result = await pgPool.query(sql, params);
+    return result;
+  }catch(e){
+    console.error("[db] query error:", e.message, "| SQL:", sql.slice(0,80));
+    return null;
+  }
+}
+
+async function initDB(){
+  if(!pgPool){ console.log("[db] no DATABASE_URL — using JSON fallback"); return; }
+  await dbQuery(`CREATE TABLE IF NOT EXISTS kv_store (
+    key TEXT PRIMARY KEY,
+    value JSONB NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+  )`);
+  console.log("[db] ✅ Postgres connected and tables ready");
+}
+
+// Save any JSON-serialisable value under a key
+async function dbSet(key, value){
+  if(!pgPool){ return; }
+  await dbQuery(
+    `INSERT INTO kv_store (key, value, updated_at)
+     VALUES ($1, $2::jsonb, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = $2::jsonb, updated_at = NOW()`,
+    [key, JSON.stringify(value)]
+  );
+}
+
+// Get a value by key — returns the parsed object or null
+async function dbGet(key){
+  if(!pgPool) return null;
+  const r = await dbQuery(`SELECT value FROM kv_store WHERE key = $1`, [key]);
+  if(!r || r.rows.length === 0) return null;
+  return r.rows[0].value;
+}
 
 const oauth2Client = new google.auth.OAuth2(
   process.env.YOUTUBE_CLIENT_ID, process.env.YOUTUBE_CLIENT_SECRET, "urn:ietf:wg:oauth:2.0:oob");
@@ -128,26 +180,56 @@ const DB={
 const _mem={tickets:{},wallets:{},blacklist:{},referrals:{}};
 
 const load=k=>{
+  // Always return in-memory cache if populated
   if(Object.keys(_mem[k]||{}).length>0)return _mem[k];
+  // Try local disk as fast fallback
   try{
     const d=JSON.parse(fs.readFileSync(DB[k],"utf8"));
-    _mem[k]=d;
-    console.log(`[load] ${k} from disk: ${Object.keys(d).length} entries`);
-    return d;
-  }catch(e){
-    console.log(`[load] ${k} not on disk: ${e.message}`);
-    return {};
-  }
+    if(Object.keys(d).length>0){
+      _mem[k]=d;
+      console.log(`[load] ${k} from disk cache: ${Object.keys(d).length} entries`);
+      return d;
+    }
+  }catch(e){}
+  return {};
 };
+
+// Async version that checks Postgres then disk — called at startup
+async function loadAsync(k){
+  // 1. Try Postgres
+  const pgData = await dbGet(`konvert_${k}`);
+  if(pgData && Object.keys(pgData).length>0){
+    _mem[k]=pgData;
+    // Sync to disk cache
+    try{fs.writeFileSync(DB[k],JSON.stringify(pgData,null,2));}catch{}
+    console.log(`[load] ${k} from Postgres: ${Object.keys(pgData).length} entries`);
+    return pgData;
+  }
+  // 2. Try disk
+  try{
+    const d=JSON.parse(fs.readFileSync(DB[k],"utf8"));
+    if(Object.keys(d).length>0){
+      _mem[k]=d;
+      // Back-fill Postgres from disk
+      await dbSet(`konvert_${k}`, d);
+      console.log(`[load] ${k} from disk (migrated to pg): ${Object.keys(d).length} entries`);
+      return d;
+    }
+  }catch(e){}
+  return {};
+}
 
 const save=(k,d)=>{
   _mem[k]=d;
+  // Write to local disk (fallback / cache)
   try{
     fs.writeFileSync(DB[k],JSON.stringify(d,null,2));
-    console.log(`[save] ${k}: ${Object.keys(d).length} entries`);
   }catch(e){
-    console.error(`[save ERROR] ${k}: ${e.message}`);
+    console.error(`[save disk ERROR] ${k}: ${e.message}`);
   }
+  // Write to Postgres (primary persistent storage)
+  dbSet(`konvert_${k}`, d).catch(e=>console.error(`[save pg ERROR] ${k}:`,e.message));
+  // Discord backup (secondary redundancy)
   if(k==="tickets"&&process.env.BACKUP_CHANNEL_ID){_backupToDiscord(d).catch(()=>{});}
   if(k==="referrals"&&process.env.BACKUP_CHANNEL_ID){_backupReferralsToDiscord(d).catch(()=>{});}
 };
@@ -185,65 +267,46 @@ async function restoreFromDiscord(){
     const ch=await client.channels.fetch(process.env.BACKUP_CHANNEL_ID).catch(e=>{
       console.error("[restore] cannot fetch backup channel:",e.message);return null;
     });
-    if(!ch){console.log("[restore] backup channel not found — check BACKUP_CHANNEL_ID");return;}
+    if(!ch){console.log("[restore] backup channel not found");return;}
     const msgs=await ch.messages.fetch({limit:50});
-
-    // Collect ALL ticket and referral attachments across all messages
-    // then pick the one with the MOST entries (largest real dataset)
     const ticketCandidates=[],refCandidates=[];
     for(const msg of msgs.values()){
       if(msg.attachments.size===0)continue;
-      const ticketAtt=msg.attachments.find(a=>a.name==="konvert_tickets.json");
-      if(ticketAtt)ticketCandidates.push({url:ticketAtt.url,size:ticketAtt.size,msgId:msg.id});
-      const refAtt=msg.attachments.find(a=>a.name==="konvert_referrals.json");
-      if(refAtt)refCandidates.push({url:refAtt.url,size:refAtt.size,msgId:msg.id});
+      const ta=msg.attachments.find(a=>a.name==="konvert_tickets.json");
+      if(ta)ticketCandidates.push({url:ta.url,size:ta.size});
+      const ra=msg.attachments.find(a=>a.name==="konvert_referrals.json");
+      if(ra)refCandidates.push({url:ra.url,size:ra.size});
     }
-
     console.log(`[restore] found ${ticketCandidates.length} ticket backups, ${refCandidates.length} referral backups`);
-
-    // Pick the largest file — that's the most complete dataset
     if(ticketCandidates.length>0){
       ticketCandidates.sort((a,b)=>b.size-a.size);
-      const best=ticketCandidates[0];
-      console.log(`[restore] using ticket backup from msg ${best.msgId} (${best.size} bytes)`);
       try{
-        const res=await fetch(best.url,{signal:AbortSignal.timeout(15000)});
+        const res=await fetch(ticketCandidates[0].url,{signal:AbortSignal.timeout(15000)});
         if(res.ok){
           const data=await res.json();
-          const count=Object.keys(data).length;
-          if(count>0){
+          if(Object.keys(data).length>0){
             _mem.tickets=data;
             fs.writeFileSync(DB.tickets,JSON.stringify(data,null,2));
-            console.log(`[restore] ✅ tickets: restored ${count} entries`);
-          }else{
-            console.log("[restore] ⚠️ largest ticket backup was empty, trying next...");
-            // fallback: try second largest
-            if(ticketCandidates.length>1){
-              const res2=await fetch(ticketCandidates[1].url,{signal:AbortSignal.timeout(15000)});
-              if(res2.ok){const d2=await res2.json();if(Object.keys(d2).length>0){_mem.tickets=d2;fs.writeFileSync(DB.tickets,JSON.stringify(d2,null,2));console.log(`[restore] ✅ tickets (fallback): restored ${Object.keys(d2).length} entries`);}}
-            }
+            await dbSet("konvert_tickets",data);
+            console.log(`[restore] ✅ tickets: migrated ${Object.keys(data).length} entries to Postgres`);
           }
         }
-      }catch(e){console.error("[restore] ticket fetch error:",e.message);}
-    }else{
-      console.log("[restore] no ticket backups found in last 50 messages");
+      }catch(e){console.error("[restore] ticket error:",e.message);}
     }
-
     if(refCandidates.length>0){
       refCandidates.sort((a,b)=>b.size-a.size);
-      const best=refCandidates[0];
       try{
-        const res=await fetch(best.url,{signal:AbortSignal.timeout(15000)});
+        const res=await fetch(refCandidates[0].url,{signal:AbortSignal.timeout(15000)});
         if(res.ok){
           const data=await res.json();
           _mem.referrals=data;
           fs.writeFileSync(DB.referrals,JSON.stringify(data,null,2));
-          console.log(`[restore] ✅ referrals: restored from msg ${best.msgId}`);
+          await dbSet("konvert_referrals",data);
+          console.log("[restore] ✅ referrals: migrated to Postgres");
         }
-      }catch(e){console.error("[restore] referral fetch error:",e.message);}
+      }catch(e){console.error("[restore] referral error:",e.message);}
     }
-
-    console.log("[restore] scan complete");
+    console.log("[restore] Discord migration complete");
   }catch(e){console.error("[restore error]",e.message);}
 }
 
@@ -520,10 +583,19 @@ async function postVouch(guild,data){
 async function createTicket(interaction,method,direction,amountUSD,coin,walletInfo,notes){
   const guild=interaction.guild,user=interaction.user,m=getMethod(method);
   const tickets=load("tickets");
-  const existing=Object.entries(tickets).find(([,t])=>t.userId===user.id&&t.status==="open");
-  if(existing){await interaction.editReply({content:`You already have an open ticket: <#${existing[0]}>`,embeds:[],components:[]});return null;}
+  // Count open tickets where the channel still actually exists (no ghost tickets)
+  const openTickets=Object.entries(tickets).filter(([id,t])=>t.userId===user.id&&t.status==="open"&&guild.channels.cache.has(id));
+  // Clean up any ghost entries (channel deleted but status still "open")
+  let ghostCleaned=false;
+  for(const [id,t] of Object.entries(tickets)){if(t.userId===user.id&&t.status==="open"&&!guild.channels.cache.has(id)){tickets[id].status="closed";tickets[id].closedAt=Date.now();ghostCleaned=true;}}
+  if(ghostCleaned){_mem.tickets=tickets;save("tickets",tickets);}
+  if(openTickets.length>=3){await interaction.editReply({content:`You already have **${openTickets.length}** open tickets. Please complete or close one before opening another.`,embeds:[],components:[]});return null;}
   const _clientVol=getUserVolume(user.id),_isVip=isVipVolume(_clientVol);
-  const feeUSD=calcFee(amountUSD,direction,_isVip),rate=feeRate(amountUSD,direction,_isVip),receiveU=amountUSD-feeUSD;
+  const _isC2C=method==="crypto";
+  const _isGiftCard=method==="giftcard";
+  const feeUSD=_isC2C?Math.max(amountUSD*0.02,CONFIG.MIN_FEE):_isGiftCard?0:calcFee(amountUSD,direction,_isVip);
+  const rate=_isC2C?2:_isGiftCard?null:feeRate(amountUSD,direction,_isVip);
+  const receiveU=_isGiftCard?amountUSD:amountUSD-feeUSD;
   let coinAmt=null;
   try{const p=await getPrice(coin);if(p)coinAmt=(receiveU/p).toFixed(6);}catch{}
   const sendLabel=direction==="send"?`${fmtUSD(amountUSD)} via ${m.label}`:`**${coin}** worth ${fmtUSD(amountUSD)}`;
@@ -538,7 +610,7 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   catch(err){await interaction.editReply({content:`Failed to create ticket: ${err.message}`,embeds:[],components:[]});return null;}
   const ticketEmbed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(`${m.label} Exchange`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
     .setDescription(`**Welcome, <@${user.id}>**\n\nYour ticket is open. A **${m.label}** handler has been notified.\n\u200b`)
-    .addFields({name:"__Sending__",value:`**${sendLabel}**`,inline:true},{name:"__Receiving__",value:`**${receiveLabel}**`,inline:true},{name:"__Fee__",value:`**${rate}%**  --  ${fmtUSD(feeUSD)}${_isVip?" \u26A1 VIP rate":""}`,inline:true},{name:direction==="send"?"__Your Receiving Wallet__":`__Your ${m.label} Details__`,value:`\`${walletInfo}\``,inline:false});
+    .addFields({name:"__Sending__",value:`**${sendLabel}**`,inline:true},{name:"__Receiving__",value:`**${receiveLabel}**`,inline:true},{name:"__Fee__",value:_isGiftCard?"**To be decided** — staff will confirm in ticket":`**${rate}%**  --  ${fmtUSD(feeUSD)}${_isVip?" \u26A1 VIP rate":""}`,inline:true},{name:direction==="send"?"__Your Receiving Wallet__":`__Your ${m.label} Details__`,value:`\`${walletInfo}\``,inline:false});
   if(notes)ticketEmbed.addFields({name:"Notes",value:notes,inline:false});
   ticketEmbed.setImage(IMG.TICKET).setTimestamp().setFooter({text:"Konvert  \u2022  All communication stays in this ticket"});
   const rulesEmbed=new EmbedBuilder().setColor(CONFIG.COLOR).setTitle("Before You Proceed").setDescription("**Middleman required on all trades.**\nAgree on a trusted MM with your exchanger before sending anything.\n\n**Do not go first** unless **@jswaps** or **@3uce** explicitly says so in this ticket.\n\n__Staff will **never** DM you first.__ Anyone claiming to be Konvert in DMs is an impersonator.\nAll communication stays **in this ticket only.**").setImage(IMG.RULES).setFooter({text:"Konvert  \u2022  Stay safe, stay in this ticket"});
@@ -1000,10 +1072,9 @@ client.on(Events.InteractionCreate,async interaction=>{
              +"Konvert reserves the right to refuse service to any individual at its sole discretion.",
              inline:false},
             {name:"\u00a7 2  \u2014  Service Fees",
-             value:"All transactions are subject to a tiered service fee based on trade volume and direction. A minimum fee of **$5.00 USD** applies to every exchange. "
-             +"Fees are disclosed prior to trade confirmation and are considered earned upon completion. "
-             +"**All fees are non-refundable** once a trade has been mutually confirmed. "
-             +"Refund requests due to verified Konvert error must be submitted within 24 hours of completion.",
+             value:"All transactions are subject to a service fee which is disclosed transparently before trade confirmation. A minimum fee applies to every exchange. "
+             +"Fees are considered earned upon mutual confirmation of a completed trade and are **non-refundable** at that point. "
+             +"Refund requests resulting from a verified error on Konvert\u2019s part must be submitted within 24 hours of trade completion.",
              inline:false},
             {name:"\u00a7 3  \u2014  Platform Exclusivity",
              value:"All exchanges must be initiated and completed exclusively within the Konvert Discord server via the official ticket system. "
@@ -1250,7 +1321,7 @@ client.on(Events.InteractionCreate,async interaction=>{
         const {send:sendCoin,recv:recvCoin}=c2cData;
         if(sendCoin===recvCoin)return interaction.reply({content:"You cannot exchange a coin for the same coin.",ephemeral:true});
         const modal=new ModalBuilder().setCustomId(`modal_c2c__${sendCoin}__${recvCoin}`).setTitle(`${sendCoin} \u2192 ${recvCoin}`);
-        modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("c2c_amount").setLabel("Amount in USD you are sending").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 200").setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("c2c_wallet").setLabel(`Your ${recvCoin} receiving wallet address`).setStyle(TextInputStyle.Short).setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("c2c_notes").setLabel("Notes (optional)").setStyle(TextInputStyle.Paragraph).setRequired(false)));
+        modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("c2c_amount").setLabel("Amount in USD you are sending").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 200").setRequired(true)));
         return interaction.showModal(modal);
       }
 
@@ -1258,7 +1329,7 @@ client.on(Events.InteractionCreate,async interaction=>{
         const _isSendCrypto=interaction.customId.startsWith("dir_send__"),method=interaction.customId.replace("dir_send__","").replace("dir_receive__",""),m=getMethod(method);
         const _direction=_isSendCrypto?"receive":"send";
         const modal=new ModalBuilder().setCustomId(`modal_amount__${method}__${_direction}`).setTitle(`${m.label} -- ${_isSendCrypto?"Send Crypto":"Receive Crypto"}`);
-        modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_amount").setLabel("Trade amount in USD").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 150").setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_coin").setLabel("Which crypto? (BTC, ETH, SOL)").setStyle(TextInputStyle.Short).setPlaceholder("e.g. SOL").setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_wallet").setLabel(_isSendCrypto?"Your crypto receiving wallet":`Your ${m.label} receiving details`).setStyle(TextInputStyle.Short).setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_notes").setLabel("Notes (optional)").setStyle(TextInputStyle.Paragraph).setRequired(false)));
+        modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_amount").setLabel("Trade amount in USD").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 150").setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_coin").setLabel("Which crypto? (BTC, ETH, SOL)").setStyle(TextInputStyle.Short).setPlaceholder("e.g. SOL").setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_wallet").setLabel(_isSendCrypto?"Your crypto wallet address":`Your ${m.label} payment details`).setStyle(TextInputStyle.Short).setRequired(true)));
         return interaction.showModal(modal);
       }
 
@@ -1358,19 +1429,18 @@ client.on(Events.InteractionCreate,async interaction=>{
       if(interaction.customId.startsWith("modal_c2c__")){
         await interaction.deferReply({ephemeral:true});
         const parts=interaction.customId.split("__"),sendCoin=parts[1],recvCoin=parts[2];
-        const rawAmt=parseFloat(interaction.fields.getTextInputValue("c2c_amount")),walletInf=interaction.fields.getTextInputValue("c2c_wallet").trim(),notes=interaction.fields.getTextInputValue("c2c_notes")?.trim()||"";
+        const rawAmt=parseFloat(interaction.fields.getTextInputValue("c2c_amount"));
         if(isNaN(rawAmt)||rawAmt<=0)return interaction.editReply("Please enter a valid amount greater than $0.");
-        if(!walletInf)return interaction.editReply("Please enter your receiving wallet address.");
-        const fee=calcFee(rawAmt,"send"),rate=feeRate(rawAmt,"send");
-        state.pending[interaction.user.id]={method:"crypto",direction:"send",rawAmt,coin:sendCoin,walletInf,notes,recvCoin};
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Confirm Crypto to Crypto Exchange").setThumbnail(COIN_LOGO[sendCoin]||IMG.LOGO).setDescription("Review your details below before confirming.\n\u200b").addFields({name:"You Send",value:`**${sendCoin}** worth **${fmtUSD(rawAmt)}**`,inline:true},{name:"You Receive",value:`**${recvCoin}**`,inline:true},{name:"Est. Fee",value:`**${rate}%** -- ${fmtUSD(fee)}`,inline:true},{name:"Receiving Wallet",value:`||${walletInf}||`,inline:false},...(notes?[{name:"Notes",value:notes,inline:false}]:[])).setFooter({text:"Fee is an estimate and may vary slightly  \u2022  Konvert"})],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_confirm_ticket").setLabel("Confirm & Open Ticket").setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId("btn_cancel_ticket").setLabel("Cancel").setStyle(ButtonStyle.Secondary))]});
+        const fee=Math.max(rawAmt*0.02,CONFIG.MIN_FEE),rate=2;
+        state.pending[interaction.user.id]={method:"crypto",direction:"send",rawAmt,coin:sendCoin,walletInf:"C2C — staff will confirm wallet in ticket",notes:"",recvCoin};
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Confirm Crypto to Crypto Exchange").setThumbnail(COIN_LOGO[sendCoin]||IMG.LOGO).setDescription("Review your details before confirming. Staff will handle wallet addresses inside your ticket.\n\u200b").addFields({name:"You Send",value:`**${sendCoin}** worth **${fmtUSD(rawAmt)}**`,inline:true},{name:"You Receive",value:`**${recvCoin}**`,inline:true},{name:"Fee",value:`**2%** \u2014 ${fmtUSD(fee)}`,inline:true}).setFooter({text:"Wallet addresses confirmed inside your ticket  \u2022  Konvert"})],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_confirm_ticket").setLabel("Confirm & Open Ticket").setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId("btn_cancel_ticket").setLabel("Cancel").setStyle(ButtonStyle.Secondary))]});
       }
 
       if(interaction.customId.startsWith("modal_amount__")){
         await interaction.deferReply({ephemeral:true});
         const parts=interaction.customId.split("__"),method=parts[1],direction=parts[2],m=getMethod(method);
         const rawAmt=parseFloat(interaction.fields.getTextInputValue("inp_amount")),coin=interaction.fields.getTextInputValue("inp_coin").toUpperCase().trim();
-        const walletInf=interaction.fields.getTextInputValue("inp_wallet").trim(),notes=interaction.fields.getTextInputValue("inp_notes")?.trim()||"";
+        const walletInf=interaction.fields.getTextInputValue("inp_wallet").trim(),notes="";
         if(isNaN(rawAmt)||rawAmt<=0)return interaction.editReply("Please enter a valid amount greater than $0.");
         if(!COINS.includes(coin))return interaction.editReply(`**${coin}** is not supported. Supported: ${COINS.join(", ")}`);
         if(!walletInf)return interaction.editReply("Please enter your wallet or account info.");
@@ -1470,16 +1540,71 @@ client.once(Events.ClientReady,async()=>{
   console.log(`Konvert Bot online -- ${client.user.tag}`);
   client.user.setPresence({activities:[{name:"Konvert",type:3}],status:"online"});
   const guild=client.guilds.cache.get(CONFIG.GUILD_ID);
-  await restoreFromDiscord();
+
+  // 1. Init Postgres table
+  await initDB();
+
+  // 2. Load all data — Postgres first, disk fallback, Discord last resort
+  const pgTickets=await dbGet("konvert_tickets");
+  const pgReferrals=await dbGet("konvert_referrals");
+  const pgWallets=await dbGet("konvert_wallets");
+  const pgBlacklist=await dbGet("konvert_blacklist");
+
+  if(pgTickets&&Object.keys(pgTickets).length>0){
+    _mem.tickets=pgTickets;
+    console.log(`[startup] tickets loaded from Postgres: ${Object.keys(pgTickets).length} entries`);
+  } else {
+    console.log("[startup] Postgres empty — running Discord migration...");
+    await restoreFromDiscord();
+  }
+
+  if(pgReferrals&&Object.keys(pgReferrals).length>0){
+    _mem.referrals=pgReferrals;
+    console.log(`[startup] referrals loaded from Postgres`);
+  }
+  if(pgWallets&&Object.keys(pgWallets).length>0){
+    _mem.wallets=pgWallets;
+    console.log(`[startup] wallets loaded from Postgres`);
+  }
+  if(pgBlacklist&&Object.keys(pgBlacklist).length>0){
+    _mem.blacklist=pgBlacklist;
+    console.log(`[startup] blacklist loaded from Postgres`);
+  }
+
   if(guild){
     await cacheInvites(guild);
     await autoRates(guild).catch(e=>console.log("[autoRates startup]",e.message));
     setInterval(()=>autoRates(guild),30*60*1000);
     setInterval(()=>checkAlerts(),5*60*1000);
+    // Periodic Postgres sync every 10 min as extra safety net
+    setInterval(async()=>{
+      const t=_mem.tickets;const r=_mem.referrals;
+      if(Object.keys(t||{}).length>0)await dbSet("konvert_tickets",t).catch(()=>{});
+      if(Object.keys(r||{}).length>0)await dbSet("konvert_referrals",r).catch(()=>{});
+    },10*60*1000);
+    // Discord backup every 30 min (secondary redundancy)
     setInterval(()=>{const t=load("tickets");if(Object.keys(t).length>0)_backupToDiscord(t).catch(()=>{});},30*60*1000);
     scheduleWeeklyReferralSummary(guild);
     scheduleDailyFact(guild);
   }
 });
+
+// ── CRASH PROTECTION ─────────────────────────────────────────────────────────
+// Catch unhandled promise rejections so the bot never dies from a single bad interaction
+process.on("unhandledRejection",(err)=>{
+  console.error("[unhandledRejection]",err?.message||err);
+});
+process.on("uncaughtException",(err)=>{
+  console.error("[uncaughtException]",err?.message||err);
+  // Don't exit — keep the bot alive
+});
+
+// Auto-reconnect: if the websocket dies, discord.js will reconnect automatically.
+// The below ensures we never give up.
+client.on("error",(err)=>console.error("[client error]",err.message));
+client.on("warn",(msg)=>console.warn("[client warn]",msg));
+client.on("shardDisconnect",(event,id)=>console.log(`[shard ${id}] disconnected — code ${event.code}, will reconnect`));
+client.on("shardReconnecting",(id)=>console.log(`[shard ${id}] reconnecting...`));
+client.on("shardResume",(id,replayed)=>console.log(`[shard ${id}] resumed — replayed ${replayed} events`));
 
 registerCommands().then(()=>client.login(CONFIG.TOKEN)).catch(console.error);
