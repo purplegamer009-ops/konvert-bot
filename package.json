@@ -2,16 +2,14 @@
   "name": "konvert-bot",
   "version": "1.0.0",
   "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
   "dependencies": {
-    "discord.js": "^14.14.1",
-    "axios": "^1.6.0",
-    "googleapis": "^140.0.0",
-    "@discordjs/rest": "^2.3.0",
+    "@discordjs/rest": "^2.4.0",
+    "axios": "^1.7.2",
     "discord-api-types": "^0.37.83",
-    "node-fetch": "^3.3.2"
+    "discord.js": "^14.15.3",
+    "googleapis": "^140.0.0",
+    "node-fetch": "^3.3.2",
+    "pg": "^8.11.3"
   },
   "engines": {
     "node": ">=18.0.0"
