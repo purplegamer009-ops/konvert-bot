@@ -636,23 +636,13 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   ticketEmbed.setImage(IMG.TICKET).setTimestamp().setFooter({text:"Konvert Exchange  \u2022  All communication stays in this ticket"});
   const rulesEmbed=new EmbedBuilder().setColor(0x7C4DFF)
     .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
-    .setTitle("Before You Send Anything")
-    .addFields(
-      {name:"\uD83D\uDCB0  Go-First Limit",
-       value:"Check your exchanger's name in the server — it shows their **go-first limit**.\n"
-       +"If your amount is **under that limit**, they can go first with no MM needed.\n"
-       +"If it says **\"Use MM Always\"** or your amount is over their limit, you must use **Astro MM**.",
-       inline:false},
-      {name:"\uD83E\uDD1D  Using Astro MM",
-       value:"Open a ticket in the **Astro MM** server before sending anything. "
-       +"The MM holds funds securely until both sides confirm.\n"
-       +"**@3uce** or **@jswaps** can waive the MM requirement — no one else can.",
-       inline:false},
-      {name:"\uD83D\uDD12  Stay Safe",
-       value:"Staff never DM first. Keep everything in this ticket.",
-       inline:false},
+    .setTitle("Before You Proceed")
+    .setDescription(
+      "**Go-First Limit** — Your exchanger's name shows their limit. Under it, you can go first. Over it or it says \"Use MM Always\", use **Astro MM**.\n\n"
+      +"**Astro MM** — Open a ticket there before sending anything. Only **@3uce** or **@jswaps** can waive this.\n\n"
+      +"**Security** — Staff will never DM you. All communication stays in this ticket."
     )
-    .setFooter({text:"Konvert Exchange  \u2022  When in doubt, use the MM"});
+    .setFooter({text:"Konvert Exchange  \u2022  When in doubt, always use the MM"});
   const btns=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_done").setLabel("Mark Exchange Complete").setEmoji("\u2705").setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId("btn_close").setLabel("Close Ticket").setEmoji("\uD83D\uDD12").setStyle(ButtonStyle.Danger));
   await ch.send({content:`<@${user.id}>`,embeds:[ticketEmbed,rulesEmbed],components:[btns]});
   const pings=[];
