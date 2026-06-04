@@ -639,7 +639,7 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
     .setTitle("Before You Proceed")
     .setDescription(
       "**Go-First Limit** — Your exchanger's name shows their limit. Under it, you can go first. Over it or it says \"Use MM Always\", use **Astro MM**.\n\n"
-      +"**Astro MM** — Open a ticket there before sending anything. Only **@3uce** or **@jswaps** can waive this.\n\n"
+      +"**Astro MM** — Open a ticket there before sending anything. Only go first if **@3uce** or **@jswaps** explicitly says so in this ticket.\n\n"
       +"**Security** — Staff will never DM you. All communication stays in this ticket."
     )
     .setFooter({text:"Konvert Exchange  \u2022  When in doubt, always use the MM"});
@@ -694,7 +694,7 @@ async function sendReceiptDM(clientUserId,exchangerId,ticketData,tradeCount,tota
 
 async function completeTrade(interaction,ticket,tickets){
   const m=getMethod(ticket.method);
-  ticket.status="vouched";ticket.completedBy=interaction.user.id;ticket.completedAt=Date.now();ticket.amountUSD=parseFloat(ticket.amountUSD)||0;
+  ticket.status="vouched";ticket.completedBy=ticket._overrideExchangerId||interaction.user.id;delete ticket._overrideExchangerId;ticket.completedAt=Date.now();ticket.amountUSD=parseFloat(ticket.amountUSD)||0;
   const ticketKey=interaction.channel.id;tickets[ticketKey]=ticket;
   _mem.tickets={...(_mem.tickets||{}),...tickets};save("tickets",_mem.tickets);
   console.log(`[completeTrade] userId=${ticket.userId} amount=${ticket.amountUSD} total=${Object.keys(_mem.tickets).length}`);
@@ -1427,14 +1427,20 @@ client.on(Events.InteractionCreate,async interaction=>{
         const isStaff=CONFIG.STAFF_ROLE?interaction.member.roles.cache.has(CONFIG.STAFF_ROLE):false;
         const mRoleId=ticket?.method?CONFIG.ROLES[ticket.method]:null;
         const isHandler=mRoleId?interaction.member.roles.cache.has(mRoleId):false;
-        if(!isOwner&&!isStaff&&!isHandler)return interaction.reply({content:"Only staff or the assigned handler can mark a trade complete.",ephemeral:true});
-        if(ticket?.status==="vouched"||ticket?.status==="closed")return interaction.reply({content:"This ticket has already been completed.",ephemeral:true});
-        if(!ticket?.amountUSD){
-          const modal=new ModalBuilder().setCustomId(`modal_done__${interaction.channel.id}`).setTitle("Complete Trade");
-          modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("done_amount").setLabel("Amount in USD").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 250").setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("done_client").setLabel("Client's Discord ID or @mention").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 123456789012345678").setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("done_method").setLabel("Payment method (e.g. PayPal, Zelle)").setStyle(TextInputStyle.Short).setPlaceholder("e.g. PayPal").setRequired(true)));
-          return interaction.showModal(modal);
-        }
-        await interaction.deferReply();await completeTrade(interaction,ticket,tickets);return;
+        // Any exchanger role can mark complete
+        const isAnyExchanger=CONFIG.EXCHANGER_ROLE?interaction.member.roles.cache.has(CONFIG.EXCHANGER_ROLE):false;
+        const allExchangerRoles=Object.values(CONFIG.ROLES).filter(Boolean);
+        const hasAnyExchangerRole=allExchangerRoles.some(r=>interaction.member.roles.cache.has(r));
+        if(!isOwner&&!isStaff&&!isHandler&&!isAnyExchanger&&!hasAnyExchangerRole)return interaction.reply({content:"Only exchangers can mark a deal complete.",ephemeral:true});
+        if(ticket?.status==="vouched"||ticket?.status==="closed")return interaction.reply({content:"This exchange has already been completed.",ephemeral:true});
+        // Always show modal to confirm exchanger and amount
+        const modal=new ModalBuilder().setCustomId(`modal_done__${interaction.channel.id}`).setTitle("Complete Exchange");
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("done_amount").setLabel("Exchange amount (USD)").setStyle(TextInputStyle.Short).setPlaceholder(ticket?.amountUSD?`${ticket.amountUSD}`:"e.g. 250").setRequired(true)),
+          new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("done_exchanger").setLabel("Exchanger (Discord ID or @mention)").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 123456789 or @username").setRequired(true)),
+          new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("done_client").setLabel("Client (Discord ID or @mention)").setStyle(TextInputStyle.Short).setPlaceholder(ticket?.userId||"e.g. 123456789").setRequired(true)),
+        );
+        return interaction.showModal(modal);
       }
       if(interaction.customId==="btn_close"){
         if(!CONFIG.OWNER_IDS.includes(interaction.user.id)&&!(CONFIG.STAFF_ROLE&&interaction.member.roles.cache.has(CONFIG.STAFF_ROLE)))return interaction.reply({content:"Only owners or staff can close tickets.",ephemeral:true});
@@ -1471,16 +1477,22 @@ client.on(Events.InteractionCreate,async interaction=>{
         await interaction.deferReply();
         const channelId=interaction.customId.replace("modal_done__","");
         const rawAmt=parseFloat(interaction.fields.getTextInputValue("done_amount"));
+        const exchangerRaw=interaction.fields.getTextInputValue("done_exchanger").trim().replace(/[<@!>]/g,"");
         const clientRaw=interaction.fields.getTextInputValue("done_client").trim().replace(/[<@!>]/g,"");
-        const method=interaction.fields.getTextInputValue("done_method").trim();
         if(isNaN(rawAmt)||rawAmt<=0)return interaction.editReply("Please enter a valid amount.");
         let clientId=clientRaw;try{const u=await client.users.fetch(clientRaw);clientId=u.id;}catch{}
+        let exchangerId=exchangerRaw;try{const eu=await client.users.fetch(exchangerRaw);exchangerId=eu.id;}catch{}
         const tickets=Object.keys(_mem.tickets||{}).length>0?{..._mem.tickets}:load("tickets");
-        if(!tickets[channelId]){tickets[channelId]={userId:clientId,userTag:clientRaw,method:method.toLowerCase(),direction:null,coin:null,amountUSD:rawAmt,feeUSD:calcFee(rawAmt,"send"),walletInfo:"manual",notes:"Completed via modal",status:"open",createdAt:Date.now()};}
-        else{if(!tickets[channelId].amountUSD||tickets[channelId].amountUSD===0)tickets[channelId].amountUSD=rawAmt;if(!tickets[channelId].userId)tickets[channelId].userId=clientId;if(!tickets[channelId].method)tickets[channelId].method=method.toLowerCase();}
+        if(!tickets[channelId]){
+          tickets[channelId]={userId:clientId,userTag:clientRaw,method:"manual",direction:null,coin:null,amountUSD:rawAmt,feeUSD:calcFee(rawAmt,"send"),walletInfo:"manual",notes:"Completed via modal",status:"open",createdAt:Date.now()};
+        }else{
+          if(!tickets[channelId].amountUSD||tickets[channelId].amountUSD===0)tickets[channelId].amountUSD=rawAmt;
+          if(!tickets[channelId].userId)tickets[channelId].userId=clientId;
+        }
+        tickets[channelId]._overrideExchangerId=exchangerId;
         await completeTrade(interaction,tickets[channelId],tickets);return;
       }
-
+      
       if(interaction.customId==="modal_support"){
         const issue=interaction.fields.getTextInputValue("sup_issue"),tried=interaction.fields.getTextInputValue("sup_tried")||"Not specified",user=interaction.user,guild=interaction.guild;
         let ch;
