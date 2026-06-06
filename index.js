@@ -401,18 +401,50 @@ const state={pending:{},mineGames:{},cooldowns:{},alerts:[],passes:{},c2cSelecti
 function buildLeaderboardVolumes(){
   const DONE_STATUS=["vouched","completed"];
   const allEntries=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
-  const relevant=allEntries.filter(t=>DONE_STATUS.includes(t.status)&&typeof t.amountUSD==="number"||typeof t.amountUSD==="string"&&!isNaN(parseFloat(t.amountUSD)));
   const byUser={};
-  for(const t of relevant){if(!DONE_STATUS.includes(t.status))continue;const amt=parseFloat(t.amountUSD)||0;if(!byUser[t.userId])byUser[t.userId]=0;byUser[t.userId]+=amt;}
+  for(const t of allEntries){
+    // Only count real completed exchanges — skip adjustments, open, cancelled, closed tickets
+    if(!DONE_STATUS.includes(t.status))continue;
+    if(t.method==="adjustment")continue;
+    if(!t.userId||!t.amountUSD)continue;
+    const amt=parseFloat(t.amountUSD)||0;
+    if(amt<=0)continue;
+    if(!byUser[t.userId])byUser[t.userId]=0;
+    byUser[t.userId]+=amt;
+  }
+  // Apply any adjustment entries (can be negative or positive)
+  for(const t of allEntries){
+    if(!DONE_STATUS.includes(t.status))continue;
+    if(t.method!=="adjustment")continue;
+    if(!t.userId)continue;
+    const amt=parseFloat(t.amountUSD)||0;
+    if(!byUser[t.userId])byUser[t.userId]=0;
+    byUser[t.userId]+=amt;
+  }
   const result={};
-  for(const [uid,vol] of Object.entries(byUser)){const clamped=Math.max(0,vol);if(clamped>0)result[uid]=clamped;}
+  for(const [uid,vol] of Object.entries(byUser)){
+    const clamped=Math.max(0,vol);
+    if(clamped>0)result[uid]=clamped;
+  }
   return result;
 }
 
 function getUserVolume(userId){
   const DONE_STATUS=["vouched","completed"];
   const allEntries=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
-  const total=allEntries.filter(t=>t.userId===userId&&DONE_STATUS.includes(t.status)).reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
+  let total=0;
+  for(const t of allEntries){
+    if(t.userId!==userId)continue;
+    if(!DONE_STATUS.includes(t.status))continue;
+    const amt=parseFloat(t.amountUSD)||0;
+    if(t.method==="adjustment"){
+      // Adjustments can be positive or negative
+      total+=amt;
+    } else {
+      // Only count real exchanges with positive amounts
+      if(amt>0)total+=amt;
+    }
+  }
   return Math.max(0,total);
 }
 
@@ -477,7 +509,8 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("clearleaderboard").setDescription("[Owner] Wipe all trade data from leaderboard and stats").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("testbackup").setDescription("[Owner] Test Discord backup channel").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("wipestats").setDescription("[Owner] Completely wipe ALL stats and tickets for a single user").addUserOption(o=>o.setName("user").setDescription("User to wipe").setRequired(true)).addStringOption(o=>o.setName("confirm").setDescription('Type "CONFIRM" to proceed').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  new SlashCommandBuilder().setName("dispute").setDescription("Flag an issue with your current trade \u2014 locks ticket and alerts staff"),
+  new SlashCommandBuilder().setName("complete").setDescription("[Owner] Mark this exchange as complete and tag the exchanger").addUserOption(o=>o.setName("exchanger").setDescription("The exchanger who handled this deal").setRequired(true)).addNumberOption(o=>o.setName("amount").setDescription("Override the amount in USD (optional)").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("dispute").setDescription("Flag an issue with your current exchange \u2014 locks ticket and alerts staff"),
   // FIXED: message (required) BEFORE days (optional)
   new SlashCommandBuilder().setName("broadcast").setDescription("[Owner] DM all clients who traded in the last X days").addStringOption(o=>o.setName("message").setDescription("Message to send").setRequired(true)).addIntegerOption(o=>o.setName("days").setDescription("How many days back to look (default 30)").setMinValue(1).setMaxValue(365).setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("mytrades").setDescription("View your personal trade history and stats"),
@@ -897,8 +930,16 @@ client.on(Events.InteractionCreate,async interaction=>{
         const target=interaction.options.getUser("user")||interaction.user;
         const isSelf=target.id===interaction.user.id;
         const DONE_STATUS=["vouched","completed"];
-        const allT=Object.values(Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets"));
-        const realTrades=allT.filter(t=>t.userId===target.id&&DONE_STATUS.includes(t.status)&&t.amountUSD&&t.method!=="adjustment");
+        // Always read from _mem first (already loaded from Postgres on startup)
+        const _ticketSource=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
+        const allT=Object.values(_ticketSource);
+        const realTrades=allT.filter(t=>
+          t.userId===target.id&&
+          DONE_STATUS.includes(t.status)&&
+          t.method!=="adjustment"&&
+          t.amountUSD&&
+          parseFloat(t.amountUSD)>0
+        );
         const volume=getUserVolume(target.id);
         const avg=realTrades.length>0?realTrades.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0)/realTrades.length:0;
         const methods={};realTrades.forEach(t=>{if(t.method)methods[t.method]=(methods[t.method]||0)+1;});
@@ -1094,8 +1135,23 @@ client.on(Events.InteractionCreate,async interaction=>{
       if(cmd==="announce"){const message=interaction.options.getString("message"),channelId=interaction.options.getString("channel"),ping=interaction.options.getString("ping")||"none",ch=interaction.guild.channels.cache.get(channelId);if(!ch)return interaction.reply({content:"Channel not found.",ephemeral:true});const pingStr=ping==="everyone"?"@everyone ":ping==="here"?"@here ":"";await ch.send({content:pingStr||undefined,embeds:[base("Konvert Announcement").setThumbnail(IMG.LOGO).setDescription(message).setFooter({text:`Announced by ${interaction.user.tag}  \u2022  Konvert`})]});return interaction.reply({content:"Announced.",ephemeral:true});}
       if(cmd==="blacklist"){const target=interaction.options.getUser("user"),reason=interaction.options.getString("reason")||"No reason given";const bl=load("blacklist");bl[target.id]={tag:target.tag,reason,by:interaction.user.tag,at:Date.now()};save("blacklist",bl);log(interaction.guild,`BLACKLIST: ${target.tag} -- ${reason}`);return interaction.reply({content:`**${target.tag}** blacklisted. Reason: ${reason}`,ephemeral:true});}
       if(cmd==="unblacklist"){const target=interaction.options.getUser("user");const bl=load("blacklist");delete bl[target.id];save("blacklist",bl);return interaction.reply({content:`**${target.tag}** removed from blacklist.`,ephemeral:true});}
-      if(cmd==="closeticket"){const reason=interaction.options.getString("reason")||"Exchanges";await interaction.deferReply();await doCloseTicket(interaction.channel,interaction.guild,interaction.user,reason);await interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setTitle("Ticket Closed").setDescription(`Closed by staff.\n**Reason:** ${reason}\n\nDeleting in 10 seconds.`).setTimestamp()]});setTimeout(()=>interaction.channel.delete().catch(()=>{}),10000);return;}
-      if(cmd==="cancelticket"){const reason=interaction.options.getString("reason")||"Cancelled by staff";await interaction.deferReply();const tickets=load("tickets");if(tickets[interaction.channel.id]){tickets[interaction.channel.id].status="cancelled";tickets[interaction.channel.id].cancelledAt=Date.now();save("tickets",tickets);const t=tickets[interaction.channel.id];try{const mem=await interaction.guild.members.fetch(t.userId).catch(()=>null);if(mem)await mem.send({embeds:[base("Ticket Cancelled").setDescription(`Your Konvert exchange ticket has been cancelled by staff.\n**Reason:** ${reason}\n\nIf this is a mistake, please open a new ticket.`).setFooter({text:"Konvert"})]}).catch(()=>{});}catch{}}await interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setTitle("Ticket Cancelled").setDescription(`Cancelled by ${interaction.user.tag}\n**Reason:** ${reason}\n\nDeleting in 10 seconds.`).setTimestamp()]});log(interaction.guild,`CANCELLED: #${interaction.channel.name} by ${interaction.user.tag}`);setTimeout(()=>interaction.channel.delete().catch(()=>{}),10000);return;}
+      if(cmd==="closeticket"){
+        const reason=interaction.options.getString("reason")||"Deal complete";
+        await interaction.deferReply();
+        await doCloseTicket(interaction.channel,interaction.guild,interaction.user,reason);
+        const isDealComplete=!reason||reason.toLowerCase().includes("complete")||reason.toLowerCase().includes("done");
+        const isCancelled=reason.toLowerCase().includes("cancel");
+        const closeTitle=isCancelled?"Deal Cancelled":isDealComplete?"Deal Complete":"Ticket Closed";
+        await interaction.editReply({embeds:[new EmbedBuilder()
+          .setColor(0x7C4DFF)
+          .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
+          .setTitle(closeTitle)
+          .setDescription(`${isCancelled?"This exchange has been cancelled.":"This exchange has been completed and the ticket is now closed."}
+Deleting in 10 seconds.`)
+          .setTimestamp()]});
+        setTimeout(()=>interaction.channel.delete().catch(()=>{}),10000);return;
+      }
+      if(cmd==="cancelticket"){const reason=interaction.options.getString("reason")||"Cancelled by staff";await interaction.deferReply();const tickets=load("tickets");if(tickets[interaction.channel.id]){tickets[interaction.channel.id].status="cancelled";tickets[interaction.channel.id].cancelledAt=Date.now();save("tickets",tickets);const t=tickets[interaction.channel.id];try{const mem=await interaction.guild.members.fetch(t.userId).catch(()=>null);if(mem)await mem.send({embeds:[base("Ticket Cancelled").setDescription(`Your Konvert exchange ticket has been cancelled by staff.\n**Reason:** ${reason}\n\nIf this is a mistake, please open a new ticket.`).setFooter({text:"Konvert"})]}).catch(()=>{});}catch{}}await interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Deal Cancelled").setDescription(`This exchange has been cancelled.${reason&&reason!=="Cancelled by staff"?`\n**Reason:** ${reason}`:""}\nDeleting in 10 seconds.`).setTimestamp()]});log(interaction.guild,`CANCELLED: #${interaction.channel.name} by ${interaction.user.tag}`);setTimeout(()=>interaction.channel.delete().catch(()=>{}),10000);return;}
 
       if(cmd==="openticket"){
         await interaction.deferReply();
@@ -1230,6 +1286,20 @@ client.on(Events.InteractionCreate,async interaction=>{
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert  \u00b7  Admin",iconURL:IMG.LOGO}).setTitle("User Wiped").setThumbnail(target.displayAvatarURL({size:128})).setDescription(`All data for <@${target.id}> has been permanently removed.\n\u200b`).addFields({name:"Entries Removed",value:`**${removed}**`,inline:true},{name:"Referral Points",value:"**Cleared**",inline:true},{name:"Tier Roles",value:"**Removed**",inline:true}).setFooter({text:`Wiped by ${interaction.user.tag}  \u00b7  Konvert Exchange`}).setTimestamp()]});
       }
 
+      if(cmd==="complete"){
+        await interaction.deferReply();
+        const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
+        const ticket=tickets[interaction.channel.id];
+        if(!ticket)return interaction.editReply({content:"❌ No ticket found for this channel.",ephemeral:true});
+        if(ticket.status==="vouched"||ticket.status==="closed")return interaction.editReply({content:"❌ This exchange is already complete.",ephemeral:true});
+        const exchanger=interaction.options.getUser("exchanger");
+        const amountOverride=interaction.options.getNumber("amount");
+        if(amountOverride&&amountOverride>0)ticket.amountUSD=amountOverride;
+        ticket._overrideExchangerId=exchanger.id;
+        await completeTrade(interaction,ticket,tickets);
+        return;
+      }
+
       if(cmd==="dispute"){
         await interaction.deferReply({ephemeral:true});
         const tickets=Object.keys(_mem.tickets||{}).length?_mem.tickets:load("tickets");
@@ -1261,8 +1331,14 @@ client.on(Events.InteractionCreate,async interaction=>{
       if(cmd==="mytrades"){
         await interaction.deferReply({ephemeral:true});
         const userId=interaction.user.id;
-        const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
-        const done=allT.filter(t=>t.userId===userId&&["vouched","completed"].includes(t.status)&&t.method!=="adjustment").sort((a,b)=>(b.completedAt||0)-(a.completedAt||0));
+        const _myTicketSrc=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
+        const allT=Object.values(_myTicketSrc);
+        const done=allT.filter(t=>
+          t.userId===userId&&
+          ["vouched","completed"].includes(t.status)&&
+          t.method!=="adjustment"&&
+          parseFloat(t.amountUSD||0)>0
+        ).sort((a,b)=>(b.completedAt||0)-(a.completedAt||0));
         const volume=getUserVolume(userId),tier=getTier(volume),nextT=getNextTier(volume),vip=isVipVolume(volume);
         if(!done.length){return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  My Trades",iconURL:IMG.LOGO}).setTitle("No Trades Yet").setDescription("You haven't completed any trades with Konvert yet.\n\nHead to the exchange channel to get started.\n\u200b").setImage(IMG.BANNER).setFooter({text:"Konvert Exchange"}).setTimestamp()]});}
         const last5=done.slice(0,5).map((t,i)=>{const m=getMethod(t.method);return `${i+1}. **${m?.label||t.method}** \u00b7 ${fmtUSD(t.amountUSD)} \u00b7 <t:${Math.floor((t.completedAt||Date.now())/1000)}:d>`;}).join("\n");
@@ -1287,6 +1363,15 @@ client.on(Events.InteractionCreate,async interaction=>{
         const sendStr=direction==="send"?`**${fmtUSD(amount)}** via **${m.label}**`:`**${coinRaw}** worth **${fmtUSD(amount)}**`;
         const receiveStr=coinLine||(direction==="send"?`~${fmtUSD(receive)} worth of ${coinRaw}`:`${fmtUSD(receive)} via ${m.label}`);
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  Trade Estimate",iconURL:IMG.LOGO}).setTitle(`${m.label}  \u2194  ${coinRaw}  \u2014  Estimate`).setThumbnail(COIN_LOGO[coinRaw]||IMG.LOGO).setDescription(`Live quote for your proposed trade. Open a ticket to proceed.\n\u200b`).addFields({name:"\uD83D\uDCE4  You Send",value:sendStr,inline:true},{name:"\uD83D\uDCE5  You Receive",value:receiveStr,inline:true},{name:"\u200b",value:"\u200b",inline:true},{name:"\uD83D\uDCB8  Fee",value:`**${rate}%**${vip?" \u26A1 VIP":""} \u2014 ${fmtUSD(fee)}`,inline:true},{name:`\uD83D\uDCC8  ${coinRaw} Price`,value:coinPrice?`**${fmtUSD(coinPrice)}**`:"Unavailable",inline:true},{name:`${tier.emoji}  Your Tier`,value:`**${tier.label}**`,inline:true}).setImage(IMG.BANNER).setFooter({text:"Estimate only  \u00b7  Final rate confirmed in your ticket  \u00b7  Konvert Exchange"}).setTimestamp()]});
+      }
+
+      if(cmd==="postleaderboard"){
+        await interaction.deferReply({ephemeral:true});
+        const embed=await buildLiveLeaderboardEmbed();
+        const msg=await interaction.channel.send({embeds:[embed]});
+        state.liveLbMessageId=msg.id;
+        state.liveLbChannelId=interaction.channel.id;
+        return interaction.editReply({content:`✅ Live leaderboard posted. It will auto-update every 10 minutes.`,ephemeral:true});
       }
 
       if(cmd==="togglereferraldms"){
@@ -1427,25 +1512,20 @@ client.on(Events.InteractionCreate,async interaction=>{
         const isStaff=CONFIG.STAFF_ROLE?interaction.member.roles.cache.has(CONFIG.STAFF_ROLE):false;
         const mRoleId=ticket?.method?CONFIG.ROLES[ticket.method]:null;
         const isHandler=mRoleId?interaction.member.roles.cache.has(mRoleId):false;
-        // Any exchanger role can mark complete
         const isAnyExchanger=CONFIG.EXCHANGER_ROLE?interaction.member.roles.cache.has(CONFIG.EXCHANGER_ROLE):false;
         const allExchangerRoles=Object.values(CONFIG.ROLES).filter(Boolean);
         const hasAnyExchangerRole=allExchangerRoles.some(r=>interaction.member.roles.cache.has(r));
-        if(!isOwner&&!isStaff&&!isHandler&&!isAnyExchanger&&!hasAnyExchangerRole)return interaction.reply({content:"Only exchangers can mark a deal complete.",ephemeral:true});
+        if(!isOwner&&!isStaff&&!isHandler&&!isAnyExchanger&&!hasAnyExchangerRole)return interaction.reply({content:"Only exchangers can mark an exchange complete.",ephemeral:true});
         if(ticket?.status==="vouched"||ticket?.status==="closed")return interaction.reply({content:"This exchange has already been completed.",ephemeral:true});
-        // Always show modal to confirm exchanger and amount
-        const modal=new ModalBuilder().setCustomId(`modal_done__${interaction.channel.id}`).setTitle("Complete Exchange");
-        modal.addComponents(
-          new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("done_amount").setLabel("Exchange amount (USD)").setStyle(TextInputStyle.Short).setPlaceholder(ticket?.amountUSD?`${ticket.amountUSD}`:"e.g. 250").setRequired(true)),
-          new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("done_exchanger").setLabel("Exchanger (Discord ID or @mention)").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 123456789 or @username").setRequired(true)),
-          new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("done_client").setLabel("Client (Discord ID or @mention)").setStyle(TextInputStyle.Short).setPlaceholder(ticket?.userId||"e.g. 123456789").setRequired(true)),
-        );
-        return interaction.showModal(modal);
+        // Auto-complete — person who clicks IS the exchanger, no form needed
+        await interaction.deferReply();
+        await completeTrade(interaction,ticket,tickets);
+        return;
       }
       if(interaction.customId==="btn_close"){
         if(!CONFIG.OWNER_IDS.includes(interaction.user.id)&&!(CONFIG.STAFF_ROLE&&interaction.member.roles.cache.has(CONFIG.STAFF_ROLE)))return interaction.reply({content:"Only owners or staff can close tickets.",ephemeral:true});
         await interaction.deferReply();await doCloseTicket(interaction.channel,interaction.guild,interaction.user,"Closed by staff");
-        await interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setTitle("Ticket Closed").setDescription("This ticket has been closed.\nDeleting in 15 seconds.").setTimestamp()]});
+        await interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Ticket Closed").setDescription("This ticket has been closed by staff.\nDeleting in 15 seconds.").setTimestamp()]});
         setTimeout(()=>interaction.channel.delete().catch(()=>{}),15000);return;
       }
 
@@ -1548,6 +1628,51 @@ client.on(Events.InteractionCreate,async interaction=>{
     try{const errMsg={content:"Something went wrong. Please try again.",ephemeral:true};if(interaction.deferred||interaction.replied)await interaction.followUp(errMsg).catch(()=>{});else await interaction.reply(errMsg).catch(()=>{});}catch{}
   }
 });
+
+// ── LIVE LEADERBOARD ─────────────────────────────────────────────────────────
+async function buildLiveLeaderboardEmbed(){
+  const byUser=buildLeaderboardVolumes();
+  const ranked=Object.entries(byUser).sort((a,b)=>b[1]-a[1]).slice(0,15);
+  const totalVol=ranked.reduce((s,[,v])=>s+v,0);
+  const medals=["\uD83E\uDD47","\uD83E\uDD48","\uD83E\uDD49"];
+  if(!ranked.length){
+    return new EmbedBuilder()
+      .setColor(0x7C4DFF)
+      .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
+      .setTitle("Leaderboard")
+      .setDescription("No exchanges on record yet.")
+      .setTimestamp()
+      .setFooter({text:`Last updated: ${new Date().toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"})}  \u00b7  Updates every 10 min`});
+  }
+  const lines=ranked.map(([uid,vol],i)=>{
+    const tier=getTier(vol);
+    const medal=medals[i]||`**${i+1}.**`;
+    return `${medal}  <@${uid}>  \u2014  **${fmtUSD(vol)}**  ${tier.emoji}`;
+  }).join("\n");
+  return new EmbedBuilder()
+    .setColor(0x7C4DFF)
+    .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
+    .setTitle("Leaderboard")
+    .setThumbnail(IMG.LOGO)
+    .setDescription(`Top ${ranked.length} clients by total volume\n\u200b`)
+    .addFields({name:"\u200b",value:lines,inline:false})
+    .setImage(IMG.BANNER)
+    .setFooter({text:`Total volume: ${fmtUSD(totalVol)}  \u00b7  Updates every 10 min  \u00b7  ${new Date().toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"})}`})
+    .setTimestamp();
+}
+
+async function updateLiveLeaderboard(guild){
+  if(!state.liveLbMessageId||!state.liveLbChannelId)return;
+  try{
+    const ch=guild.channels.cache.get(state.liveLbChannelId)||await guild.channels.fetch(state.liveLbChannelId).catch(()=>null);
+    if(!ch){state.liveLbMessageId=null;state.liveLbChannelId=null;return;}
+    const msg=await ch.messages.fetch(state.liveLbMessageId).catch(()=>null);
+    if(!msg){state.liveLbMessageId=null;state.liveLbChannelId=null;return;}
+    await msg.edit({embeds:[await buildLiveLeaderboardEmbed()]});
+    console.log("[liveLeaderboard] updated");
+  }catch(e){console.log("[liveLeaderboard]",e.message);}
+}
+
 
 let ratesMsgId=null;
 async function autoRates(guild){
@@ -1671,6 +1796,8 @@ client.once(Events.ClientReady,async()=>{
       const t=_mem.tickets;const r=_mem.referrals;
       if(Object.keys(t||{}).length>0)await dbSet("konvert_tickets",t).catch(()=>{});
       if(Object.keys(r||{}).length>0)await dbSet("konvert_referrals",r).catch(()=>{});
+      // Also refresh live leaderboard
+      await updateLiveLeaderboard(guild).catch(()=>{});
     },10*60*1000);
     // Discord backup every 30 min (secondary redundancy)
     setInterval(()=>{const t=load("tickets");if(Object.keys(t).length>0)_backupToDiscord(t).catch(()=>{});},30*60*1000);
