@@ -125,26 +125,38 @@ function progressBar(cur,min,max,len=12){
 }
 async function applyTierRole(guild,userId,volume){
   try{
-    const member=await guild.members.fetch(userId).catch(()=>null);
-    if(!member){console.log(`[tierRole] user ${userId} not found in guild`);return;}
+    // Fetch fresh member data
+    const member=await guild.members.fetch({user:userId,force:true}).catch(()=>null);
+    if(!member){console.log(`[tierRole] user ${userId} not in guild`);return;}
     const tier=getTier(volume);
-    // Remove all wrong tier roles first
-    for(const t of TIERS){
-      if(t.role&&member.roles.cache.has(t.role)&&t.role!==tier.role){
-        await member.roles.remove(t.role).catch(e=>console.log(`[tierRole] failed remove ${t.label}: ${e.message}`));
-      }
+
+    // Verify bot has Manage Roles permission
+    const botMember=await guild.members.fetchMe().catch(()=>null);
+    if(botMember&&!botMember.permissions.has("ManageRoles")){
+      console.log("[tierRole] ❌ CRITICAL: Bot is missing Manage Roles permission");
+      return;
     }
-    // Add correct tier role if not already has it
+
+    // Verify the target role exists and bot can manage it
     if(tier.role){
-      if(!member.roles.cache.has(tier.role)){
-        await member.roles.add(tier.role).catch(e=>console.log(`[tierRole] FAILED add ${tier.label} to ${member.user.tag}: ${e.message}`));
-        console.log(`[tierRole] ✅ gave ${tier.label} to ${member.user.tag} (vol=${fmtUSD(volume)})`);
-      } else {
-        console.log(`[tierRole] ${member.user.tag} already has ${tier.label}`);
+      const roleObj=guild.roles.cache.get(tier.role)||await guild.roles.fetch(tier.role).catch(()=>null);
+      if(!roleObj){console.log(`[tierRole] ❌ Role ${tier.role} (${tier.label}) not found in server`);return;}
+      if(botMember&&roleObj.position>=botMember.roles.highest.position){
+        console.log(`[tierRole] ❌ Bot role is too low to assign ${tier.label} — move bot role ABOVE all tier roles in server settings`);
+        return;
       }
-    } else {
-      console.log(`[tierRole] ${tier.label} has no role configured — check TIERS array`);
     }
+
+    // Build the set of roles the member should have after this update
+    // Keep all non-tier roles, remove all tier roles, add correct one
+    const tierRoleIds=new Set(TIERS.map(t=>t.role).filter(Boolean));
+    const keptRoles=member.roles.cache.filter(r=>!tierRoleIds.has(r.id)).map(r=>r.id);
+    const newRoleIds=tier.role?[...keptRoles,tier.role]:keptRoles;
+
+    await member.roles.set(newRoleIds,`Konvert tier update: ${tier.label} (${fmtUSD(volume)})`).catch(e=>{
+      console.log(`[tierRole] ❌ roles.set() failed for ${member.user.tag}: ${e.message}`);
+    });
+    console.log(`[tierRole] ✅ ${member.user.tag} → ${tier.label} (${fmtUSD(volume)})`);
   }catch(e){console.log("[applyTierRole] error:",e.message);}
 }
 
@@ -529,6 +541,7 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("mytrades").setDescription("View your personal trade history and stats"),
   new SlashCommandBuilder().setName("estimate").setDescription("Get a full quote for a trade before opening a ticket").addNumberOption(o=>o.setName("amount").setDescription("Amount in USD").setRequired(true)).addStringOption(o=>o.setName("method").setDescription("Payment method (e.g. PayPal, Interac)").setRequired(true)).addStringOption(o=>o.setName("coin").setDescription("Crypto (BTC, ETH, SOL)").setRequired(true)).addStringOption(o=>o.setName("direction").setDescription("Which direction?").setRequired(true).addChoices({name:"Send fiat, receive crypto",value:"send"},{name:"Send crypto, receive fiat",value:"receive"})),
   new SlashCommandBuilder().setName("search").setDescription("[Owner] Search all tickets for a user").addUserOption(o=>o.setName("user").setDescription("User to search").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("receipt").setDescription("[Owner] Look up a receipt by exchange ID or user").addStringOption(o=>o.setName("query").setDescription("Exchange ID (e.g. KV-ABC123) or @user mention").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("vipstatus").setDescription("Check if you have VIP fee discount active"),
   new SlashCommandBuilder().setName("setlivefeed").setDescription("[Owner] Set a channel to show live exchange notifications").addChannelOption(o=>o.setName("channel").setDescription("Channel to post live feed").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("togglefeed").setDescription("[Owner] Turn the live exchange feed on or off").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
@@ -1266,7 +1279,23 @@ Deleting in 10 seconds.`)
         return interaction.reply({content:`Stats reset for **${target.tag||target.username}**. Removed **${removed}** adjustment entr${removed!==1?"ies":"y"}. Volume is now **${fmtUSD(newVol)}** from real trades only.`,ephemeral:true});
       }
 
-      if(cmd==="clearleaderboard"){await interaction.deferReply({ephemeral:true});_mem.tickets={};save("tickets",{});state.volumeAdj={};return interaction.editReply("\u2705 Leaderboard and stats have been cleared. All trade data wiped.");}
+      if(cmd==="clearleaderboard"){
+        await interaction.deferReply({ephemeral:true});
+        const _before=Object.keys(_mem.tickets||{}).length;
+        _mem.tickets={};save("tickets",{});
+        dbSet("konvert_tickets",{}).catch(()=>{});
+        state.volumeAdj={};
+        try{
+          const allM=await interaction.guild.members.fetch();
+          const tRoles=TIERS.map(t=>t.role).filter(Boolean);
+          for(const mem of allM.values()){
+            if(tRoles.some(r=>mem.roles.cache.has(r))){
+              await mem.roles.set(mem.roles.cache.filter(r=>!tRoles.includes(r.id)).map(r=>r.id)).catch(()=>{});
+            }
+          }
+        }catch(e){console.log("[clearLB]",e.message);}
+        return interaction.editReply(`✅ Cleared ${_before} entries. All tier roles removed.`);
+      }
 
       if(cmd==="search"){
         await interaction.deferReply({ephemeral:true});
@@ -1298,6 +1327,7 @@ Deleting in 10 seconds.`)
         let removed=0;
         for(const [key,t] of Object.entries(tickets)){if(t.userId===target.id){delete tickets[key];removed++;}}
         _mem.tickets=tickets;save("tickets",tickets);
+        dbSet("konvert_tickets",tickets).catch(()=>{});
         const ref=getReferrals();delete ref.points[target.id];delete ref.referred[target.id];
         for(const [code,uid] of Object.entries(ref.invites||{})){if(uid===target.id)delete ref.invites[code];}
         delete ref.inviteCodes[target.id];saveReferrals(ref);
@@ -1487,7 +1517,40 @@ Deleting in 10 seconds.`)
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(isBlacklisted?0xef4444:0x7C4DFF).setAuthor({name:"Konvert Exchange \u00b7 Client Info",iconURL:IMG.LOGO}).setTitle(target.username).setThumbnail(target.displayAvatarURL({size:256})).setDescription(`${tier.emoji} **${tier.label}**${vip?" \u26A1 VIP":""}${isBlacklisted?" \uD83D\uDEAB BLACKLISTED":""}\n\u200b`).addFields({name:"Volume",value:`**${fmtUSD(volume)}**`,inline:true},{name:"Exchanges",value:`**${done.length}**`,inline:true},{name:"Avg Deal",value:`**${avg>0?fmtUSD(avg):"\u2014"}**`,inline:true},{name:"Open Tickets",value:`**${open.length}**`,inline:true},{name:"Top Method",value:topM?`**${getMethod(topM[0])?.label||topM[0]}**`:"\u2014",inline:true},{name:"Last Exchange",value:last?.completedAt?`<t:${Math.floor(last.completedAt/1000)}:R>`:"\u2014",inline:true},{name:"Referred By",value:refBy?`<@${refBy}>`:"No referral",inline:true},{name:"Referral Points",value:`**${refPts} pts**`,inline:true},{name:"VIP",value:vip?"Active \u2014 0.75% off":"Not yet",inline:true}).setFooter({text:"Konvert Exchange"}).setTimestamp()]});
       }
 
+      if(cmd==="receipt"){
+        await interaction.deferReply({ephemeral:true});
+        const query=interaction.options.getString("query").trim();
+        const allT=Object.entries(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
+        let matches=[];
+        // Search by user ID/mention
+        const userId=query.replace(/[<@!>]/g,"");
+        const userMatches=allT.filter(([,t])=>t.userId===userId&&["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0).sort((a,b)=>(b[1].completedAt||0)-(a[1].completedAt||0)).slice(0,5);
+        // Search by channel ID (ticket key)
+        const idMatches=allT.filter(([id,t])=>id===query&&["vouched","completed"].includes(t.status));
+        matches=[...idMatches,...userMatches];
+        if(!matches.length)return interaction.editReply({content:`No completed exchanges found for \`${query}\`.`,ephemeral:true});
+        const fields=matches.slice(0,5).map(([id,t],i)=>{
+          const m=getMethod(t.method);
+          const tradeId=`KV-${id.slice(-6).toUpperCase()}`;
+          const dirStr=t.direction&&t.coin&&t.method?(t.direction==="send"?`${t.coin} \u2192 ${m?.label||t.method}`:`${m?.label||t.method} \u2192 ${t.coin}`):m?.label||t.method;
+          return {
+            name:`${i+1}. ${tradeId}  \u00b7  ${fmtUSD(t.amountUSD||0)}`,
+            value:`**Client:** <@${t.userId}>\n**Exchanger:** ${t.completedBy?`<@${t.completedBy}>`:"—"}\n**Direction:** ${dirStr||"—"}\n**Completed:** ${t.completedAt?`<t:${Math.floor(t.completedAt/1000)}:F>`:"—"}\n**Fee:** ${fmtUSD(t.feeUSD||0)}`,
+            inline:false
+          };
+        });
+        return interaction.editReply({embeds:[new EmbedBuilder()
+          .setColor(0x7C4DFF)
+          .setAuthor({name:"Konvert Exchange  \u00b7  Receipt Lookup",iconURL:IMG.LOGO})
+          .setTitle(`${matches.length} Exchange${matches.length!==1?"s":""} Found`)
+          .setDescription(`Results for \`${query}\`\n\u200b`)
+          .addFields(fields)
+          .setFooter({text:"Konvert Exchange  \u2022  Receipt Lookup"})
+          .setTimestamp()],ephemeral:true});
+      }
+
       if(cmd==="testbackup"){
+
 
         await interaction.deferReply({ephemeral:true});
         const channelId=process.env.BACKUP_CHANNEL_ID;
