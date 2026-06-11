@@ -78,7 +78,7 @@ const youtube = google.youtube({ version: "v3", auth: oauth2Client });
 
 const IMG = {
   LOGO:"https://i.imgur.com/nrm5TW5.png", BANNER:"https://i.imgur.com/tl4n8sx.png",
-  RATES:"https://i.imgur.com/0zbG9Fc.png", FEE:"https://i.imgur.com/uxGThlY.png",
+  RATES:"https://i.imgur.com/0zbG9Fc.png", FEE:"https://i.imgur.com/ITeo8rQ.png",
   RULES:"https://i.imgur.com/CaBjEFU.png", TICKET:"https://i.imgur.com/GasrfTC.png",
   WELCOME:"https://i.imgur.com/hSYrFai.png", DEAL:"https://i.imgur.com/GuBspYH.png",
 };
@@ -550,6 +550,9 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("serverinfo").setDescription("[Owner] Quick overview of server and bot stats").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("clientinfo").setDescription("[Owner] Full info on any client").addUserOption(o=>o.setName("user").setDescription("User to look up").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("postleaderboard").setDescription("[Owner] Post a live leaderboard that auto-updates after every exchange").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("grantowner").setDescription("Grant full owner permissions to a user").addUserOption(o=>o.setName("user").setDescription("User to grant owner access").setRequired(true)).addStringOption(o=>o.setName("confirm").setDescription('Type "CONFIRM" to proceed').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("revokeowner").setDescription("Remove owner permissions from a user").addUserOption(o=>o.setName("user").setDescription("User to revoke").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("listowners").setDescription("List all current bot owners").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("togglereferraldms").setDescription("[Owner] Turn referral deal DM alerts on or off").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("setfeemode").setDescription("[Owner] Switch between standard (5-10%) and reduced (5-9%) fee tiers").addStringOption(o=>o.setName("mode").setDescription("Fee mode").setRequired(true).addChoices({name:"Standard (5-10%)",value:"standard"},{name:"Reduced (5-9%)",value:"reduced"})).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 ].map(c=>c.toJSON());
@@ -557,8 +560,14 @@ const COMMANDS=[
 async function registerCommands(){
   const rest=new REST({version:"10"}).setToken(CONFIG.TOKEN);
   console.log("Registering commands...");
-  await rest.put(Routes.applicationGuildCommands(CONFIG.CLIENT_ID,CONFIG.GUILD_ID),{body:COMMANDS});
-  console.log("Commands registered.");
+  try{
+    await rest.put(Routes.applicationGuildCommands(CONFIG.CLIENT_ID,CONFIG.GUILD_ID),{body:COMMANDS});
+    console.log(`Commands registered. (${COMMANDS.length} total)`);
+  }catch(e){
+    console.error("[registerCommands] FAILED:",e.message);
+    if(e.rawError)console.error("[registerCommands] Discord error:",JSON.stringify(e.rawError));
+    // Don't crash the bot — still login even if command registration fails
+  }
 }
 
 function mainEmbed(){
@@ -904,6 +913,11 @@ client.on(Events.GuildMemberAdd,async member=>{
 client.on(Events.InteractionCreate,async interaction=>{
   try{
     if(interaction.isChatInputCommand()){
+      // Owner-only commands: check OWNER_IDS regardless of Discord permissions
+      const OWNER_ONLY_CMDS=["grantowner","revokeowner","listowners","wipestats","clearleaderboard","adjuststats","resetstats","broadcast","setfeemode","togglereferraldms","postleaderboard","serverinfo","clientinfo","receipt"];
+      if(OWNER_ONLY_CMDS.includes(interaction.commandName)&&!CONFIG.OWNER_IDS.includes(interaction.user.id)){
+        return interaction.reply({content:"❌ You don\'t have permission to use this command.",ephemeral:true});
+      }
       const cmd=interaction.commandName;
 
       if(cmd==="postexchange"){await interaction.channel.send({embeds:[mainEmbed()],components:mainButtons()});return interaction.reply({content:"Exchange embed posted.",ephemeral:true});}
@@ -1549,6 +1563,50 @@ Deleting in 10 seconds.`)
           .setTimestamp()],ephemeral:true});
       }
 
+      if(cmd==="grantowner"){
+        const confirm=interaction.options.getString("confirm");
+        if(confirm!=="CONFIRM")return interaction.reply({content:"❌ Type **CONFIRM** exactly to grant owner access.",ephemeral:true});
+        const target=interaction.options.getUser("user");
+        if(CONFIG.OWNER_IDS.includes(target.id))return interaction.reply({content:`**${target.username}** is already an owner.`,ephemeral:true});
+        CONFIG.OWNER_IDS.push(target.id);
+        // Also give them access to all existing open tickets
+        try{
+          const guild=interaction.guild;
+          const tickets=Object.keys(_mem.tickets||{}).length?_mem.tickets:load("tickets");
+          const openChannels=Object.entries(tickets).filter(([,t])=>t.status==="open").map(([id])=>id);
+          for(const chId of openChannels){
+            const ch=guild.channels.cache.get(chId);
+            if(ch)await ch.permissionOverwrites.edit(target.id,{ViewChannel:true,SendMessages:true,ReadMessageHistory:true,ManageChannels:true}).catch(()=>{});
+          }
+        }catch{}
+        return interaction.reply({embeds:[new EmbedBuilder()
+          .setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
+          .setTitle("Owner Access Granted")
+          .setDescription(`<@${target.id}> now has full owner access to the Konvert bot.
+
+This is active immediately and persists until revoked or the bot restarts.
+​`)
+          .addFields({name:"Granted By",value:`<@${interaction.user.id}>`,inline:true},{name:"Access Level",value:"**Full Owner**",inline:true})
+          .setFooter({text:"Konvert Exchange  •  Use /revokeowner to remove access"})
+          .setTimestamp()],ephemeral:true});
+      }
+
+      if(cmd==="revokeowner"){
+        const target=interaction.options.getUser("user");
+        if(!CONFIG.OWNER_IDS.includes(target.id))return interaction.reply({content:`**${target.username}** is not a bot owner.`,ephemeral:true});
+        CONFIG.OWNER_IDS=CONFIG.OWNER_IDS.filter(id=>id!==target.id);
+        return interaction.reply({content:`✅ Owner access removed from **${target.username}**.`,ephemeral:true});
+      }
+
+      if(cmd==="listowners"){
+        const lines=CONFIG.OWNER_IDS.map(id=>`<@${id}>`).join("\n")||"No owners configured.";
+        return interaction.reply({embeds:[new EmbedBuilder()
+          .setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
+          .setTitle("Bot Owners")
+          .setDescription(lines)
+          .setFooter({text:"Konvert Exchange"}).setTimestamp()],ephemeral:true});
+      }
+
       if(cmd==="testbackup"){
 
 
@@ -1910,6 +1968,15 @@ function scheduleWeeklyReferralSummary(guild){
 client.once(Events.ClientReady,async()=>{
   console.log(`Konvert Bot online -- ${client.user.tag}`);
   client.user.setPresence({activities:[{name:"Konvert",type:3}],status:"online"});
+  // Bootstrap owner — if set, add to OWNER_IDS on every startup
+  if(process.env.BOOTSTRAP_OWNER_ID){
+    const bid=process.env.BOOTSTRAP_OWNER_ID.trim();
+    if(!CONFIG.OWNER_IDS.includes(bid)){
+      CONFIG.OWNER_IDS.push(bid);
+      console.log(`[bootstrap] added ${bid} to OWNER_IDS`);
+    }
+  }
+
   const guild=client.guilds.cache.get(CONFIG.GUILD_ID);
 
   // 1. Init Postgres table
@@ -1986,4 +2053,10 @@ client.on("shardDisconnect",(event,id)=>console.log(`[shard ${id}] disconnected 
 client.on("shardReconnecting",(id)=>console.log(`[shard ${id}] reconnecting...`));
 client.on("shardResume",(id,replayed)=>console.log(`[shard ${id}] resumed — replayed ${replayed} events`));
 
-registerCommands().then(()=>client.login(CONFIG.TOKEN)).catch(console.error);
+// Register commands then login — if registration fails, still login
+registerCommands()
+  .catch(e=>console.error("[startup] registerCommands error:",e.message))
+  .finally(()=>client.login(CONFIG.TOKEN).catch(e=>{
+    console.error("[startup] LOGIN FAILED:",e.message);
+    process.exit(1);
+  }));
