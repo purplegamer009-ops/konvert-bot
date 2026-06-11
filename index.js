@@ -421,7 +421,7 @@ async function fetchFullPrice(coin){
 }
 
 const client=new Client({intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent,GatewayIntentBits.GuildMembers,GatewayIntentBits.GuildInvites],partials:[Partials.Channel]});
-const state={pending:{},mineGames:{},cooldowns:{},alerts:[],passes:{},c2cSelections:{},feedChannel:null,feedEnabled:false,volumeAdj:{},feeMode:"standard",referralDMsEnabled:true};
+const state={pending:{},mineGames:{},cooldowns:{},alerts:[],passes:{},c2cSelections:{},feedChannel:null,feedEnabled:false,volumeAdj:{},feeMode:"standard",referralDMsEnabled:true,liveLbMessageId:null,liveLbChannelId:null,promos:{}};
 
 function buildLeaderboardVolumes(){
   const DONE_STATUS=["vouched","completed"];
@@ -554,6 +554,12 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("revokeowner").setDescription("Remove owner permissions from a user").addUserOption(o=>o.setName("user").setDescription("User to revoke").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("listowners").setDescription("List all current bot owners").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("togglereferraldms").setDescription("[Owner] Turn referral deal DM alerts on or off").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("createpromo").setDescription("[Owner] Create a promo code that gives clients a fee discount").addStringOption(o=>o.setName("code").setDescription("The promo code word (e.g. konvert2026)").setRequired(true)).addNumberOption(o=>o.setName("discount").setDescription("Fee % to subtract (e.g. 2 = 2% off)").setRequired(true)).addIntegerOption(o=>o.setName("maxuses").setDescription("Max number of uses (leave blank = unlimited)").setRequired(false)).addIntegerOption(o=>o.setName("hours").setDescription("Expires after X hours (leave blank = never)").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("endpromo").setDescription("[Owner] End/deactivate a promo code").addStringOption(o=>o.setName("code").setDescription("The promo code to end").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("editpromo").setDescription("[Owner] Edit an existing promo code").addStringOption(o=>o.setName("code").setDescription("The promo code to edit").setRequired(true)).addStringOption(o=>o.setName("newcode").setDescription("Rename the code to something new").setRequired(false)).addNumberOption(o=>o.setName("discount").setDescription("New discount % off the fee (e.g. 25 = 25% off the fee amount)").setRequired(false)).addIntegerOption(o=>o.setName("maxuses").setDescription("New max uses (0 = unlimited)").setRequired(false)).addIntegerOption(o=>o.setName("addhours").setDescription("Extend expiry by X more hours").setRequired(false)).addStringOption(o=>o.setName("status").setDescription("Activate or deactivate").setRequired(false).addChoices({name:"Active",value:"active"},{name:"Paused",value:"paused"})).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("listpromos").setDescription("[Owner] View all active promo codes").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("rank").setDescription("See your rank on the leaderboard").addUserOption(o=>o.setName("user").setDescription("User to check (leave blank for yourself)").setRequired(false)),
+  new SlashCommandBuilder().setName("exchangerstats").setDescription("View your exchanger performance stats").addUserOption(o=>o.setName("user").setDescription("Exchanger to check").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("setfeemode").setDescription("[Owner] Switch between standard (5-10%) and reduced (5-9%) fee tiers").addStringOption(o=>o.setName("mode").setDescription("Fee mode").setRequired(true).addChoices({name:"Standard (5-10%)",value:"standard"},{name:"Reduced (5-9%)",value:"reduced"})).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 ].map(c=>c.toJSON());
 
@@ -833,6 +839,79 @@ client.on(Events.MessageCreate,async message=>{
     }
   }
   if(message.author.bot)return;
+
+  // ── PROMO CODE DETECTION ─────────────────────────────────────────────────
+  // If a message in a ticket channel matches an active promo code, apply it
+  if(message.channel.type!==undefined){
+    const tickets=Object.keys(_mem.tickets||{}).length?_mem.tickets:load("tickets");
+    const ticket=tickets[message.channel.id];
+    if(ticket&&ticket.status==="open"&&ticket.userId===message.author.id){
+      const typed=message.content.trim().toLowerCase();
+      const promo=Object.entries(state.promos||{}).find(([code,p])=>code.toLowerCase()===typed&&p.active);
+      if(promo){
+        const [code,p]=promo;
+        // Check expiry
+        if(p.expiresAt&&Date.now()>p.expiresAt){
+          p.active=false;
+          await message.reply({embeds:[new EmbedBuilder()
+            .setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
+            .setTitle("Promo Code Expired")
+            .setDescription(`**${code.toUpperCase()}** has expired and is no longer valid.`)
+            .setFooter({text:"Konvert Exchange"}).setTimestamp()]}).catch(()=>{});
+          return;
+        }
+        // Check max uses
+        if(p.maxUses&&p.uses>=p.maxUses){
+          p.active=false;
+          await message.reply({embeds:[new EmbedBuilder()
+            .setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
+            .setTitle("Promo Code Fully Redeemed")
+            .setDescription(`**${code.toUpperCase()}** has reached its maximum number of uses.`)
+            .setFooter({text:"Konvert Exchange"}).setTimestamp()]}).catch(()=>{});
+          return;
+        }
+        // Check if already used
+        if(p.usedBy&&p.usedBy.includes(message.author.id)){
+          await message.reply({embeds:[new EmbedBuilder()
+            .setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
+            .setTitle("Already Applied")
+            .setDescription(`You've already used **${code.toUpperCase()}** on a previous exchange.`)
+            .setFooter({text:"Konvert Exchange"}).setTimestamp()]}).catch(()=>{});
+          return;
+        }
+        // Apply promo to ticket
+        ticket.promoCode=code;
+        ticket.promoDiscount=p.discount;
+        p.uses=(p.uses||0)+1;
+        if(!p.usedBy)p.usedBy=[];
+        p.usedBy.push(message.author.id);
+        _mem.tickets=tickets;
+        save("tickets",tickets);
+        // Recalc fee: discount is % off the fee AMOUNT
+        // e.g. fee=$5, discount=25% → newFee=$5*(1-0.25)=$3.75
+        const origFee=calcFee(ticket.amountUSD||0,ticket.direction||"send",isVipVolume(getUserVolume(message.author.id)));
+        const newFee=Math.max(origFee*(1-p.discount/100),0.01);
+        const savedAmt=origFee-newFee;
+        ticket.feeUSD=newFee;
+        await message.reply({embeds:[new EmbedBuilder()
+          .setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  Promo Applied",iconURL:IMG.LOGO})
+          .setTitle("\u2728  Promo Code Applied!")
+          .setDescription(`**${code.toUpperCase()}** has been applied to your exchange.\n\u200b`)
+          .addFields(
+            {name:"Original Fee",value:`**${fmtUSD(origFee)}**`,inline:true},
+            {name:"Discount",value:`**${p.discount}% off the fee**`,inline:true},
+            {name:"New Fee",value:`**${fmtUSD(newFee)}**`,inline:true},
+            {name:"You Save",value:`**${fmtUSD(savedAmt)}**`,inline:true},
+            {name:"Uses Left",value:p.maxUses?`**${p.maxUses-p.uses}**`:"Unlimited",inline:true},
+            {name:"Expires",value:p.expiresAt?`<t:${Math.floor(p.expiresAt/1000)}:R>`:"Never",inline:true},
+          )
+          .setFooter({text:"Konvert Exchange  \u2022  Fee updated for this exchange"})
+          .setTimestamp()]}).catch(()=>{});
+        return;
+      }
+    }
+  }
+
   const convMatch=message.content.trim().match(/^([\d,]+\.?\d*)\s+([a-zA-Z]{2,6})\s+to\s+([a-zA-Z]{2,6})$/i);
   if(convMatch){
     const rawAmt=parseFloat(convMatch[1].replace(/,/g,""));
@@ -1607,7 +1686,205 @@ This is active immediately and persists until revoked or the bot restarts.
           .setFooter({text:"Konvert Exchange"}).setTimestamp()],ephemeral:true});
       }
 
+      if(cmd==="createpromo"){
+        const code=interaction.options.getString("code").trim().toLowerCase();
+        const discount=interaction.options.getNumber("discount");
+        const maxUses=interaction.options.getInteger("maxuses")||null;
+        const hours=interaction.options.getInteger("hours")||null;
+        if(discount<=0||discount>=100)return interaction.reply({content:"Discount must be between 1 and 99%.",ephemeral:true});
+        if(state.promos[code]&&state.promos[code].active)return interaction.reply({content:`Promo code **${code.toUpperCase()}** already exists and is active. End it first with \`/endpromo\`.`,ephemeral:true});
+        const expiresAt=hours?Date.now()+(hours*3600000):null;
+        state.promos[code]={discount,maxUses,uses:0,usedBy:[],active:true,expiresAt,createdBy:interaction.user.id,createdAt:Date.now()};
+        return interaction.reply({embeds:[new EmbedBuilder()
+          .setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  Promo Created",iconURL:IMG.LOGO})
+          .setTitle("\uD83C\uDF89  Promo Code Created")
+          .setDescription(`Clients can now type **${code.toUpperCase()}** inside their ticket to apply the discount.\n\u200b`)
+          .addFields(
+            {name:"Code",value:`\`${code.toUpperCase()}\``,inline:true},
+            {name:"Discount",value:`**${discount}% off**`,inline:true},
+            {name:"Max Uses",value:maxUses?`**${maxUses}**`:"Unlimited",inline:true},
+            {name:"Expires",value:expiresAt?`<t:${Math.floor(expiresAt/1000)}:R>`:"Never",inline:true},
+          )
+          .setFooter({text:`Created by ${interaction.user.tag}  \u00b7  Konvert Exchange`})
+          .setTimestamp()],ephemeral:true});
+      }
+
+      if(cmd==="endpromo"){
+        const code=interaction.options.getString("code").trim().toLowerCase();
+        if(!state.promos[code])return interaction.reply({content:`No promo found with code **${code.toUpperCase()}**.`,ephemeral:true});
+        state.promos[code].active=false;
+        const p=state.promos[code];
+        return interaction.reply({embeds:[new EmbedBuilder()
+          .setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
+          .setTitle("Promo Ended")
+          .setDescription(`**${code.toUpperCase()}** has been deactivated. Anyone who tries to use it will see an expired message.\n\u200b`)
+          .addFields({name:"Total Uses",value:`**${p.uses}**`,inline:true},{name:"Status",value:"**Expired**",inline:true})
+          .setFooter({text:"Konvert Exchange"}).setTimestamp()],ephemeral:true});
+      }
+
+      if(cmd==="editpromo"){
+        const code=interaction.options.getString("code").trim().toLowerCase();
+        if(!state.promos[code])return interaction.reply({content:`No promo found with code **${code.toUpperCase()}**. Use \`/listpromos\` to see all codes.`,ephemeral:true});
+        const p=state.promos[code];
+        const changes=[];
+
+        const newCode=interaction.options.getString("newcode")?.trim().toLowerCase();
+        const newDiscount=interaction.options.getNumber("discount");
+        const newMaxUses=interaction.options.getInteger("maxuses");
+        const addHours=interaction.options.getInteger("addhours");
+        const newStatus=interaction.options.getString("status");
+
+        if(newCode&&newCode!==code){
+          if(state.promos[newCode])return interaction.reply({content:`Code **${newCode.toUpperCase()}** already exists.`,ephemeral:true});
+          state.promos[newCode]={...p};
+          delete state.promos[code];
+          changes.push(`Code renamed to \`${newCode.toUpperCase()}\``);
+        }
+
+        const targetCode=newCode||code;
+        const target=state.promos[targetCode];
+
+        if(newDiscount!==null&&newDiscount!==undefined){
+          if(newDiscount<=0||newDiscount>=100)return interaction.reply({content:"Discount must be between 1 and 99.",ephemeral:true});
+          target.discount=newDiscount;
+          changes.push(`Discount set to **${newDiscount}% off the fee**`);
+        }
+        if(newMaxUses!==null&&newMaxUses!==undefined){
+          target.maxUses=newMaxUses===0?null:newMaxUses;
+          changes.push(`Max uses set to **${newMaxUses===0?"Unlimited":newMaxUses}**`);
+        }
+        if(addHours){
+          const base=target.expiresAt&&target.expiresAt>Date.now()?target.expiresAt:Date.now();
+          target.expiresAt=base+(addHours*3600000);
+          changes.push(`Expiry extended by **${addHours}h** \u2014 now expires <t:${Math.floor(target.expiresAt/1000)}:R>`);
+        }
+        if(newStatus){
+          target.active=newStatus==="active";
+          changes.push(`Status set to **${newStatus==="active"?"Active \uD83D\uDFE2":"Paused \uD83D\uDD34"}**`);
+        }
+
+        if(!changes.length)return interaction.reply({content:"No changes provided. Specify at least one field to update.",ephemeral:true});
+
+        return interaction.reply({embeds:[new EmbedBuilder()
+          .setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  Promo Updated",iconURL:IMG.LOGO})
+          .setTitle("Promo Code Updated")
+          .setDescription(`Changes applied to **${targetCode.toUpperCase()}**:\n\u200b`)
+          .addFields(
+            {name:"Changes",value:changes.map(c=>`\u2022 ${c}`).join("\n"),inline:false},
+            {name:"Current Discount",value:`**${target.discount}% off the fee**`,inline:true},
+            {name:"Uses",value:target.maxUses?`${target.uses}/${target.maxUses}`:`${target.uses} (unlimited)`,inline:true},
+            {name:"Expires",value:target.expiresAt?`<t:${Math.floor(target.expiresAt/1000)}:R>`:"Never",inline:true},
+          )
+          .setFooter({text:`Edited by ${interaction.user.tag}  \u00b7  Konvert Exchange`})
+          .setTimestamp()],ephemeral:true});
+      }
+
+      if(cmd==="listpromos"){
+
+        const promos=Object.entries(state.promos||{});
+        if(!promos.length)return interaction.reply({content:"No promo codes created yet. Use `/createpromo` to make one.",ephemeral:true});
+        const lines=promos.map(([code,p])=>{
+          const status=!p.active?"\uD83D\uDD34 Expired":p.expiresAt&&Date.now()>p.expiresAt?"\uD83D\uDD34 Expired":"\uD83D\uDFE2 Active";
+          const uses=p.maxUses?`${p.uses}/${p.maxUses}`:p.uses;
+          return `${status} \`${code.toUpperCase()}\`  \u2014  **${p.discount}% off**  \u00b7  ${uses} uses${p.expiresAt?`  \u00b7  expires <t:${Math.floor(p.expiresAt/1000)}:R>`:""}`;
+        }).join("\n");
+        return interaction.reply({embeds:[new EmbedBuilder()
+          .setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
+          .setTitle("Promo Codes")
+          .setDescription(lines)
+          .setFooter({text:"Konvert Exchange"}).setTimestamp()],ephemeral:true});
+      }
+
+      if(cmd==="rank"){
+        await interaction.deferReply();
+        const target=interaction.options.getUser("user")||interaction.user;
+        const isSelf=target.id===interaction.user.id;
+        const byUser=buildLeaderboardVolumes();
+        if(!byUser[target.id]){
+          return interaction.editReply({embeds:[new EmbedBuilder()
+            .setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
+            .setTitle(isSelf?"Your Rank":`${target.username}'s Rank`)
+            .setThumbnail(target.displayAvatarURL({size:256}))
+            .setDescription("No completed exchanges on record yet.")
+            .setFooter({text:"Konvert Exchange"}).setTimestamp()]});
+        }
+        const ranked=Object.entries(byUser).sort((a,b)=>b[1]-a[1]);
+        const pos=ranked.findIndex(([uid])=>uid===target.id)+1;
+        const total=ranked.length;
+        const vol=byUser[target.id];
+        const tier=getTier(vol);
+        const nextTier=getNextTier(vol);
+        const above=pos>1?ranked[pos-2]:null;
+        const below=pos<total?ranked[pos]:null;
+        const pct=Math.round((1-((pos-1)/total))*100);
+        const medals=pos===1?"\uD83E\uDD47":pos===2?"\uD83E\uDD48":pos===3?"\uD83E\uDD49":`**#${pos}**`;
+        return interaction.editReply({embeds:[new EmbedBuilder()
+          .setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  Leaderboard Rank",iconURL:IMG.LOGO})
+          .setTitle(isSelf?"Your Rank":`${target.username}'s Rank`)
+          .setThumbnail(target.displayAvatarURL({size:256}))
+          .setDescription(`${medals}  \u2014  Top **${pct}%** of all clients\n\u200b`)
+          .addFields(
+            {name:"Rank",value:`**#${pos}** of ${total}`,inline:true},
+            {name:"Volume",value:`**${fmtUSD(vol)}**`,inline:true},
+            {name:"Tier",value:`${tier.emoji} **${tier.label}**`,inline:true},
+            {name:"Above You",value:above?`<@${above[0]}> \u2014 ${fmtUSD(above[1])}`:"\u2014 You're at the top!",inline:true},
+            {name:"Below You",value:below?`<@${below[0]}> \u2014 ${fmtUSD(below[1])}`:"\u2014 No one below",inline:true},
+            {name:"To Next Tier",value:nextTier?`${fmtUSD(Math.max(nextTier.min-vol,0))} away`:"Max tier reached",inline:true},
+          )
+          .setImage(IMG.BANNER)
+          .setFooter({text:"Konvert Exchange  \u2022  /leaderboard to see the full list"})
+          .setTimestamp()]});
+      }
+
+      if(cmd==="exchangerstats"){
+        await interaction.deferReply({ephemeral:true});
+        const target=interaction.options.getUser("user")||interaction.user;
+        const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
+        const handled=allT.filter(t=>t.completedBy===target.id&&["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0);
+        if(!handled.length){
+          return interaction.editReply({content:`No completed exchanges found for **${target.username}** as exchanger.`});
+        }
+        const totalVol=handled.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
+        const totalFees=handled.reduce((s,t)=>s+(parseFloat(t.feeUSD||0)),0);
+        const avg=totalVol/handled.length;
+        const methods={};handled.forEach(t=>{if(t.method)methods[t.method]=(methods[t.method]||0)+1;});
+        const topM=Object.entries(methods).sort((a,b)=>b[1]-a[1])[0];
+        const coins={};handled.forEach(t=>{if(t.coin)coins[t.coin]=(coins[t.coin]||0)+1;});
+        const topC=Object.entries(coins).sort((a,b)=>b[1]-a[1])[0];
+        const last=handled.length>0?[...handled].sort((a,b)=>(b.completedAt||0)-(a.completedAt||0))[0]:null;
+        const today=handled.filter(t=>t.completedAt&&Date.now()-t.completedAt<86400000);
+        const week=handled.filter(t=>t.completedAt&&Date.now()-t.completedAt<7*86400000);
+        // Rank among all exchangers
+        const byEx={};
+        allT.filter(t=>t.completedBy&&["vouched","completed"].includes(t.status)&&t.method!=="adjustment").forEach(t=>{
+          if(!byEx[t.completedBy])byEx[t.completedBy]=0;
+          byEx[t.completedBy]+=(parseFloat(t.amountUSD)||0);
+        });
+        const exRanked=Object.entries(byEx).sort((a,b)=>b[1]-a[1]);
+        const exPos=exRanked.findIndex(([uid])=>uid===target.id)+1;
+        return interaction.editReply({embeds:[new EmbedBuilder()
+          .setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  Exchanger Stats",iconURL:IMG.LOGO})
+          .setTitle(`${target.username}'s Exchanger Performance`)
+          .setThumbnail(target.displayAvatarURL({size:256}))
+          .setDescription(`Exchanger rank: **#${exPos}** of ${exRanked.length}\n\u200b`)
+          .addFields(
+            {name:"Total Handled",value:`**${handled.length}** exchanges`,inline:true},
+            {name:"Total Volume",value:`**${fmtUSD(totalVol)}**`,inline:true},
+            {name:"Avg Deal",value:`**${fmtUSD(avg)}**`,inline:true},
+            {name:"Today",value:`**${today.length}** exchanges`,inline:true},
+            {name:"This Week",value:`**${week.length}** exchanges`,inline:true},
+            {name:"Est. Fees Collected",value:`**${fmtUSD(totalFees)}**`,inline:true},
+            {name:"Top Method",value:topM?`**${getMethod(topM[0])?.label||topM[0]}** (${topM[1]}x)`:"\u2014",inline:true},
+            {name:"Top Coin",value:topC?`**${topC[0]}** (${topC[1]}x)`:"\u2014",inline:true},
+            {name:"Last Exchange",value:last?.completedAt?`<t:${Math.floor(last.completedAt/1000)}:R>`:"\u2014",inline:true},
+          )
+          .setImage(IMG.BANNER)
+          .setFooter({text:"Konvert Exchange  \u2022  Exchanger Performance"})
+          .setTimestamp()]});
+      }
+
       if(cmd==="testbackup"){
+
 
 
         await interaction.deferReply({ephemeral:true});
