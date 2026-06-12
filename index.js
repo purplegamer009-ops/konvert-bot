@@ -76,6 +76,11 @@ async function savePromos(){
   await dbSet("konvert_promos", state.promos).catch(e=>console.error("[savePromos]",e.message));
 }
 
+// Save live leaderboard message location — survives restarts
+async function saveLiveLb(){
+  await dbSet("konvert_live_lb",{messageId:state.liveLbMessageId,channelId:state.liveLbChannelId}).catch(e=>console.error("[saveLiveLb]",e.message));
+}
+
 const oauth2Client = new google.auth.OAuth2(
   process.env.YOUTUBE_CLIENT_ID, process.env.YOUTUBE_CLIENT_SECRET, "urn:ietf:wg:oauth:2.0:oob");
 oauth2Client.setCredentials({ refresh_token: process.env.YOUTUBE_REFRESH_TOKEN });
@@ -1527,6 +1532,7 @@ Deleting in 10 seconds.`)
         const msg=await interaction.channel.send({embeds:[embed]});
         state.liveLbMessageId=msg.id;
         state.liveLbChannelId=interaction.channel.id;
+        saveLiveLb();
         return interaction.editReply({content:`✅ Live leaderboard posted. It will auto-update every 10 minutes.`,ephemeral:true});
       }
 
@@ -2125,32 +2131,30 @@ This is active immediately and persists until revoked or the bot restarts.
 // ── LIVE LEADERBOARD ─────────────────────────────────────────────────────────
 async function buildLiveLeaderboardEmbed(){
   const byUser=buildLeaderboardVolumes();
-  const ranked=Object.entries(byUser).sort((a,b)=>b[1]-a[1]).slice(0,15);
+  const ranked=Object.entries(byUser).sort((a,b)=>b[1]-a[1]).slice(0,10);
   const totalVol=ranked.reduce((s,[,v])=>s+v,0);
   const medals=["\uD83E\uDD47","\uD83E\uDD48","\uD83E\uDD49"];
+  const timeStr=new Date().toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"});
   if(!ranked.length){
     return new EmbedBuilder()
       .setColor(0x7C4DFF)
       .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
-      .setTitle("Leaderboard")
-      .setDescription("No exchanges on record yet.")
-      .setTimestamp()
-      .setFooter({text:`Last updated: ${new Date().toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"})}  \u00b7  Updates every 10 min`});
+      .setTitle("\uD83C\uDFC6 Leaderboard")
+      .setDescription("No exchanges yet.")
+      .setFooter({text:`Updated ${timeStr}`})
+      .setTimestamp();
   }
   const lines=ranked.map(([uid,vol],i)=>{
     const tier=getTier(vol);
-    const medal=medals[i]||`**${i+1}.**`;
-    return `${medal}  <@${uid}>  \u2014  **${fmtUSD(vol)}**  ${tier.emoji}`;
+    const rank=medals[i]||`\`#${i+1}\``;
+    return `${rank} <@${uid}>  \u2014  **${fmtUSD(vol)}** ${tier.emoji}`;
   }).join("\n");
   return new EmbedBuilder()
     .setColor(0x7C4DFF)
     .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
-    .setTitle("Leaderboard")
-    .setThumbnail(IMG.LOGO)
-    .setDescription(`Top ${ranked.length} clients by total volume\n\u200b`)
-    .addFields({name:"\u200b",value:lines,inline:false})
-    .setImage(IMG.BANNER)
-    .setFooter({text:`Total volume: ${fmtUSD(totalVol)}  \u00b7  Updates every 10 min  \u00b7  ${new Date().toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"})}`})
+    .setTitle("\uD83C\uDFC6 Top 10 Leaderboard")
+    .setDescription(lines)
+    .setFooter({text:`Total: ${fmtUSD(totalVol)}  \u00b7  Updated ${timeStr}`})
     .setTimestamp();
 }
 
@@ -2158,9 +2162,9 @@ async function updateLiveLeaderboard(guild){
   if(!state.liveLbMessageId||!state.liveLbChannelId)return;
   try{
     const ch=guild.channels.cache.get(state.liveLbChannelId)||await guild.channels.fetch(state.liveLbChannelId).catch(()=>null);
-    if(!ch){state.liveLbMessageId=null;state.liveLbChannelId=null;return;}
+    if(!ch){state.liveLbMessageId=null;state.liveLbChannelId=null;saveLiveLb();return;}
     const msg=await ch.messages.fetch(state.liveLbMessageId).catch(()=>null);
-    if(!msg){state.liveLbMessageId=null;state.liveLbChannelId=null;return;}
+    if(!msg){state.liveLbMessageId=null;state.liveLbChannelId=null;saveLiveLb();return;}
     await msg.edit({embeds:[await buildLiveLeaderboardEmbed()]});
     console.log("[liveLeaderboard] updated");
   }catch(e){console.log("[liveLeaderboard]",e.message);}
@@ -2368,6 +2372,12 @@ client.once(Events.ClientReady,async()=>{
     state.promos=pgPromos;
     console.log(`[startup] promos loaded from Postgres: ${Object.keys(pgPromos).length} codes`);
   }
+  const pgLiveLb=await dbGet("konvert_live_lb");
+  if(pgLiveLb&&pgLiveLb.messageId&&pgLiveLb.channelId){
+    state.liveLbMessageId=pgLiveLb.messageId;
+    state.liveLbChannelId=pgLiveLb.channelId;
+    console.log(`[startup] live leaderboard restored: msg ${pgLiveLb.messageId} in channel ${pgLiveLb.channelId}`);
+  }
 
   if(guild){
     await cacheInvites(guild);
@@ -2388,6 +2398,8 @@ client.once(Events.ClientReady,async()=>{
     setInterval(()=>syncAllTierRoles(guild).catch(()=>{}),60*60*1000);
     // Run once on startup after a short delay (let everything load first)
     setTimeout(()=>syncAllTierRoles(guild).catch(()=>{}),30*1000);
+    // Refresh live leaderboard on startup
+    setTimeout(()=>updateLiveLeaderboard(guild).catch(()=>{}),20*1000);
     // Update stat channel on startup
     setTimeout(()=>updateStatChannel(guild).catch(()=>{}),15*1000);
     scheduleWeeklyReferralSummary(guild);
