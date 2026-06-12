@@ -71,6 +71,11 @@ async function dbGet(key){
   return r.rows[0].value;
 }
 
+// Save promos state to Postgres — call after any promo change
+async function savePromos(){
+  await dbSet("konvert_promos", state.promos).catch(e=>console.error("[savePromos]",e.message));
+}
+
 const oauth2Client = new google.auth.OAuth2(
   process.env.YOUTUBE_CLIENT_ID, process.env.YOUTUBE_CLIENT_SECRET, "urn:ietf:wg:oauth:2.0:oob");
 oauth2Client.setCredentials({ refresh_token: process.env.YOUTUBE_REFRESH_TOKEN });
@@ -820,6 +825,7 @@ async function completeTrade(interaction,ticket,tickets){
 }
 
 client.on(Events.MessageCreate,async message=>{
+ try{
   if(CONFIG.SHORTS_CHANNEL&&message.channel.id===CONFIG.SHORTS_CHANNEL&&!message.author.bot){
     const attachment=message.attachments.find(a=>a.contentType?.startsWith("video/"));
     if(attachment){
@@ -847,12 +853,15 @@ client.on(Events.MessageCreate,async message=>{
     const ticket=tickets[message.channel.id];
     if(ticket&&ticket.status==="open"&&ticket.userId===message.author.id){
       const typed=message.content.trim().toLowerCase();
+      const activeCodes=Object.entries(state.promos||{}).filter(([,p])=>p.active).map(([c])=>c);
+      if(activeCodes.length>0)console.log(`[promo] msg "${typed}" checked against active codes: ${activeCodes.join(", ")}`);
       const promo=Object.entries(state.promos||{}).find(([code,p])=>code.toLowerCase()===typed&&p.active);
       if(promo){
         const [code,p]=promo;
         // Check expiry
         if(p.expiresAt&&Date.now()>p.expiresAt){
           p.active=false;
+          savePromos();
           await message.reply({embeds:[new EmbedBuilder()
             .setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
             .setTitle("Promo Code Expired")
@@ -863,6 +872,7 @@ client.on(Events.MessageCreate,async message=>{
         // Check max uses
         if(p.maxUses&&p.uses>=p.maxUses){
           p.active=false;
+          savePromos();
           await message.reply({embeds:[new EmbedBuilder()
             .setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
             .setTitle("Promo Code Fully Redeemed")
@@ -887,6 +897,7 @@ client.on(Events.MessageCreate,async message=>{
         p.usedBy.push(message.author.id);
         _mem.tickets=tickets;
         save("tickets",tickets);
+        savePromos();
         // Recalc fee: discount is % off the fee AMOUNT
         // e.g. fee=$5, discount=25% → newFee=$5*(1-0.25)=$3.75
         const origFee=calcFee(ticket.amountUSD||0,ticket.direction||"send",isVipVolume(getUserVolume(message.author.id)));
@@ -958,6 +969,7 @@ client.on(Events.MessageCreate,async message=>{
   await message.reply({embeds:[new EmbedBuilder().setColor(color).setAuthor({name:"Konvert Exchange  \u2022  Live Price",iconURL:IMG.LOGO}).setTitle(`${isUp?"\u25B2":"\u25BC"}  ${coin}  \u2014  $${fmt(d.usd)}`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO).setDescription(`**${isUp?"+":""}${ch2.toFixed(2)}%** in the last 24 hours\n\u200b`)
     .addFields({name:"USD",value:`**$${fmt(d.usd)}**`,inline:true},{name:"CAD",value:`**CA$${fmt(d.cad)}**`,inline:true},{name:"EUR",value:`**\u20AC${fmt(d.eur)}**`,inline:true},{name:"Market Cap",value:mcap,inline:true},{name:"24h Volume",value:vol,inline:true},{name:"Konvert Fee",value:`**${rate}%** \u2014 ${fmtUSD(fee)}`,inline:true})
     .setImage(IMG.BANNER).setFooter({text:`Konvert Exchange  \u2022  Type /price ${coin} for more details`}).setTimestamp()]}).catch(()=>{});
+ }catch(e){console.error("[MessageCreate error]",e.message);}
 });
 
 let _inviteCache=new Map();
@@ -1695,6 +1707,7 @@ This is active immediately and persists until revoked or the bot restarts.
         if(state.promos[code]&&state.promos[code].active)return interaction.reply({content:`Promo code **${code.toUpperCase()}** already exists and is active. End it first with \`/endpromo\`.`,ephemeral:true});
         const expiresAt=hours?Date.now()+(hours*3600000):null;
         state.promos[code]={discount,maxUses,uses:0,usedBy:[],active:true,expiresAt,createdBy:interaction.user.id,createdAt:Date.now()};
+        savePromos();
         return interaction.reply({embeds:[new EmbedBuilder()
           .setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  Promo Created",iconURL:IMG.LOGO})
           .setTitle("\uD83C\uDF89  Promo Code Created")
@@ -1713,6 +1726,7 @@ This is active immediately and persists until revoked or the bot restarts.
         const code=interaction.options.getString("code").trim().toLowerCase();
         if(!state.promos[code])return interaction.reply({content:`No promo found with code **${code.toUpperCase()}**.`,ephemeral:true});
         state.promos[code].active=false;
+        savePromos();
         const p=state.promos[code];
         return interaction.reply({embeds:[new EmbedBuilder()
           .setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
@@ -1764,6 +1778,7 @@ This is active immediately and persists until revoked or the bot restarts.
         }
 
         if(!changes.length)return interaction.reply({content:"No changes provided. Specify at least one field to update.",ephemeral:true});
+        savePromos();
 
         return interaction.reply({embeds:[new EmbedBuilder()
           .setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  Promo Updated",iconURL:IMG.LOGO})
@@ -2201,7 +2216,7 @@ async function postDailyCryptoFact(guild){
   try{
     const ch=guild.channels.cache.get(GENERAL_CHANNEL_ID)||await guild.channels.fetch(GENERAL_CHANNEL_ID).catch(()=>null);
     if(!ch){console.log("[dailyFact] channel not found");return;}
-    const facts=["Bitcoin was worth less than $0.01 when it first launched in 2009. The first real-world transaction used 10,000 BTC to buy two pizzas.","Ethereum's smart contracts allow code to run automatically without any middleman — the basis for DeFi, NFTs, and thousands of dApps.","Satoshi Nakamoto, Bitcoin's creator, has never moved their estimated 1 million BTC wallet — worth billions — since mining it in 2009.","There will only ever be 21 million Bitcoin. Around 19.7 million have already been mined. The last one won't be mined until around 2140.","Over 20% of all Bitcoin is estimated to be permanently lost — forgotten wallets, lost keys, and early miners who didn't think it would be worth anything.","Solana can process up to 65,000 transactions per second. Visa handles around 24,000. Bitcoin handles around 7.","El Salvador became the first country to adopt Bitcoin as legal tender in 2021. Citizens can pay taxes and buy groceries with it.","The term 'HODL' came from a 2013 forum post where someone drunkenly misspelled 'hold'. It's now a core crypto philosophy.","Crypto markets never close. Unlike stocks, you can trade Bitcoin at 3am on Christmas Day.","Tether (USDT) is the most traded cryptocurrency by volume — more than Bitcoin or Ethereum on most days.","DeFi protocols collectively hold over $50 billion in locked assets, all managed by code with no banks involved.","The first Bitcoin ATM opened in Vancouver, Canada in 2013. There are now over 38,000 worldwide.","Ethereum burns a portion of every transaction fee permanently, making it deflationary over time.","Lightning Network allows Bitcoin transactions to settle in milliseconds for fractions of a cent — solving the scalability problem.","Crypto wallets don't actually store crypto. They store the private keys that prove ownership on the blockchain.","Over 560 million people worldwide own some form of cryptocurrency as of 2024.","A single Dogecoin was worth $0.0002 in 2019. At its peak in 2021, it hit $0.74 — a 3,700x increase.","The blockchain cannot be edited or deleted. Every transaction ever made on Bitcoin is permanently visible to anyone.","Ripple (XRP) can settle international bank transfers in 3–5 seconds for a fraction of a cent, vs 3–5 business days for SWIFT.","Gas fees on Ethereum once hit over $200 per transaction during peak NFT demand in 2021.","Cold wallets — hardware devices not connected to the internet — are considered the safest way to store large amounts of crypto.","Binance processes over $10 billion in trades daily, making it the largest crypto exchange in the world by volume.","The Bitcoin halving happens every 4 years, cutting miner rewards in half. Historically, each halving has preceded a major bull run.","Stablecoins like USDC are backed 1:1 by US dollars held in reserve, making them immune to crypto volatility.","Crypto transactions are pseudonymous, not anonymous. Every transaction is traceable on the public blockchain.","Avalanche (AVAX) can finalize transactions in under 2 seconds — one of the fastest finality times of any blockchain.","There are over 20,000 different cryptocurrencies in existence. The vast majority have little to no value.","Michael Saylor's MicroStrategy holds over 200,000 BTC on its balance sheet — more than most countries.","Ethereum's merge to Proof of Stake in 2022 reduced its energy consumption by over 99.9%.","The total crypto market cap has exceeded $3 trillion — larger than the GDP of most countries."];
+    const facts=["Bitcoin was worth less than $0.01 when it first launched in 2009. The first real-world transaction used 10,000 BTC to buy two pizzas.","Ethereum's smart contracts allow code to run automatically without any middleman — the basis for DeFi, NFTs, and thousands of dApps.","Satoshi Nakamoto, Bitcoin's creator, has never moved their estimated 1 million BTC wallet — worth billions — since mining it in 2009.","There will only ever be 21 million Bitcoin. Around 19.7 million have already been mined. The last one won't be mined until around 2140.","Over 20% of all Bitcoin is estimated to be permanently lost — forgotten wallets, lost keys, and early miners who didn't think it would be worth anything.","Solana can process up to 65,000 transactions per second. Visa handles around 24,000. Bitcoin handles around 7.","El Salvador became the first country to adopt Bitcoin as legal tender in 2021. Citizens can pay taxes and buy groceries with it.","The term 'HODL' came from a 2013 forum post where someone drunkenly misspelled 'hold'. It's now a core crypto philosophy.","Crypto markets never close. Unlike stocks, you can trade Bitcoin at 3am on Christmas Day.","Tether (USDT) is the most traded cryptocurrency by volume — more than Bitcoin or Ethereum on most days.","DeFi protocols collectively hold over $50 billion in locked assets, all managed by code with no banks involved.","The first Bitcoin ATM opened in Vancouver, Canada in 2013. There are now over 38,000 worldwide.","Ethereum burns a portion of every transaction fee permanently, making it deflationary over time.","Lightning Network allows Bitcoin transactions to settle in milliseconds for fractions of a cent — solving the scalability problem.","Crypto wallets don't actually store crypto. They store the private keys that prove ownership on the blockchain.","Over 560 million people worldwide own some form of cryptocurrency as of 2024.","A single Dogecoin was worth $0.0002 in 2019. At its peak in 2021, it hit $0.74 — a 3,700x increase.","The blockchain cannot be edited or deleted. Every transaction ever made on Bitcoin is permanently visible to anyone.","Ripple (XRP) can settle international bank transfers in 3–5 seconds for a fraction of a cent, vs 3–5 business days for SWIFT.","Gas fees on Ethereum once hit over $200 per transaction during peak NFT demand in 2021.","Cold wallets — hardware devices not connected to the internet — are considered the safest way to store large amounts of crypto.","Binance processes over $10 billion in trades daily, making it the largest crypto exchange in the world by volume.","The Bitcoin halving happens every 4 years, cutting miner rewards in half. Historically, each halving has preceded a major bull run.","Stablecoins like USDC are backed 1:1 by US dollars held in reserve, making them immune to crypto volatility.","Crypto transactions are pseudonymous, not anonymous. Every transaction is traceable on the public blockchain.","Avalanche (AVAX) can finalize transactions in under 2 seconds — one of the fastest finality times of any blockchain.","There are over 20,000 different cryptocurrencies in existence. The vast majority have little to no value.","Michael Saylor's MicroStrategy holds over 200,000 BTC on its balance sheet — more than most countries.","Ethereum's merge to Proof of Stake in 2022 reduced its energy consumption by over 99.9%.","The total crypto market cap has exceeded $3 trillion — larger than the GDP of most countries.","Bitcoin's anonymous creator, Satoshi Nakamoto, published the whitepaper on October 31, 2008 — Halloween.","The Bitcoin genesis block contains a hidden message referencing a UK newspaper headline about bank bailouts.","Vitalik Buterin proposed Ethereum at age 19, and it launched in 2015 when he was just 21.","Mt. Gox, once the largest Bitcoin exchange, handled over 70% of all BTC transactions before its 2014 collapse.","A Norwegian man bought 5,000 Bitcoin for $27 in 2009. By 2021, it was worth over $1 million.","Wrapped Bitcoin (WBTC) lets BTC holders use their coins on Ethereum-based DeFi platforms.","The Lightning Network can theoretically support millions of transactions per second across its network of channels.","NFTs are technically just tokens that point to a piece of data — the art itself is usually stored off-chain.","Proof of Work mining consumes more electricity annually than some entire countries, including Argentina.","Ethereum's 'gas' is named because it's the fuel that powers computation on the network — pay more, go faster.","Polygon processes more daily transactions than Ethereum mainnet at a fraction of the cost.","The first NFT, 'Quantum,' was minted by Kevin McCoy in 2014 — years before the NFT boom.","Coinbase went public via direct listing on Nasdaq in April 2021, valued at over $85 billion at the time.","Monero is designed for complete privacy — transaction amounts, sender, and receiver are all hidden by default.","Cardano was founded by Ethereum co-founder Charles Hoskinson and focuses on academic peer-reviewed research.","Shiba Inu (SHIB) was created as a 'Dogecoin killer' and at one point had a market cap over $40 billion.","The term 'whale' refers to someone holding enough crypto to move markets with a single trade.","Bitcoin's block time averages 10 minutes — Ethereum's is around 12 seconds.","Some countries, like China, have banned crypto trading multiple times but still lead in mining hardware production.","A '51% attack' happens when a single entity controls majority mining power and can manipulate the blockchain.","The Ethereum Merge in September 2022 was one of the most significant upgrades in blockchain history, switching from mining to staking.","USDT (Tether) processes more transaction volume daily than Bitcoin and Ethereum combined.","Crypto.com paid $700 million for the naming rights to the Staples Center, renaming it Crypto.com Arena.","The Bored Ape Yacht Club NFT collection generated over $1 billion in total trading volume.","Smart contracts can't be paused or changed once deployed unless the developer builds in an upgrade mechanism.","Binance Smart Chain (now BNB Chain) was created to offer Ethereum-compatible apps with lower fees.","The largest single crypto heist was the Poly Network hack in 2021 — $611 million was stolen, then mostly returned.","Bitcoin mining difficulty adjusts roughly every two weeks to keep block times consistent.","Litecoin was created in 2011 as a 'lite' version of Bitcoin with faster block times.","The Ethereum Name Service (ENS) lets you replace a long wallet address with something like 'yourname.eth'.","Decentralized exchanges (DEXs) like Uniswap let you trade crypto without ever giving up custody of your funds.","Ordinals brought NFT-like functionality directly to the Bitcoin blockchain in 2023.","Some Bitcoin ATMs charge fees as high as 15-20% — always check rates before using one.","The crypto term 'rug pull' describes when developers abandon a project and run off with investor funds.","Solana suffered several major network outages in 2021-2022 due to transaction spam from bot trading.","Avalanche uses three separate blockchains working together — the X-Chain, C-Chain, and P-Chain.","A 'cold wallet' that's never connected to the internet is also called 'air-gapped' storage.","The Genesis block of Bitcoin can never be spent — it's permanently locked by design.","Crypto winters — extended bear markets — have happened in 2014, 2018, and 2022, each followed by major recoveries.","PayPal began allowing US users to buy, sell, and hold crypto directly in 2020.","The DAO hack in 2016 led to a hard fork of Ethereum, creating Ethereum Classic as a separate chain.","Some companies pay employees partially in crypto, including parts of Latin America with high inflation.","Chainlink provides 'oracles' — services that feed real-world data like prices into smart contracts.","A single Ethereum transaction once cost over $400 in gas fees during the 2021 NFT craze.","Tesla bought $1.5 billion in Bitcoin in 2021, briefly accepted it for car purchases, then stopped.","The Pizza transaction — 10,000 BTC for two pizzas in 2010 — is celebrated every May 22nd as 'Bitcoin Pizza Day'.","Crypto exchanges process trades 24/7/365 — there are no holidays or weekends in crypto markets.","Some blockchains, like Algorand, are carbon-negative, offsetting more emissions than they produce.","The total number of Bitcoin addresses with a non-zero balance has grown to over 50 million.","Dogecoin started as a joke in 2013 based on the 'Doge' meme featuring a Shiba Inu.","MetaMask, one of the most popular crypto wallets, has over 30 million monthly active users.","The first Bitcoin exchange rate was set in 2010 at roughly $0.0008 per BTC.","Some NFT projects include 'royalties' that pay the original creator a percentage every time the NFT resells.","Bitcoin's hash rate — the total computing power securing the network — has grown over a billion times since 2010.","Smart contract bugs have led to billions in losses; the 2022 Wormhole hack alone cost $325 million.","Layer 2 solutions like Arbitrum and Optimism process transactions off the main Ethereum chain to reduce costs.","Crypto staking lets holders earn rewards simply for locking up their coins to help secure the network.","The phrase 'not your keys, not your coins' emphasizes self-custody over keeping crypto on exchanges.","Bitcoin Cash split from Bitcoin in 2017 over disagreements about block size limits.","The first country-wide Bitcoin mining ban was implemented by China in 2021, shifting mining to the US and Kazakhstan.","Crypto.com, Binance, and Coinbase are among the top 5 most downloaded finance apps globally most years.","An estimated 4 million BTC belonging to Satoshi Nakamoto have never moved since being mined.","Polkadot allows multiple blockchains to transfer data and assets between each other seamlessly.","The Ethereum Virtual Machine (EVM) is so widely copied that dozens of other blockchains run EVM-compatible code.","Crypto debit cards from companies like Crypto.com let you spend crypto anywhere Visa is accepted, with automatic conversion.","A single Bitcoin can be divided into 100 million units called 'satoshis,' named after its creator.","The largest Bitcoin transaction ever recorded moved over $1 billion worth of BTC in a single transfer.","Some DeFi protocols offer 'flash loans' — borrowing millions with zero collateral, repaid within the same transaction.","Argentina has one of the highest crypto adoption rates in the world due to currency instability.","The Ethereum network processes roughly 1 million transactions per day.","Crypto Twitter (now X) has been a major driver of meme coin pumps, including Dogecoin and Shiba Inu.","Hardware wallets like Ledger and Trezor store private keys on a physical device disconnected from the internet.","The SEC has sued multiple major exchanges over claims that certain tokens are unregistered securities.","Bitcoin's price has experienced over 10 corrections of more than 30% throughout its history.","Solana's mascot, a smiling sun-like logo, represents speed and 'proof of history' consensus.","Crypto faucets are websites that give away tiny amounts of crypto for completing simple tasks — mostly used for testing.","The Genesis Bitcoin block reward was 50 BTC — today it's down to 3.125 BTC after multiple halvings.","Yield farming involves moving crypto between DeFi protocols to chase the highest available interest rates.","The first decentralized stablecoin, DAI, is backed by crypto collateral rather than dollars in a bank.","Ethereum co-founder Gavin Wood coined the term 'Web3' to describe a decentralized internet.","Bitcoin mining farms in Texas often use excess wind and solar power that would otherwise go to waste.","Crypto airdrops — free token distributions — have made some early users millions for doing almost nothing.","The Lightning Network's largest public node can route payments through thousands of connected channels.","Some video games now let players earn real crypto by playing — known as 'play-to-earn' gaming.","Total value locked (TVL) in DeFi peaked at over $180 billion in late 2021 before falling sharply.","Bitcoin's all-time high in 2021 came just months before one of its steepest crashes in history.","The Sandbox and Decentraland are virtual worlds where users buy and sell virtual land using crypto.","Ripple's XRP was created in 2012 specifically for fast, low-cost cross-border payments between banks.","Crypto wallets generate a 'seed phrase' — usually 12 or 24 words — that can restore your entire wallet if lost.","The blockchain industry employs over 1 million people worldwide across development, trading, and infrastructure.","Some museums now display NFT art on digital screens alongside traditional paintings.","A Bitcoin transaction is considered 'confirmed' after roughly 6 blocks, taking about an hour.","Stablecoin transfers make up a majority of all crypto transaction volume on most blockchains.","The first Bitcoin conference was held in 2011 in New York with fewer than 100 attendees.","Some countries offer tax exemptions for crypto held longer than a year, similar to long-term capital gains.","Uniswap's automated market maker model lets anyone provide liquidity and earn trading fees.","Crypto scams cost victims over $10 billion globally in 2023 alone, according to FBI reports.","The phrase 'to the moon' originated from crypto communities expressing hope for massive price increases.","Ethereum's total supply has no hard cap, unlike Bitcoin's fixed 21 million.","Some NFT collections grant holders access to private Discord communities, events, or real-world perks.","The crypto market operates without a central clearing house — settlement happens directly on the blockchain.","Bitcoin dominance — its share of the total crypto market cap — has ranged from under 40% to over 70% historically."];
     const fact=facts[Math.floor(Math.random()*facts.length)];
     const coins=["BTC","ETH","SOL","XRP","BNB","ADA","DOGE","AVAX","LTC","DOT"];
     const featuredCoin=coins[Math.floor(Math.random()*coins.length)];
@@ -2234,6 +2249,69 @@ async function postWeeklyReferralSummary(guild){
     await ch.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert  \u00b7  Weekly Referral Report",iconURL:PTS_IMG}).setTitle("Weekly Referral Summary").setThumbnail(PTS_IMG).setDescription(`Here's how the referral program performed this week.\n\u200b`).addFields({name:"\uD83D\uDCCA  This Week's Volume",value:`**${fmtUSD(weekVolume)}** across **${weekTickets.length}** trades`,inline:false},{name:"\uD83D\uDC65  Total Referred Members",value:`**${totalReferred}**`,inline:true},{name:"\uD83D\uDD17  Active Referrers",value:`**${totalReferrers}**`,inline:true},{name:"\u200b",value:"\u200b",inline:true},{name:"\uD83C\uDFC6  Top Earners This Week",value:topLines,inline:false},{name:"\uD83D\uDCA1  Want to earn?",value:`Use \`/referral\` to get your personal invite link. You earn points every time someone you refer completes a trade.\n**${POINTS_PER_100} pts per $100 traded  \u00b7  ${POINTS_PER_DOLLAR} pts = $1**`,inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert Referral Program  \u00b7  Every Monday"}).setTimestamp()]});
     console.log("[weeklyRef] summary posted");
   }catch(e){console.error("[weeklyRef]",e.message);}
+}
+
+
+// ── DAILY OWNER DIGEST ──────────────────────────────────────────────────────
+// Every day at 11pm UTC, DM all owners a quick performance summary
+async function postDailyDigest(guild){
+  try{
+    const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
+    const now=Date.now(),dayAgo=now-86400000;
+    const done=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0);
+    const today=done.filter(t=>t.completedAt&&t.completedAt>=dayAgo);
+    const todayVol=today.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
+    const todayFees=today.reduce((s,t)=>s+(parseFloat(t.feeUSD)||0),0);
+    const open=allT.filter(t=>t.status==="open").length;
+    const disputes=allT.filter(t=>t.status==="dispute").length;
+
+    // Top exchanger today
+    const byEx={};
+    today.forEach(t=>{if(t.completedBy){byEx[t.completedBy]=(byEx[t.completedBy]||0)+(parseFloat(t.amountUSD)||0);}});
+    const topEx=Object.entries(byEx).sort((a,b)=>b[1]-a[1])[0];
+
+    // New referrals today
+    const ref=getReferrals();
+    const newRefs=Object.entries(ref.referred||{}).filter(([,refAt])=>{
+      // referred doesn't have timestamps in current schema, skip if unavailable
+      return false;
+    }).length;
+
+    if(today.length===0&&open===0&&disputes===0){
+      console.log("[dailyDigest] nothing to report, skipping");
+      return;
+    }
+
+    const embed=new EmbedBuilder()
+      .setColor(0x7C4DFF)
+      .setAuthor({name:"Konvert Exchange  \u00b7  Daily Digest",iconURL:IMG.LOGO})
+      .setTitle("Today's Summary")
+      .addFields(
+        {name:"Exchanges Today",value:`**${today.length}**`,inline:true},
+        {name:"Volume Today",value:`**${fmtUSD(todayVol)}**`,inline:true},
+        {name:"Fees Earned",value:`**${fmtUSD(todayFees)}**`,inline:true},
+        {name:"Open Tickets",value:`**${open}**${open>5?" \u26A0\uFE0F":""}`,inline:true},
+        {name:"Active Disputes",value:`**${disputes}**${disputes>0?" \uD83D\uDD34":""}`,inline:true},
+        {name:"Top Exchanger",value:topEx?`<@${topEx[0]}> \u2014 ${fmtUSD(topEx[1])}`:"\u2014",inline:true},
+      )
+      .setFooter({text:"Konvert Exchange  \u00b7  Daily digest \u00b7 Sent every 24h"})
+      .setTimestamp();
+
+    for(const oid of CONFIG.OWNER_IDS){
+      try{
+        const owner=await client.users.fetch(oid);
+        await owner.send({embeds:[embed]});
+      }catch{}
+    }
+    console.log("[dailyDigest] sent to owners");
+  }catch(e){console.error("[dailyDigest]",e.message);}
+}
+
+function scheduleDailyDigest(guild){
+  function msUntil11pm(){const now=new Date(),next=new Date(now);next.setUTCHours(23,0,0,0);if(next<=now)next.setUTCDate(next.getUTCDate()+1);return next.getTime()-now.getTime();}
+  const delay=msUntil11pm();
+  console.log(`[dailyDigest] first digest in ${Math.round(delay/3600000)}h`);
+  setTimeout(()=>{postDailyDigest(guild).catch(()=>{});setInterval(()=>postDailyDigest(guild).catch(()=>{}),24*60*60*1000);},delay);
 }
 
 function scheduleWeeklyReferralSummary(guild){
@@ -2285,6 +2363,11 @@ client.once(Events.ClientReady,async()=>{
     _mem.blacklist=pgBlacklist;
     console.log(`[startup] blacklist loaded from Postgres`);
   }
+  const pgPromos=await dbGet("konvert_promos");
+  if(pgPromos&&Object.keys(pgPromos).length>0){
+    state.promos=pgPromos;
+    console.log(`[startup] promos loaded from Postgres: ${Object.keys(pgPromos).length} codes`);
+  }
 
   if(guild){
     await cacheInvites(guild);
@@ -2309,6 +2392,7 @@ client.once(Events.ClientReady,async()=>{
     setTimeout(()=>updateStatChannel(guild).catch(()=>{}),15*1000);
     scheduleWeeklyReferralSummary(guild);
     scheduleDailyFact(guild);
+    scheduleDailyDigest(guild);
   }
 });
 
