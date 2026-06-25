@@ -791,7 +791,7 @@ async function completeTrade(interaction,ticket,tickets){
   ticket.status="vouched";ticket.completedBy=ticket._overrideExchangerId||interaction.user.id;delete ticket._overrideExchangerId;ticket.completedAt=Date.now();ticket.amountUSD=parseFloat(ticket.amountUSD)||0;
   const ticketKey=interaction.channel.id;tickets[ticketKey]=ticket;
   _mem.tickets={...(_mem.tickets||{}),...tickets};save("tickets",_mem.tickets);
-  if(interaction.guild){updateStatChannel(interaction.guild);}
+  if(interaction.guild){updateStatChannel(interaction.guild).catch(()=>{});}
   console.log(`[completeTrade] userId=${ticket.userId} amount=${ticket.amountUSD} total=${Object.keys(_mem.tickets).length}`);
   const _refData=getReferrals();
   const _referredByForVouch=_refData.referred[ticket.userId]||null;
@@ -1165,7 +1165,7 @@ client.on(Events.InteractionCreate,async interaction=>{
         const vt=load("tickets");
         vt["manual_"+Date.now()]={userId:clientUser.id,userTag:clientUser.tag,method,direction:null,coin:null,amountUSD:amount,feeUSD:calcFee(amount,"send"),walletInfo:"manual",notes:"Manual vouch via /vouch",status:"vouched",completedBy:exchUser.id,completedAt:Date.now(),createdAt:Date.now()};
         _mem.tickets=vt;save("tickets",vt);
-        updateStatChannel(interaction.guild);
+        updateStatChannel(interaction.guild).catch(()=>{});
         const _refD=getReferrals();
         const _refByManual=_refD.referred[clientUser.id]||null;
         await postVouch(interaction.guild,{clientId:clientUser.id,exchangerId:exchUser.id,method,amountUSD:amount,direction:null,coin:null,message,rating,referredBy:_refByManual});
@@ -1377,7 +1377,7 @@ Deleting in 10 seconds.`)
         const key=`adj_${target.id}_${Date.now()}`;
         tickets[key]={userId:target.id,userTag:target.tag||target.username,method:"adjustment",direction:null,coin:null,amountUSD:amount,feeUSD:0,walletInfo:"staff",notes:reason,status:"vouched",completedBy:interaction.user.id,completedAt:Date.now(),createdAt:Date.now()};
         _mem.tickets=tickets;save("tickets",tickets);
-        updateStatChannel(interaction.guild);
+        updateStatChannel(interaction.guild).catch(()=>{});
         const newVol=getUserVolume(target.id);await applyTierRole(interaction.guild,target.id,newVol);
         const tier=getTier(newVol);
         log(interaction.guild,`ADJUSTSTATS: ${interaction.user.tag} adjusted ${target.tag||target.username} by ${amount>0?"+":""}${fmtUSD(amount)} | New total: ${fmtUSD(newVol)} | Reason: ${reason}`);
@@ -1390,7 +1390,7 @@ Deleting in 10 seconds.`)
         let removed=0;
         for(const [key,t] of Object.entries(tickets)){if(t.userId===target.id&&t.method==="adjustment"){delete tickets[key];removed++;}}
         _mem.tickets=tickets;save("tickets",tickets);
-        updateStatChannel(interaction.guild);
+        updateStatChannel(interaction.guild).catch(()=>{});
         const newVol=getUserVolume(target.id);await applyTierRole(interaction.guild,target.id,newVol);
         return interaction.reply({content:`Stats reset for **${target.tag||target.username}**. Removed **${removed}** adjustment entr${removed!==1?"ies":"y"}. Volume is now **${fmtUSD(newVol)}** from real trades only.`,ephemeral:true});
       }
@@ -1400,7 +1400,7 @@ Deleting in 10 seconds.`)
         const _before=Object.keys(_mem.tickets||{}).length;
         _mem.tickets={};save("tickets",{});
         dbSet("konvert_tickets",{}).catch(()=>{});
-        updateStatChannel(interaction.guild);
+        updateStatChannel(interaction.guild).catch(()=>{});
         state.volumeAdj={};
         try{
           const allM=await interaction.guild.members.fetch();
@@ -1445,7 +1445,7 @@ Deleting in 10 seconds.`)
         for(const [key,t] of Object.entries(tickets)){if(t.userId===target.id){delete tickets[key];removed++;}}
         _mem.tickets=tickets;save("tickets",tickets);
         dbSet("konvert_tickets",tickets).catch(()=>{});
-        updateStatChannel(interaction.guild);
+        updateStatChannel(interaction.guild).catch(()=>{});
         const ref=getReferrals();delete ref.points[target.id];delete ref.referred[target.id];
         for(const [code,uid] of Object.entries(ref.invites||{})){if(uid===target.id)delete ref.invites[code];}
         delete ref.inviteCodes[target.id];saveReferrals(ref);
@@ -2217,50 +2217,21 @@ async function checkAlerts(){
 const GENERAL_CHANNEL_ID="1454793385750560894";
 const STAT_CHANNEL_ID="1491619261821485056";
 const VOLUME_OVERRIDE=198000;
-let _statTimer=null;
-let _statPending=false;
 
-function _getVol(){
-  const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
-  const traded=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0).reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
-  const adj=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method==="adjustment").reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
-  return Math.max(VOLUME_OVERRIDE,traded+adj);
-}
-
-async function _doRename(guild){
-  _statPending=false;
+async function updateStatChannel(guild){
   try{
-    const vol=_getVol();
+    const ch=guild.channels.cache.get(STAT_CHANNEL_ID)||await guild.channels.fetch(STAT_CHANNEL_ID).catch(()=>null);
+    if(!ch){console.log("[statChannel] not found");return;}
+    const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
+    const traded=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0).reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
+    const adj=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method==="adjustment").reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
+    const vol=Math.max(VOLUME_OVERRIDE,traded+adj);
     const formatted=vol>=1000000?`$${(vol/1000000).toFixed(2)}M`:vol>=1000?`$${(vol/1000).toFixed(1)}K`:`$${Math.round(vol).toLocaleString("en-US")}`;
     const name=`Total Exchanged: ${formatted}`;
-    const ch=guild.channels.cache.get(STAT_CHANNEL_ID)||await guild.channels.fetch(STAT_CHANNEL_ID).catch(()=>null);
-    if(!ch){console.log("[statChannel] channel not found:",STAT_CHANNEL_ID);return;}
-    if(ch.name===name){console.log("[statChannel] already correct:",name);return;}
-    // Use REST directly so we get the real error + retry_after on 429
-    const rest=guild.client.rest;
-    const res=await rest.patch(`/channels/${STAT_CHANNEL_ID}`,{body:{name},reason:"Konvert volume update"}).catch(e=>({_err:e}));
-    if(res&&res._err){
-      const e=res._err;
-      const retryAfter=e?.rawError?.retry_after||e?.retry_after||null;
-      if(retryAfter){
-        const ms=Math.ceil(retryAfter*1000)+2000;
-        console.log(`[statChannel] rate limited, retrying in ${Math.round(ms/1000)}s`);
-        _statPending=true;
-        setTimeout(()=>_doRename(guild),ms);
-      } else {
-        console.log("[statChannel] error:",e.message);
-      }
-      return;
-    }
-    console.log("[statChannel] renamed ->",name);
-  }catch(e){console.log("[statChannel] unexpected error:",e.message);}
-}
-
-function updateStatChannel(guild){
-  // Debounce: coalesce multiple rapid calls into one rename after 3s
-  if(_statTimer)clearTimeout(_statTimer);
-  if(_statPending)return; // already queued for retry after rate limit
-  _statTimer=setTimeout(()=>{_statTimer=null;_doRename(guild);},3000);
+    if(ch.name===name){console.log("[statChannel] no change");return;}
+    await ch.setName(name);
+    console.log("[statChannel] ->",name);
+  }catch(e){console.log("[statChannel] error:",e.message);}
 }
 
 async function postDailyCryptoFact(guild){
