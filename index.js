@@ -1170,6 +1170,7 @@ client.on(Events.InteractionCreate,async interaction=>{
         const vt=load("tickets");
         vt["manual_"+Date.now()]={userId:clientUser.id,userTag:clientUser.tag,method,direction:null,coin:null,amountUSD:amount,feeUSD:calcFee(amount,"send"),walletInfo:"manual",notes:"Manual vouch via /vouch",status:"vouched",completedBy:exchUser.id,completedAt:Date.now(),createdAt:Date.now()};
         _mem.tickets=vt;save("tickets",vt);
+        updateStatChannel(interaction.guild).catch(()=>{});
         const _refD=getReferrals();
         const _refByManual=_refD.referred[clientUser.id]||null;
         await postVouch(interaction.guild,{clientId:clientUser.id,exchangerId:exchUser.id,method,amountUSD:amount,direction:null,coin:null,message,rating,referredBy:_refByManual});
@@ -1440,6 +1441,7 @@ Deleting in 10 seconds.`)
         const key=`adj_${target.id}_${Date.now()}`;
         tickets[key]={userId:target.id,userTag:target.tag||target.username,method:"adjustment",direction:null,coin:null,amountUSD:amount,feeUSD:0,walletInfo:"staff",notes:reason,status:"vouched",completedBy:interaction.user.id,completedAt:Date.now(),createdAt:Date.now()};
         _mem.tickets=tickets;save("tickets",tickets);
+        updateStatChannel(interaction.guild).catch(()=>{});
         const newVol=getUserVolume(target.id);await applyTierRole(interaction.guild,target.id,newVol);
         const tier=getTier(newVol);
         log(interaction.guild,`ADJUSTSTATS: ${interaction.user.tag} adjusted ${target.tag||target.username} by ${amount>0?"+":""}${fmtUSD(amount)} | New total: ${fmtUSD(newVol)} | Reason: ${reason}`);
@@ -1452,6 +1454,7 @@ Deleting in 10 seconds.`)
         let removed=0;
         for(const [key,t] of Object.entries(tickets)){if(t.userId===target.id&&t.method==="adjustment"){delete tickets[key];removed++;}}
         _mem.tickets=tickets;save("tickets",tickets);
+        updateStatChannel(interaction.guild).catch(()=>{});
         const newVol=getUserVolume(target.id);await applyTierRole(interaction.guild,target.id,newVol);
         return interaction.reply({content:`Stats reset for **${target.tag||target.username}**. Removed **${removed}** adjustment entr${removed!==1?"ies":"y"}. Volume is now **${fmtUSD(newVol)}** from real trades only.`,ephemeral:true});
       }
@@ -1461,6 +1464,7 @@ Deleting in 10 seconds.`)
         const _before=Object.keys(_mem.tickets||{}).length;
         _mem.tickets={};save("tickets",{});
         dbSet("konvert_tickets",{}).catch(()=>{});
+        updateStatChannel(interaction.guild).catch(()=>{});
         state.volumeAdj={};
         try{
           const allM=await interaction.guild.members.fetch();
@@ -1505,6 +1509,7 @@ Deleting in 10 seconds.`)
         for(const [key,t] of Object.entries(tickets)){if(t.userId===target.id){delete tickets[key];removed++;}}
         _mem.tickets=tickets;save("tickets",tickets);
         dbSet("konvert_tickets",tickets).catch(()=>{});
+        updateStatChannel(interaction.guild).catch(()=>{});
         const ref=getReferrals();delete ref.points[target.id];delete ref.referred[target.id];
         for(const [code,uid] of Object.entries(ref.invites||{})){if(uid===target.id)delete ref.invites[code];}
         delete ref.inviteCodes[target.id];saveReferrals(ref);
