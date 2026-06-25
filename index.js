@@ -711,10 +711,8 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   if(mRoleId&&mRoleId!==CONFIG.STAFF_ROLE)perms.push({id:mRoleId,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]});
   for(const oid of CONFIG.OWNER_IDS)perms.push({id:oid,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]});
   let ch;
-  const _catId=CONFIG.TICKET_CATEGORY||null;
-  const _validCat=_catId?guild.channels.cache.get(_catId)||null:null;
   const _chanOpts={name:`${m.value}-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,4)}`,type:ChannelType.GuildText,permissionOverwrites:perms};
-  if(_validCat)_chanOpts.parent=_catId;
+  if(CONFIG.TICKET_CATEGORY&&guild.channels.cache.has(CONFIG.TICKET_CATEGORY))_chanOpts.parent=CONFIG.TICKET_CATEGORY;
   try{ch=await guild.channels.create(_chanOpts);}
   catch(err){await interaction.editReply({content:`Failed to create ticket: ${err.message}`,embeds:[],components:[]});return null;}
   const ticketEmbed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(`${m.label} Exchange`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
@@ -1166,7 +1164,7 @@ client.on(Events.InteractionCreate,async interaction=>{
         const vt=load("tickets");
         vt["manual_"+Date.now()]={userId:clientUser.id,userTag:clientUser.tag,method,direction:null,coin:null,amountUSD:amount,feeUSD:calcFee(amount,"send"),walletInfo:"manual",notes:"Manual vouch via /vouch",status:"vouched",completedBy:exchUser.id,completedAt:Date.now(),createdAt:Date.now()};
         _mem.tickets=vt;save("tickets",vt);
-        updateStatChannel(interaction.guild).catch(()=>{});
+        updateStatChannel(interaction.guild);
         const _refD=getReferrals();
         const _refByManual=_refD.referred[clientUser.id]||null;
         await postVouch(interaction.guild,{clientId:clientUser.id,exchangerId:exchUser.id,method,amountUSD:amount,direction:null,coin:null,message,rating,referredBy:_refByManual});
@@ -1312,66 +1310,15 @@ Deleting in 10 seconds.`)
 
       if(cmd==="note"){const text=interaction.options.getString("text");await interaction.channel.send({embeds:[new EmbedBuilder().setColor(0xFFB347).setAuthor({name:`Staff Note -- ${interaction.user.tag}`,iconURL:interaction.user.displayAvatarURL()}).setDescription(text).setTimestamp().setFooter({text:"Konvert  \u2022  Staff Note"})]});return interaction.reply({content:"Note added.",ephemeral:true});}
       if(cmd==="tradelog"){const limit=interaction.options.getInteger("limit")||5;const done=Object.values(load("tickets")).filter(t=>t.status==="vouched"&&t.completedAt&&t.method!=="adjustment").sort((a,b)=>b.completedAt-a.completedAt).slice(0,limit);if(!done.length)return interaction.reply({content:"No completed exchanges yet.",ephemeral:true});const lines=done.map((t,i)=>{const m=getMethod(t.method);return `**${i+1}.** <@${t.userId}>  \u00b7  ${m?.label||t.method}  \u00b7  ${fmtUSD(t.amountUSD)}  \u00b7  <t:${Math.floor(t.completedAt/1000)}:R>`;}).join("\n");return interaction.reply({embeds:[base(`Last ${done.length} Completed Trades`).setDescription(lines).setFooter({text:"Konvert  \u2022  Trade Log"})],ephemeral:true});}
-      if(cmd==="volume"){
-        await interaction.deferReply({ephemeral:true});
-        const pgV=await dbGet("konvert_tickets").catch(()=>null);
-        const allV=Object.values(pgV&&Object.keys(pgV).length>0?pgV:(Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets")));
-        const DONEV=["vouched","completed"];
-        const doneV=allV.filter(t=>DONEV.includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0);
-        const totalVol=await getTotalVolume();
-        const totalFees=doneV.reduce((s,t)=>s+(parseFloat(t.feeUSD)||calcFee(parseFloat(t.amountUSD||0),t.direction||"send")),0);
-        const openV=allV.filter(t=>t.status==="open").length;
-        const midV=new Date();midV.setUTCHours(0,0,0,0);
-        const todayV=doneV.filter(t=>t.completedAt&&t.completedAt>=midV.getTime());
-        const methodsV={};doneV.forEach(t=>{if(t.method)methodsV[t.method]=(methodsV[t.method]||0)+1;});
-        const topMethodV=Object.entries(methodsV).sort((a,b)=>b[1]-a[1])[0];
-        return interaction.editReply({embeds:[base("Konvert Volume Stats").setThumbnail(IMG.LOGO).addFields(
-          {name:"Total Exchanges",value:`**${doneV.length}** exchanges`,inline:true},
-          {name:"Total Volume",value:`**${fmtUSD(totalVol)}**`,inline:true},
-          {name:"Total Fees",value:`**${fmtUSD(totalFees)}**`,inline:true},
-          {name:"Open Tickets",value:`**${openV}**`,inline:true},
-          {name:"Today's Volume",value:`**${fmtUSD(todayV.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0))}** (${todayV.length} trades)`,inline:true},
-          {name:"Top Method",value:topMethodV?`**${getMethod(topMethodV[0])?.label||topMethodV[0]}** (${topMethodV[1]})`:"--",inline:true}
-        ).setFooter({text:"Konvert  \u2022  Server Volume Statistics"})],ephemeral:true});
-      }
+      if(cmd==="volume"){const all=Object.values(load("tickets")),done=all.filter(t=>t.status==="vouched"&&t.amountUSD&&t.method!=="adjustment"),totalVol=done.reduce((s,t)=>s+(t.amountUSD||0),0),totalFees=done.reduce((s,t)=>s+(t.feeUSD||0),0),open=all.filter(t=>t.status==="open").length,today=done.filter(t=>t.completedAt&&Date.now()-t.completedAt<86400000),methods={};done.forEach(t=>{if(t.method)methods[t.method]=(methods[t.method]||0)+1;});const topMethod=Object.entries(methods).sort((a,b)=>b[1]-a[1])[0];return interaction.reply({embeds:[base("Konvert Volume Stats").setThumbnail(IMG.LOGO).addFields({name:"Total Exchanges",value:`**${done.length}** exchanges`,inline:true},{name:"Total Volume",value:`**${fmtUSD(totalVol)}**`,inline:true},{name:"Total Fees",value:`**${fmtUSD(totalFees)}**`,inline:true},{name:"Open Tickets",value:`**${open}**`,inline:true},{name:"Today's Volume",value:`**${fmtUSD(today.reduce((s,t)=>s+(t.amountUSD||0),0))}** (${today.length} trades)`,inline:true},{name:"Top Method",value:topMethod?`**${getMethod(topMethod[0])?.label||topMethod[0]}** (${topMethod[1]})`:"--",inline:true}).setFooter({text:"Konvert  \u2022  Server Volume Statistics"})],ephemeral:true});}
 
       if(cmd==="snapshot"){
         await interaction.deferReply({ephemeral:true});
-        const guild=interaction.guild;
-        const pgSnap=await dbGet("konvert_tickets").catch(()=>null);
-        const allTickets=pgSnap&&Object.keys(pgSnap).length>0?pgSnap:(Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets"));
-        const all=Object.values(allTickets);
-        const DONE=["vouched","completed"];
-        const done=all.filter(t=>DONE.includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0);
-        const open=all.filter(t=>t.status==="open");
-        const disputes=all.filter(t=>t.status==="dispute");
-        const midSnap=new Date();midSnap.setUTCHours(0,0,0,0);
-        const todayStart=midSnap.getTime();
-        const today=done.filter(t=>t.completedAt&&t.completedAt>=todayStart);
-        const week=done.filter(t=>t.completedAt&&t.completedAt>=(todayStart-6*86400000));
-        const totalVol=await getTotalVolume();
-        const totalFees=done.reduce((s,t)=>s+(parseFloat(t.feeUSD)||calcFee(parseFloat(t.amountUSD||0),t.direction||"send")),0);
-        const todayVol=today.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
-        const weekVol=week.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
-        const methods={},coins={},byEx={};
-        done.forEach(t=>{if(t.method)methods[t.method]=(methods[t.method]||0)+1;if(t.coin)coins[t.coin]=(coins[t.coin]||0)+1;if(t.completedBy)byEx[t.completedBy]=(byEx[t.completedBy]||0)+1;});
-        const topMethod=Object.entries(methods).sort((a,b)=>b[1]-a[1])[0];
-        const topCoin=Object.entries(coins).sort((a,b)=>b[1]-a[1])[0];
-        const topEx=Object.entries(byEx).sort((a,b)=>b[1]-a[1])[0];
+        const guild=interaction.guild,all=Object.values(load("tickets")),done=all.filter(t=>t.status==="vouched"&&t.amountUSD&&t.method!=="adjustment"),open=all.filter(t=>t.status==="open"),today=done.filter(t=>t.completedAt&&Date.now()-t.completedAt<86400000),week=done.filter(t=>t.completedAt&&Date.now()-t.completedAt<7*86400000),totalVol=done.reduce((s,t)=>s+(t.amountUSD||0),0);
+        const methods={},coins={},byEx={};done.forEach(t=>{if(t.method)methods[t.method]=(methods[t.method]||0)+1;if(t.coin)coins[t.coin]=(coins[t.coin]||0)+1;if(t.completedBy)byEx[t.completedBy]=(byEx[t.completedBy]||0)+1;});
+        const topMethod=Object.entries(methods).sort((a,b)=>b[1]-a[1])[0],topCoin=Object.entries(coins).sort((a,b)=>b[1]-a[1])[0],topEx=Object.entries(byEx).sort((a,b)=>b[1]-a[1])[0];
         await guild.members.fetch();
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert  \u2022  Server Snapshot",iconURL:IMG.LOGO}).setTitle("Server Snapshot").setThumbnail(IMG.LOGO).setDescription(`Snapshot taken <t:${Math.floor(Date.now()/1000)}:F>\n\u200b`).addFields(
-          {name:"\uD83D\uDC65  Members",value:`**${guild.memberCount}**`,inline:true},
-          {name:"\uD83C\uDF9F  Open Tickets",value:`**${open.length}**`,inline:true},
-          {name:"\uD83D\uDEA8  Disputes",value:`**${disputes.length}**${disputes.length>0?" \uD83D\uDD34":""}`,inline:true},
-          {name:"\u2705  Total Exchanges",value:`**${done.length}**`,inline:true},
-          {name:"\uD83D\uDCB0  Total Volume",value:`**${fmtUSD(totalVol)}**`,inline:true},
-          {name:"\uD83D\uDCB8  Total Fees",value:`**${fmtUSD(totalFees)}**`,inline:true},
-          {name:"\uD83D\uDCC5  Today",value:`**${today.length}** trades  \u00b7  ${fmtUSD(todayVol)}`,inline:true},
-          {name:"\uD83D\uDCC6  This Week",value:`**${week.length}** trades  \u00b7  ${fmtUSD(weekVol)}`,inline:true},
-          {name:"\uD83D\uDCB3  Top Method",value:topMethod?`**${getMethod(topMethod[0])?.label||topMethod[0]}** (${topMethod[1]})`:"--",inline:true},
-          {name:"\uD83E\uDE99  Top Coin",value:topCoin?`**${topCoin[0]}** (${topCoin[1]})`:"--",inline:true},
-          {name:"\uD83C\uDFC6  Top Exchanger",value:topEx?`<@${topEx[0]}> (${topEx[1]} trades)`:"--",inline:true}
-        ).setFooter({text:`${all.length} total tickets  \u00b7  Konvert Snapshot`}).setTimestamp()]});
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert  \u2022  Server Snapshot",iconURL:IMG.LOGO}).setTitle("Server Snapshot").setThumbnail(IMG.LOGO).setDescription(`Snapshot taken <t:${Math.floor(Date.now()/1000)}:F>\n\u200b`).addFields({name:"\uD83D\uDC65  Members",value:`**${guild.memberCount}**`,inline:true},{name:"\uD83C\uDF9F  Open Tickets",value:`**${open.length}**`,inline:true},{name:"\u2705  Completed",value:`**${done.length}** exchanges`,inline:true},{name:"\uD83D\uDCB0  Total Volume",value:`**${fmtUSD(totalVol)}**`,inline:true},{name:"\uD83D\uDCC5  Today",value:`**${today.length}** trades  \u00b7  ${fmtUSD(today.reduce((s,t)=>s+(t.amountUSD||0),0))}`,inline:true},{name:"\uD83D\uDCC6  This Week",value:`**${week.length}** trades  \u00b7  ${fmtUSD(week.reduce((s,t)=>s+(t.amountUSD||0),0))}`,inline:true},{name:"\uD83D\uDCB3  Top Method",value:topMethod?`**${getMethod(topMethod[0])?.label||topMethod[0]}** (${topMethod[1]})`:"--",inline:true},{name:"\uD83E\uDE99  Top Coin",value:topCoin?`**${topCoin[0]}** (${topCoin[1]})`:"--",inline:true},{name:"\uD83C\uDFC6  Top Exchanger",value:topEx?`<@${topEx[0]}> (${topEx[1]} trades)`:"--",inline:true}).setFooter({text:"Konvert  \u2022  Snapshot"}).setTimestamp()]});
       }
 
       if(cmd==="exchangerboard"){const done=Object.values(load("tickets")).filter(t=>t.status==="vouched"&&t.completedBy&&t.method!=="adjustment"),byEx={};done.forEach(t=>{if(!byEx[t.completedBy])byEx[t.completedBy]={trades:0,volume:0};byEx[t.completedBy].trades+=1;byEx[t.completedBy].volume+=(t.amountUSD||0);});const ranked=Object.entries(byEx).sort((a,b)=>b[1].trades-a[1].trades).slice(0,10);if(!ranked.length)return interaction.reply({content:"No completed exchanges yet.",ephemeral:true});const medals=["\uD83E\uDD47","\uD83E\uDD48","\uD83E\uDD49"];const lines=ranked.map(([uid,d],i)=>`${medals[i]||`**${i+1}.**`}  <@${uid}>  --  **${d.trades}** exchange${d.trades!==1?"s":""}  \u00b7  ${fmtUSD(d.volume)}`).join("\n");return interaction.reply({embeds:[base("Exchanger Leaderboard").setThumbnail(IMG.LOGO).setDescription("Top Konvert exchangers ranked by completed trades.\n\u200b").addFields({name:"Rankings",value:lines,inline:false}).setFooter({text:"Konvert  \u2022  Exchanger Leaderboard"}).setTimestamp()],ephemeral:true});}
@@ -1429,7 +1376,7 @@ Deleting in 10 seconds.`)
         const key=`adj_${target.id}_${Date.now()}`;
         tickets[key]={userId:target.id,userTag:target.tag||target.username,method:"adjustment",direction:null,coin:null,amountUSD:amount,feeUSD:0,walletInfo:"staff",notes:reason,status:"vouched",completedBy:interaction.user.id,completedAt:Date.now(),createdAt:Date.now()};
         _mem.tickets=tickets;save("tickets",tickets);
-        updateStatChannel(interaction.guild).catch(()=>{});
+        updateStatChannel(interaction.guild);
         const newVol=getUserVolume(target.id);await applyTierRole(interaction.guild,target.id,newVol);
         const tier=getTier(newVol);
         log(interaction.guild,`ADJUSTSTATS: ${interaction.user.tag} adjusted ${target.tag||target.username} by ${amount>0?"+":""}${fmtUSD(amount)} | New total: ${fmtUSD(newVol)} | Reason: ${reason}`);
@@ -1442,7 +1389,7 @@ Deleting in 10 seconds.`)
         let removed=0;
         for(const [key,t] of Object.entries(tickets)){if(t.userId===target.id&&t.method==="adjustment"){delete tickets[key];removed++;}}
         _mem.tickets=tickets;save("tickets",tickets);
-        updateStatChannel(interaction.guild).catch(()=>{});
+        updateStatChannel(interaction.guild);
         const newVol=getUserVolume(target.id);await applyTierRole(interaction.guild,target.id,newVol);
         return interaction.reply({content:`Stats reset for **${target.tag||target.username}**. Removed **${removed}** adjustment entr${removed!==1?"ies":"y"}. Volume is now **${fmtUSD(newVol)}** from real trades only.`,ephemeral:true});
       }
@@ -1452,7 +1399,7 @@ Deleting in 10 seconds.`)
         const _before=Object.keys(_mem.tickets||{}).length;
         _mem.tickets={};save("tickets",{});
         dbSet("konvert_tickets",{}).catch(()=>{});
-        updateStatChannel(interaction.guild).catch(()=>{});
+        updateStatChannel(interaction.guild);
         state.volumeAdj={};
         try{
           const allM=await interaction.guild.members.fetch();
@@ -1497,7 +1444,7 @@ Deleting in 10 seconds.`)
         for(const [key,t] of Object.entries(tickets)){if(t.userId===target.id){delete tickets[key];removed++;}}
         _mem.tickets=tickets;save("tickets",tickets);
         dbSet("konvert_tickets",tickets).catch(()=>{});
-        updateStatChannel(interaction.guild).catch(()=>{});
+        updateStatChannel(interaction.guild);
         const ref=getReferrals();delete ref.points[target.id];delete ref.referred[target.id];
         for(const [code,uid] of Object.entries(ref.invites||{})){if(uid===target.id)delete ref.invites[code];}
         delete ref.inviteCodes[target.id];saveReferrals(ref);
@@ -1662,10 +1609,9 @@ Deleting in 10 seconds.`)
         const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
         const done=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0);
         const open=allT.filter(t=>t.status==="open");
-        const totalVol=await getTotalVolume();
-        const midSI=new Date();midSI.setUTCHours(0,0,0,0);
-        const today=done.filter(t=>t.completedAt&&t.completedAt>=midSI.getTime());
-        const week=done.filter(t=>t.completedAt&&t.completedAt>=(midSI.getTime()-6*86400000));
+        const totalVol=done.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
+        const today=done.filter(t=>t.completedAt&&Date.now()-t.completedAt<86400000);
+        const week=done.filter(t=>t.completedAt&&Date.now()-t.completedAt<7*86400000);
         const ref=getReferrals();
         const ms=process.uptime()*1000;const uh=Math.floor(ms/3600000);const um=Math.floor((ms%3600000)/60000);
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Server Info").setThumbnail(IMG.LOGO).addFields({name:"Members",value:`**${guild.memberCount}**`,inline:true},{name:"Open Tickets",value:`**${open.length}**`,inline:true},{name:"Total Exchanges",value:`**${done.length}**`,inline:true},{name:"Total Volume",value:`**${fmtUSD(totalVol)}**`,inline:true},{name:"Today",value:`**${today.length}** \u00b7 ${fmtUSD(today.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0))}`,inline:true},{name:"This Week",value:`**${week.length}** \u00b7 ${fmtUSD(week.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0))}`,inline:true},{name:"Referrers",value:`**${Object.keys(ref.points||{}).length}**`,inline:true},{name:"Referred Members",value:`**${Object.keys(ref.referred||{}).length}**`,inline:true},{name:"Fee Mode",value:`**${state.feeMode==="reduced"?"Reduced (5-9%)":"Standard (5-10%)"}**`,inline:true},{name:"Live Feed",value:state.feedEnabled&&state.feedChannel?`On \u2014 <#${state.feedChannel}>`:"Off",inline:true},{name:"Price Alerts",value:`**${state.alerts.length}** active`,inline:true},{name:"Uptime",value:`**${uh}h ${um}m**`,inline:true}).setFooter({text:"Konvert Exchange"}).setTimestamp()]});
@@ -2136,7 +2082,7 @@ This is active immediately and persists until revoked or the bot restarts.
       if(interaction.customId==="modal_support"){
         const issue=interaction.fields.getTextInputValue("sup_issue"),tried=interaction.fields.getTextInputValue("sup_tried")||"Not specified",user=interaction.user,guild=interaction.guild;
         let ch;
-        try{const _supOpts={name:`support-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,12)}`,type:ChannelType.GuildText,permissionOverwrites:[{id:guild.roles.everyone,deny:[PermissionFlagsBits.ViewChannel]},{id:user.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]},...(CONFIG.STAFF_ROLE?[{id:CONFIG.STAFF_ROLE,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]}]:[]),...CONFIG.OWNER_IDS.map(id=>({id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]}))]};const _supCat=CONFIG.TICKET_CATEGORY?guild.channels.cache.get(CONFIG.TICKET_CATEGORY)||null:null;if(_supCat)_supOpts.parent=CONFIG.TICKET_CATEGORY;ch=await guild.channels.create(_supOpts);}catch{return interaction.reply({content:"Failed to create support channel.",ephemeral:true});}
+        try{const _sOpts={name:`support-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,12)}`,type:ChannelType.GuildText,permissionOverwrites:[{id:guild.roles.everyone,deny:[PermissionFlagsBits.ViewChannel]},{id:user.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]},...(CONFIG.STAFF_ROLE?[{id:CONFIG.STAFF_ROLE,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]}]:[]),...CONFIG.OWNER_IDS.map(id=>({id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]}))]};if(CONFIG.TICKET_CATEGORY&&guild.channels.cache.has(CONFIG.TICKET_CATEGORY))_sOpts.parent=CONFIG.TICKET_CATEGORY;ch=await guild.channels.create(_sOpts);}catch{return interaction.reply({content:"Failed to create support channel.",ephemeral:true});}
         await ch.send({content:`<@${user.id}>`,embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert  \u2022  Support",iconURL:IMG.LOGO}).setTitle("Support Ticket").setThumbnail(IMG.LOGO).setDescription(`**Welcome, <@${user.id}>**\n\nStaff will assist you shortly. Please be patient.\n\u200b`).addFields({name:"Issue",value:issue,inline:false},{name:"What Tried",value:tried,inline:false}).setTimestamp().setFooter({text:"Konvert  \u2022  Support Ticket"})],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_close").setLabel("Close Ticket").setStyle(ButtonStyle.Danger))]});
         if(CONFIG.STAFF_ROLE)await ch.send(`<@&${CONFIG.STAFF_ROLE}> -- New support ticket from <@${user.id}>`);
         log(guild,`SUPPORT: #${ch.name} opened by ${user.tag}`);
@@ -2266,43 +2212,37 @@ const GENERAL_CHANNEL_ID="1454793385750560894";
 const STAT_CHANNEL_ID="1491619261821485056";
 const VOLUME_OVERRIDE=198000;
 
-async function getTotalVolume(){
-  const pgData=await dbGet("konvert_tickets").catch(()=>null);
-  const allT=Object.values(pgData&&Object.keys(pgData).length>0?pgData:(Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets")));
-  const DONE=["vouched","completed"];
-  const tradeVol=allT.filter(t=>DONE.includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0).reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
-  const adjVol=allT.filter(t=>DONE.includes(t.status)&&t.method==="adjustment").reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
-  return Math.max(VOLUME_OVERRIDE,tradeVol+adjVol);
-}
-
-function fmtVolume(v){
+function _fmtVol(v){
   if(v>=1000000)return`$${(v/1000000).toFixed(2)}M`;
   if(v>=1000)return`$${(v/1000).toFixed(1)}K`;
   return`$${Math.round(v).toLocaleString("en-US")}`;
 }
 
-let _lastStatUpdate=0;
-let _statUpdateTimer=null;
-async function _doStatChannelUpdate(guild){
-  try{
-    const ch=guild.channels.cache.get(STAT_CHANNEL_ID)||await guild.channels.fetch(STAT_CHANNEL_ID).catch(()=>null);
-    if(!ch){console.log("[statChannel] channel not found:",STAT_CHANNEL_ID);return;}
-    const totalVol=await getTotalVolume();
-    const formatted=fmtVolume(totalVol);
-    await ch.setName(`Total Exchanged: ${formatted}`);
-    _lastStatUpdate=Date.now();
-    console.log(`[statChannel] updated to ${formatted}`);
-  }catch(e){console.log("[statChannel] ERROR:",e.message);}
+function _calcVol(){
+  const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
+  const traded=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0).reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
+  const adj=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method==="adjustment").reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
+  return Math.max(VOLUME_OVERRIDE,traded+adj);
 }
+
+let _statLast=0,_statTimer=null;
 function updateStatChannel(guild){
-  // Discord allows ~2 renames per 10min. Queue the update — always fires, never skips.
-  if(_statUpdateTimer)clearTimeout(_statUpdateTimer);
-  const now=Date.now();
-  const elapsed=now-_lastStatUpdate;
-  // If last update was recent, delay to respect rate limit; otherwise fire immediately
-  const delay=elapsed<310000?Math.max(310000-elapsed,1000):0;
-  _statUpdateTimer=setTimeout(()=>{_doStatChannelUpdate(guild).catch(e=>console.log("[statChannel]",e.message));_statUpdateTimer=null;},delay);
-  if(delay>0)console.log(`[statChannel] queued in ${Math.round(delay/1000)}s`);
+  // Queue the rename — always fires after each deal, respects Discord 2/10min limit
+  if(_statTimer)clearTimeout(_statTimer);
+  const wait=Math.max(0,310000-(Date.now()-_statLast));
+  _statTimer=setTimeout(async()=>{
+    _statTimer=null;
+    try{
+      const ch=guild.channels.cache.get(STAT_CHANNEL_ID)||await guild.channels.fetch(STAT_CHANNEL_ID).catch(()=>null);
+      if(!ch){console.log("[statChannel] channel not found");return;}
+      const vol=_calcVol();
+      const name=`Total Exchanged: ${_fmtVol(vol)}`;
+      await ch.setName(name);
+      _statLast=Date.now();
+      console.log("[statChannel] updated →",name);
+    }catch(e){console.log("[statChannel] error:",e.message);}
+  },wait);
+  if(wait>0)console.log(`[statChannel] queued in ${Math.round(wait/1000)}s`);
 }
 
 async function postDailyCryptoFact(guild){
@@ -2349,50 +2289,52 @@ async function postWeeklyReferralSummary(guild){
 // Every day at 11pm UTC, DM all owners a quick performance summary
 async function postDailyDigest(guild){
   try{
-    const pgData=await dbGet("konvert_tickets").catch(()=>null);
-    const allT=Object.values(pgData&&Object.keys(pgData).length>0?pgData:(Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets")));
-    const midnightUTC=new Date();midnightUTC.setUTCHours(0,0,0,0);
-    const todayStart=midnightUTC.getTime();
-    const DONE=["vouched","completed"];
-    const done=allT.filter(t=>DONE.includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0);
-    const today=done.filter(t=>t.completedAt&&t.completedAt>=todayStart);
+    const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
+    const now=Date.now(),dayAgo=now-86400000;
+    const done=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0);
+    const today=done.filter(t=>t.completedAt&&t.completedAt>=dayAgo);
     const todayVol=today.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
-    const todayFees=today.reduce((s,t)=>s+(parseFloat(t.feeUSD)||calcFee(parseFloat(t.amountUSD||0),t.direction||"send")),0);
+    const todayFees=today.reduce((s,t)=>s+(parseFloat(t.feeUSD)||0),0);
     const open=allT.filter(t=>t.status==="open").length;
     const disputes=allT.filter(t=>t.status==="dispute").length;
-    const totalVol=await getTotalVolume();
-    const totalDone=done.length;
-    const byEx={},byExTrades={};
-    today.forEach(t=>{if(t.completedBy){byEx[t.completedBy]=(byEx[t.completedBy]||0)+(parseFloat(t.amountUSD)||0);byExTrades[t.completedBy]=(byExTrades[t.completedBy]||0)+1;}});
+
+    // Top exchanger today
+    const byEx={};
+    today.forEach(t=>{if(t.completedBy){byEx[t.completedBy]=(byEx[t.completedBy]||0)+(parseFloat(t.amountUSD)||0);}});
     const topEx=Object.entries(byEx).sort((a,b)=>b[1]-a[1])[0];
-    const todayMethods={};today.forEach(t=>{if(t.method)todayMethods[t.method]=(todayMethods[t.method]||0)+1;});
-    const topMethod=Object.entries(todayMethods).sort((a,b)=>b[1]-a[1])[0];
+
+    // New referrals today
+    const ref=getReferrals();
+    const newRefs=Object.entries(ref.referred||{}).filter(([,refAt])=>{
+      // referred doesn't have timestamps in current schema, skip if unavailable
+      return false;
+    }).length;
+
     if(today.length===0&&open===0&&disputes===0){
       console.log("[dailyDigest] nothing to report, skipping");
       return;
     }
+
     const embed=new EmbedBuilder()
       .setColor(0x7C4DFF)
       .setAuthor({name:"Konvert Exchange  \u00b7  Daily Digest",iconURL:IMG.LOGO})
       .setTitle("Today's Summary")
-      .setDescription(`<t:${Math.floor(todayStart/1000)}:D>\n\u200b`)
       .addFields(
-        {name:"\u2705  Exchanges Today",value:`**${today.length}**`,inline:true},
-        {name:"\uD83D\uDCB0  Volume Today",value:`**${fmtUSD(todayVol)}**`,inline:true},
-        {name:"\uD83D\uDCB8  Fees Earned",value:`**${fmtUSD(todayFees)}**`,inline:true},
-        {name:"\uD83C\uDF9F  Open Tickets",value:`**${open}**${open>5?" \u26A0\uFE0F":""}`,inline:true},
-        {name:"\uD83D\uDEA8  Disputes",value:`**${disputes}**${disputes>0?" \uD83D\uDD34":" \u2705"}`,inline:true},
-        {name:"\uD83C\uDFC6  Top Exchanger",value:topEx?`<@${topEx[0]}> \u2014 ${fmtUSD(topEx[1])} (${byExTrades[topEx[0]]} trades)`:"\u2014",inline:true},
-        {name:"\uD83D\uDCB3  Top Method",value:topMethod?`**${getMethod(topMethod[0])?.label||topMethod[0]}** (${topMethod[1]})`:"\u2014",inline:true},
-        {name:"\uD83D\uDCCA  All-Time Total",value:`**${totalDone}** exchanges  \u00b7  **${fmtUSD(totalVol)}**`,inline:false},
+        {name:"Exchanges Today",value:`**${today.length}**`,inline:true},
+        {name:"Volume Today",value:`**${fmtUSD(todayVol)}**`,inline:true},
+        {name:"Fees Earned",value:`**${fmtUSD(todayFees)}**`,inline:true},
+        {name:"Open Tickets",value:`**${open}**${open>5?" \u26A0\uFE0F":""}`,inline:true},
+        {name:"Active Disputes",value:`**${disputes}**${disputes>0?" \uD83D\uDD34":""}`,inline:true},
+        {name:"Top Exchanger",value:topEx?`<@${topEx[0]}> \u2014 ${fmtUSD(topEx[1])}`:"\u2014",inline:true},
       )
-      .setFooter({text:`Konvert Exchange  \u00b7  Daily digest  \u00b7  ${allT.length} tickets in DB`})
+      .setFooter({text:"Konvert Exchange  \u00b7  Daily digest \u00b7 Sent every 24h"})
       .setTimestamp();
+
     for(const oid of CONFIG.OWNER_IDS){
       try{
         const owner=await client.users.fetch(oid);
         await owner.send({embeds:[embed]});
-      }catch(e){console.log("[dailyDigest] failed to DM",oid,e.message);}
+      }catch{}
     }
     console.log("[dailyDigest] sent to owners");
   }catch(e){console.error("[dailyDigest]",e.message);}
@@ -2489,21 +2431,21 @@ client.once(Events.ClientReady,async()=>{
     setTimeout(()=>updateLiveLeaderboard(guild).catch(()=>{}),20*1000);
     // Update stat channel on startup
     setTimeout(()=>updateStatChannel(guild).catch(()=>{}),15*1000);
-    // Auto-remove owners from blacklist
-    const bl=load("blacklist");let blChanged=false;
-    for(const oid of CONFIG.OWNER_IDS){if(bl[oid]){delete bl[oid];blChanged=true;console.log(`[startup] removed owner ${oid} from blacklist`);}}
-    if(blChanged)save("blacklist",bl);
-    const refData=getReferrals();let refBLChanged=false;
-    if(refData.blacklist){for(const oid of CONFIG.OWNER_IDS){if(refData.blacklist[oid]){delete refData.blacklist[oid];refBLChanged=true;console.log(`[startup] removed owner ${oid} from referral blacklist`);}}} 
-    if(refBLChanged)saveReferrals(refData);
-    // Pre-warm price cache
+    // Remove owners from blacklist on boot
+    const _blBoot=load("blacklist");let _blChg=false;
+    for(const oid of CONFIG.OWNER_IDS){if(_blBoot[oid]){delete _blBoot[oid];_blChg=true;}}
+    if(_blChg)save("blacklist",_blBoot);
+    const _refBoot=getReferrals();let _refBlChg=false;
+    if(_refBoot.blacklist){for(const oid of CONFIG.OWNER_IDS){if(_refBoot.blacklist[oid]){delete _refBoot.blacklist[oid];_refBlChg=true;}}}
+    if(_refBlChg)saveReferrals(_refBoot);
+    // Pre-warm top coin prices
     setTimeout(async()=>{
-      const topCoins=["BTC","ETH","SOL","XRP","BNB","ADA","DOGE","AVAX","LINK","DOT","MATIC","UNI","ATOM","NEAR","LTC","TRX","ARB","OP","SUI","APT","INJ","PEPE","WIF","BONK","TIA"];
       try{
-        const symbols=topCoins.filter(c=>BINANCE[c]).map(c=>BINANCE[c]);
-        const r=await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${JSON.stringify(symbols)}`,{signal:AbortSignal.timeout(5000)});
-        if(r.ok){const data=await r.json();const symMap=Object.fromEntries(topCoins.filter(c=>BINANCE[c]).map(c=>[BINANCE[c],c]));for(const j of data){const coin=symMap[j.symbol];if(!coin)continue;const usd=parseFloat(j.lastPrice||0);if(usd>0){const cKey=coin+"_full";const d={usd,cad:usd*1.37,eur:usd*0.93,usd_24h_change:parseFloat(j.priceChangePercent||0),usd_market_cap:0,usd_24h_vol:parseFloat(j.quoteVolume||0)};_priceCache[coin]={v:usd,ts:Date.now()};_priceCache[cKey]={v:d,ts:Date.now()};}}console.log("[priceWarm] pre-warmed "+Object.keys(_priceCache).length+" coins");}
-      }catch(e){console.log("[priceWarm] failed:",e.message);}
+        const tops=["BTC","ETH","SOL","XRP","BNB","ADA","DOGE","AVAX","LINK","DOT","MATIC","ATOM","NEAR","LTC","TRX","ARB","OP","SUI","APT","INJ","PEPE","WIF","BONK","TIA"];
+        const syms=tops.filter(c=>BINANCE[c]).map(c=>BINANCE[c]);
+        const r=await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${JSON.stringify(syms)}`,{signal:AbortSignal.timeout(5000)});
+        if(r.ok){const data=await r.json();const sm=Object.fromEntries(tops.filter(c=>BINANCE[c]).map(c=>[BINANCE[c],c]));for(const j of data){const coin=sm[j.symbol];if(!coin)continue;const usd=parseFloat(j.lastPrice||0);if(usd>0){_priceCache[coin]={v:usd,ts:Date.now()};_priceCache[coin+"_full"]={v:{usd,cad:usd*1.37,eur:usd*0.93,usd_24h_change:parseFloat(j.priceChangePercent||0),usd_market_cap:0,usd_24h_vol:parseFloat(j.quoteVolume||0)},ts:Date.now()};}}console.log("[priceWarm] done");}
+      }catch(e){console.log("[priceWarm]",e.message);}
     },5000);
     scheduleWeeklyReferralSummary(guild);
     scheduleDailyFact(guild);
