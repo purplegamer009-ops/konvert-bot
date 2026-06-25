@@ -713,7 +713,9 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   let ch;
   const _catId=CONFIG.TICKET_CATEGORY||null;
   const _validCat=_catId?guild.channels.cache.get(_catId)||null:null;
-  try{ch=await guild.channels.create({name:`${m.value}-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,4)}`,type:ChannelType.GuildText,parent:_validCat?_catId:null,permissionOverwrites:perms});}
+  const _chanOpts={name:`${m.value}-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,4)}`,type:ChannelType.GuildText,permissionOverwrites:perms};
+  if(_validCat)_chanOpts.parent=_catId;
+  try{ch=await guild.channels.create(_chanOpts);}
   catch(err){await interaction.editReply({content:`Failed to create ticket: ${err.message}`,embeds:[],components:[]});return null;}
   const ticketEmbed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(`${m.label} Exchange`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
     .setDescription(`**Welcome, <@${user.id}>**\n\nYour ticket is open. A **${m.label}** handler has been notified.\n\u200b`)
@@ -2134,7 +2136,7 @@ This is active immediately and persists until revoked or the bot restarts.
       if(interaction.customId==="modal_support"){
         const issue=interaction.fields.getTextInputValue("sup_issue"),tried=interaction.fields.getTextInputValue("sup_tried")||"Not specified",user=interaction.user,guild=interaction.guild;
         let ch;
-        try{ch=await guild.channels.create({name:`support-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,12)}`,type:ChannelType.GuildText,parent:CONFIG.TICKET_CATEGORY||null,permissionOverwrites:[{id:guild.roles.everyone,deny:[PermissionFlagsBits.ViewChannel]},{id:user.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]},...(CONFIG.STAFF_ROLE?[{id:CONFIG.STAFF_ROLE,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]}]:[]),...CONFIG.OWNER_IDS.map(id=>({id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]}))]});}catch{return interaction.reply({content:"Failed to create support channel.",ephemeral:true});}
+        try{const _supOpts={name:`support-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,12)}`,type:ChannelType.GuildText,permissionOverwrites:[{id:guild.roles.everyone,deny:[PermissionFlagsBits.ViewChannel]},{id:user.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]},...(CONFIG.STAFF_ROLE?[{id:CONFIG.STAFF_ROLE,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]}]:[]),...CONFIG.OWNER_IDS.map(id=>({id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]}))]};const _supCat=CONFIG.TICKET_CATEGORY?guild.channels.cache.get(CONFIG.TICKET_CATEGORY)||null:null;if(_supCat)_supOpts.parent=CONFIG.TICKET_CATEGORY;ch=await guild.channels.create(_supOpts);}catch{return interaction.reply({content:"Failed to create support channel.",ephemeral:true});}
         await ch.send({content:`<@${user.id}>`,embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert  \u2022  Support",iconURL:IMG.LOGO}).setTitle("Support Ticket").setThumbnail(IMG.LOGO).setDescription(`**Welcome, <@${user.id}>**\n\nStaff will assist you shortly. Please be patient.\n\u200b`).addFields({name:"Issue",value:issue,inline:false},{name:"What Tried",value:tried,inline:false}).setTimestamp().setFooter({text:"Konvert  \u2022  Support Ticket"})],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_close").setLabel("Close Ticket").setStyle(ButtonStyle.Danger))]});
         if(CONFIG.STAFF_ROLE)await ch.send(`<@&${CONFIG.STAFF_ROLE}> -- New support ticket from <@${user.id}>`);
         log(guild,`SUPPORT: #${ch.name} opened by ${user.tag}`);
@@ -2279,15 +2281,20 @@ function fmtVolume(v){
   return`$${Math.round(v).toLocaleString("en-US")}`;
 }
 
+let _lastStatUpdate=0;
 async function updateStatChannel(guild){
+  // Discord rate-limits channel renames — enforce 5-min minimum between updates
+  const now=Date.now();
+  if(now-_lastStatUpdate<300000&&_lastStatUpdate!==0){console.log("[statChannel] skipped — rate limit cooldown");return;}
   try{
     const ch=guild.channels.cache.get(STAT_CHANNEL_ID)||await guild.channels.fetch(STAT_CHANNEL_ID).catch(()=>null);
-    if(!ch)return;
+    if(!ch){console.log("[statChannel] channel not found:",STAT_CHANNEL_ID);return;}
     const totalVol=await getTotalVolume();
     const formatted=fmtVolume(totalVol);
-    await ch.setName(`Total Exchanged: ${formatted}`).catch(()=>{});
+    await ch.setName(`Total Exchanged: ${formatted}`);
+    _lastStatUpdate=Date.now();
     console.log(`[statChannel] updated to ${formatted}`);
-  }catch(e){console.log("[statChannel]",e.message);}
+  }catch(e){console.log("[statChannel] ERROR:",e.message);}
 }
 
 async function postDailyCryptoFact(guild){
