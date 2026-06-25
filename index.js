@@ -712,7 +712,9 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   if(mRoleId&&mRoleId!==CONFIG.STAFF_ROLE)perms.push({id:mRoleId,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]});
   for(const oid of CONFIG.OWNER_IDS)perms.push({id:oid,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]});
   let ch;
-  try{ch=await guild.channels.create({name:`${m.value}-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,4)}`,type:ChannelType.GuildText,parent:CONFIG.TICKET_CATEGORY||null,permissionOverwrites:perms});}
+  const _catId=CONFIG.TICKET_CATEGORY||null;
+  const _validCat=_catId?guild.channels.cache.get(_catId)||null:null;
+  try{ch=await guild.channels.create({name:`${m.value}-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,4)}`,type:ChannelType.GuildText,parent:_validCat?_catId:null,permissionOverwrites:perms});}
   catch(err){await interaction.editReply({content:`Failed to create ticket: ${err.message}`,embeds:[],components:[]});return null;}
   const ticketEmbed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(`${m.label} Exchange`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
     .setDescription(`**Welcome, <@${user.id}>**\n\nYour ticket is open. A **${m.label}** handler has been notified.\n\u200b`)
