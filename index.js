@@ -1319,11 +1319,48 @@ Deleting in 10 seconds.`)
 
       if(cmd==="snapshot"){
         await interaction.deferReply({ephemeral:true});
-        const guild=interaction.guild,all=Object.values(load("tickets")),done=all.filter(t=>t.status==="vouched"&&t.amountUSD&&t.method!=="adjustment"),open=all.filter(t=>t.status==="open"),today=done.filter(t=>t.completedAt&&Date.now()-t.completedAt<86400000),week=done.filter(t=>t.completedAt&&Date.now()-t.completedAt<7*86400000),totalVol=done.reduce((s,t)=>s+(t.amountUSD||0),0);
-        const methods={},coins={},byEx={};done.forEach(t=>{if(t.method)methods[t.method]=(methods[t.method]||0)+1;if(t.coin)coins[t.coin]=(coins[t.coin]||0)+1;if(t.completedBy)byEx[t.completedBy]=(byEx[t.completedBy]||0)+1;});
-        const topMethod=Object.entries(methods).sort((a,b)=>b[1]-a[1])[0],topCoin=Object.entries(coins).sort((a,b)=>b[1]-a[1])[0],topEx=Object.entries(byEx).sort((a,b)=>b[1]-a[1])[0];
+        const guild=interaction.guild;
+        // Always pull freshest data — Postgres first via _mem, then disk
+        const pgSnap=await dbGet("konvert_tickets").catch(()=>null);
+        const allTickets=pgSnap&&Object.keys(pgSnap).length>0?pgSnap:(Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets"));
+        const all=Object.values(allTickets);
+        const DONE=["vouched","completed"];
+        const done=all.filter(t=>DONE.includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0);
+        const open=all.filter(t=>t.status==="open");
+        const disputes=all.filter(t=>t.status==="dispute");
+        // Calendar-day today (midnight UTC)
+        const nowSnap=Date.now();
+        const midnightToday=new Date();midnightToday.setUTCHours(0,0,0,0);
+        const todayStart=midnightToday.getTime();
+        const weekStart=todayStart-6*86400000;
+        const today=done.filter(t=>t.completedAt&&t.completedAt>=todayStart);
+        const week=done.filter(t=>t.completedAt&&t.completedAt>=weekStart);
+        // Volume = real trades + adjustments
+        const adjVol=all.filter(t=>DONE.includes(t.status)&&t.method==="adjustment").reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
+        const totalVol=done.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0)+adjVol;
+        const totalFees=done.reduce((s,t)=>s+(parseFloat(t.feeUSD)||calcFee(parseFloat(t.amountUSD||0),t.direction||"send")),0);
+        const methods={},coins={},byEx={};
+        done.forEach(t=>{if(t.method)methods[t.method]=(methods[t.method]||0)+1;if(t.coin)coins[t.coin]=(coins[t.coin]||0)+1;if(t.completedBy)byEx[t.completedBy]=(byEx[t.completedBy]||0)+1;});
+        const topMethod=Object.entries(methods).sort((a,b)=>b[1]-a[1])[0];
+        const topCoin=Object.entries(coins).sort((a,b)=>b[1]-a[1])[0];
+        const topEx=Object.entries(byEx).sort((a,b)=>b[1]-a[1])[0];
+        const todayVol=today.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
+        const todayFees=today.reduce((s,t)=>s+(parseFloat(t.feeUSD)||0),0);
+        const weekVol=week.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
         await guild.members.fetch();
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert  \u2022  Server Snapshot",iconURL:IMG.LOGO}).setTitle("Server Snapshot").setThumbnail(IMG.LOGO).setDescription(`Snapshot taken <t:${Math.floor(Date.now()/1000)}:F>\n\u200b`).addFields({name:"\uD83D\uDC65  Members",value:`**${guild.memberCount}**`,inline:true},{name:"\uD83C\uDF9F  Open Tickets",value:`**${open.length}**`,inline:true},{name:"\u2705  Completed",value:`**${done.length}** exchanges`,inline:true},{name:"\uD83D\uDCB0  Total Volume",value:`**${fmtUSD(totalVol)}**`,inline:true},{name:"\uD83D\uDCC5  Today",value:`**${today.length}** trades  \u00b7  ${fmtUSD(today.reduce((s,t)=>s+(t.amountUSD||0),0))}`,inline:true},{name:"\uD83D\uDCC6  This Week",value:`**${week.length}** trades  \u00b7  ${fmtUSD(week.reduce((s,t)=>s+(t.amountUSD||0),0))}`,inline:true},{name:"\uD83D\uDCB3  Top Method",value:topMethod?`**${getMethod(topMethod[0])?.label||topMethod[0]}** (${topMethod[1]})`:"--",inline:true},{name:"\uD83E\uDE99  Top Coin",value:topCoin?`**${topCoin[0]}** (${topCoin[1]})`:"--",inline:true},{name:"\uD83C\uDFC6  Top Exchanger",value:topEx?`<@${topEx[0]}> (${topEx[1]} trades)`:"--",inline:true}).setFooter({text:"Konvert  \u2022  Snapshot"}).setTimestamp()]});
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert  \u2022  Server Snapshot",iconURL:IMG.LOGO}).setTitle("Server Snapshot").setThumbnail(IMG.LOGO).setDescription(`Snapshot taken <t:${Math.floor(Date.now()/1000)}:F>\n\u200b`).addFields(
+          {name:"\uD83D\uDC65  Members",value:`**${guild.memberCount}**`,inline:true},
+          {name:"\uD83C\uDF9F  Open Tickets",value:`**${open.length}**`,inline:true},
+          {name:"\uD83D\uDEA8  Disputes",value:`**${disputes.length}**${disputes.length>0?" \uD83D\uDD34":""}`,inline:true},
+          {name:"\u2705  Total Exchanges",value:`**${done.length}**`,inline:true},
+          {name:"\uD83D\uDCB0  Total Volume",value:`**${fmtUSD(totalVol)}**`,inline:true},
+          {name:"\uD83D\uDCB8  Total Fees",value:`**${fmtUSD(totalFees)}**`,inline:true},
+          {name:"\uD83D\uDCC5  Today",value:`**${today.length}** trades  \u00b7  ${fmtUSD(todayVol)}  \u00b7  ${fmtUSD(todayFees)} fees`,inline:false},
+          {name:"\uD83D\uDCC6  This Week",value:`**${week.length}** trades  \u00b7  ${fmtUSD(weekVol)}`,inline:false},
+          {name:"\uD83D\uDCB3  Top Method",value:topMethod?`**${getMethod(topMethod[0])?.label||topMethod[0]}** (${topMethod[1]} trades)`:"--",inline:true},
+          {name:"\uD83E\uDE99  Top Coin",value:topCoin?`**${topCoin[0]}** (${topCoin[1]} trades)`:"--",inline:true},
+          {name:"\uD83C\uDFC6  Top Exchanger",value:topEx?`<@${topEx[0]}> (${topEx[1]} trades)`:"--",inline:true}
+        ).setFooter({text:`${all.length} total tickets in DB  \u00b7  Konvert Snapshot`}).setTimestamp()]});
       }
 
       if(cmd==="exchangerboard"){const done=Object.values(load("tickets")).filter(t=>t.status==="vouched"&&t.completedBy&&t.method!=="adjustment"),byEx={};done.forEach(t=>{if(!byEx[t.completedBy])byEx[t.completedBy]={trades:0,volume:0};byEx[t.completedBy].trades+=1;byEx[t.completedBy].volume+=(t.amountUSD||0);});const ranked=Object.entries(byEx).sort((a,b)=>b[1].trades-a[1].trades).slice(0,10);if(!ranked.length)return interaction.reply({content:"No completed exchanges yet.",ephemeral:true});const medals=["\uD83E\uDD47","\uD83E\uDD48","\uD83E\uDD49"];const lines=ranked.map(([uid,d],i)=>`${medals[i]||`**${i+1}.**`}  <@${uid}>  --  **${d.trades}** exchange${d.trades!==1?"s":""}  \u00b7  ${fmtUSD(d.volume)}`).join("\n");return interaction.reply({embeds:[base("Exchanger Leaderboard").setThumbnail(IMG.LOGO).setDescription("Top Konvert exchangers ranked by completed trades.\n\u200b").addFields({name:"Rankings",value:lines,inline:false}).setFooter({text:"Konvert  \u2022  Exchanger Leaderboard"}).setTimestamp()],ephemeral:true});}
@@ -2268,26 +2305,34 @@ async function postWeeklyReferralSummary(guild){
 // Every day at 11pm UTC, DM all owners a quick performance summary
 async function postDailyDigest(guild){
   try{
-    const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
-    const now=Date.now(),dayAgo=now-86400000;
-    const done=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0);
-    const today=done.filter(t=>t.completedAt&&t.completedAt>=dayAgo);
+    // Pull freshest data directly from Postgres — never stale
+    const pgData=await dbGet("konvert_tickets").catch(()=>null);
+    const allT=Object.values(pgData&&Object.keys(pgData).length>0?pgData:(Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets")));
+
+    // Use calendar day midnight UTC — not rolling 24h
+    const midnightUTC=new Date();midnightUTC.setUTCHours(0,0,0,0);
+    const todayStart=midnightUTC.getTime();
+
+    const DONE=["vouched","completed"];
+    const done=allT.filter(t=>DONE.includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0);
+    const today=done.filter(t=>t.completedAt&&t.completedAt>=todayStart);
     const todayVol=today.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
-    const todayFees=today.reduce((s,t)=>s+(parseFloat(t.feeUSD)||0),0);
+    // Accurate fees: use stored feeUSD if present, otherwise calculate
+    const todayFees=today.reduce((s,t)=>s+(parseFloat(t.feeUSD)||calcFee(parseFloat(t.amountUSD||0),t.direction||"send")),0);
     const open=allT.filter(t=>t.status==="open").length;
     const disputes=allT.filter(t=>t.status==="dispute").length;
+    // All-time totals for context
+    const totalVol=done.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
+    const totalDone=done.length;
 
-    // Top exchanger today
-    const byEx={};
-    today.forEach(t=>{if(t.completedBy){byEx[t.completedBy]=(byEx[t.completedBy]||0)+(parseFloat(t.amountUSD)||0);}});
+    // Top exchanger today by volume
+    const byEx={},byExTrades={};
+    today.forEach(t=>{if(t.completedBy){byEx[t.completedBy]=(byEx[t.completedBy]||0)+(parseFloat(t.amountUSD)||0);byExTrades[t.completedBy]=(byExTrades[t.completedBy]||0)+1;}});
     const topEx=Object.entries(byEx).sort((a,b)=>b[1]-a[1])[0];
 
-    // New referrals today
-    const ref=getReferrals();
-    const newRefs=Object.entries(ref.referred||{}).filter(([,refAt])=>{
-      // referred doesn't have timestamps in current schema, skip if unavailable
-      return false;
-    }).length;
+    // Top method today
+    const todayMethods={};today.forEach(t=>{if(t.method)todayMethods[t.method]=(todayMethods[t.method]||0)+1;});
+    const topMethod=Object.entries(todayMethods).sort((a,b)=>b[1]-a[1])[0];
 
     if(today.length===0&&open===0&&disputes===0){
       console.log("[dailyDigest] nothing to report, skipping");
@@ -2297,23 +2342,26 @@ async function postDailyDigest(guild){
     const embed=new EmbedBuilder()
       .setColor(0x7C4DFF)
       .setAuthor({name:"Konvert Exchange  \u00b7  Daily Digest",iconURL:IMG.LOGO})
-      .setTitle("Today's Summary")
+      .setTitle("\uD83D\uDCCA Today's Summary")
+      .setDescription(`<t:${Math.floor(todayStart/1000)}:D>  \u2014  Data pulled live from Postgres\n\u200b`)
       .addFields(
-        {name:"Exchanges Today",value:`**${today.length}**`,inline:true},
-        {name:"Volume Today",value:`**${fmtUSD(todayVol)}**`,inline:true},
-        {name:"Fees Earned",value:`**${fmtUSD(todayFees)}**`,inline:true},
-        {name:"Open Tickets",value:`**${open}**${open>5?" \u26A0\uFE0F":""}`,inline:true},
-        {name:"Active Disputes",value:`**${disputes}**${disputes>0?" \uD83D\uDD34":""}`,inline:true},
-        {name:"Top Exchanger",value:topEx?`<@${topEx[0]}> \u2014 ${fmtUSD(topEx[1])}`:"\u2014",inline:true},
+        {name:"\u2705  Exchanges Today",value:`**${today.length}**`,inline:true},
+        {name:"\uD83D\uDCB0  Volume Today",value:`**${fmtUSD(todayVol)}**`,inline:true},
+        {name:"\uD83D\uDCB8  Fees Earned",value:`**${fmtUSD(todayFees)}**`,inline:true},
+        {name:"\uD83C\uDF9F  Open Tickets",value:`**${open}**${open>5?" \u26A0\uFE0F":""}`,inline:true},
+        {name:"\uD83D\uDEA8  Disputes",value:`**${disputes}**${disputes>0?" \uD83D\uDD34":" \u2705"}`,inline:true},
+        {name:"\uD83C\uDFC6  Top Exchanger",value:topEx?`<@${topEx[0]}> \u2014 ${fmtUSD(topEx[1])} (${byExTrades[topEx[0]]} trades)`:"\u2014",inline:true},
+        {name:"\uD83D\uDCB3  Top Method",value:topMethod?`**${getMethod(topMethod[0])?.label||topMethod[0]}** (${topMethod[1]})`:"\u2014",inline:true},
+        {name:"\uD83D\uDCCA  All-Time Total",value:`**${totalDone}** exchanges  \u00b7  **${fmtUSD(totalVol)}**`,inline:false},
       )
-      .setFooter({text:"Konvert Exchange  \u00b7  Daily digest \u00b7 Sent every 24h"})
+      .setFooter({text:`Konvert Exchange  \u00b7  Daily digest  \u00b7  ${allT.length} tickets in DB`})
       .setTimestamp();
 
     for(const oid of CONFIG.OWNER_IDS){
       try{
         const owner=await client.users.fetch(oid);
         await owner.send({embeds:[embed]});
-      }catch{}
+      }catch(e){console.log("[dailyDigest] failed to DM",oid,e.message);}
     }
     console.log("[dailyDigest] sent to owners");
   }catch(e){console.error("[dailyDigest]",e.message);}
