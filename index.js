@@ -114,7 +114,6 @@ const CONFIG = {
 };
 
 const TIERS = [
-  { min:20000, label:"Opulent Client",  role:"1514890647436394496", emoji:"\uD83D\uDEE5\uFE0F" },
   { min:10000, label:"Whale Client",    role:"1483159341899976905", emoji:"\uD83D\uDC0B" },
   { min:7000,  label:"Godly Client",   role:"1483159233049657550", emoji:"\u26A1"        },
   { min:5000,  label:"Ethereal Client",role:"1483159184651325622", emoji:"\u2728"        },
@@ -200,9 +199,9 @@ const METHODS=[
 ];
 const getMethod=v=>METHODS.find(m=>m.value===v)||null;
 
-const COINS=["BTC","ETH","SOL","LTC","USDT","USDC","XRP","BNB","ADA","DOGE","MATIC","AVAX","DOT","LINK","TRX","SHIB","UNI","ATOM","FTM","NEAR","ARB","OP","SUI","APT","INJ","TIA","SEI","BONK","WIF","PEPE","FLOKI","TURBO","GALA","IMX","SAND","MANA","ENJ","AXS","CHZ","SUPER","GMT","MAGIC","GRT","FIL","ICP","HBAR","VET","EOS","XLM","ALGO","EGLD","THETA","CAKE","AAVE","COMP","MKR","SNX","YFI","CRV","BAL","SUSHI","ZRX","LRC","ZEC","XMR","DASH","BCH","DGB","ZEN","NANO","STX","MINA","KAVA","BAND","OCEAN","ANKR","ONE","ROSE","CELO","SKL","RAY","OKB","CRO","WOO","LUNA","DAI","PAXG","WBTC","LDO","FXS","CVX","BAT","ENS","UMA","PERP","DYDX","GMX","PENDLE","JUP","RNDR","BLUR","APE","RDNT"];
-const GECKO={BTC:"bitcoin",ETH:"ethereum",SOL:"solana",LTC:"litecoin",USDT:"tether",USDC:"usd-coin",XRP:"ripple",BNB:"binancecoin",ADA:"cardano",DOGE:"dogecoin",MATIC:"matic-network",AVAX:"avalanche-2",DOT:"polkadot",LINK:"chainlink",TRX:"tron",SHIB:"shiba-inu",UNI:"uniswap",ATOM:"cosmos",FTM:"fantom",NEAR:"near",ARB:"arbitrum",OP:"optimism",SUI:"sui",APT:"aptos",INJ:"injective-protocol",TIA:"celestia",SEI:"sei-network",BONK:"bonk",WIF:"dogwifcoin",PEPE:"pepe",FLOKI:"floki",TURBO:"turbo",GALA:"gala",IMX:"immutable-x",SAND:"the-sandbox",MANA:"decentraland",ENJ:"enjincoin",AXS:"axie-infinity",CHZ:"chiliz",GMT:"stepn",MAGIC:"magic",GRT:"the-graph",FIL:"filecoin",ICP:"internet-computer",HBAR:"hedera-hashgraph",VET:"vechain",EOS:"eos",XLM:"stellar",ALGO:"algorand",EGLD:"elrond-erd-2",THETA:"theta-token",CAKE:"pancakeswap-token",AAVE:"aave",COMP:"compound-governance-token",MKR:"maker",SNX:"havven",YFI:"yearn-finance",CRV:"curve-dao-token",BAL:"balancer",SUSHI:"sushi",ZRX:"0x",LRC:"loopring",ZEC:"zcash",XMR:"monero",DASH:"dash",BCH:"bitcoin-cash",DGB:"digibyte",ZEN:"horizen",NANO:"nano",STX:"blockstack",MINA:"mina-protocol",KAVA:"kava",BAND:"band-protocol",OCEAN:"ocean-protocol",ANKR:"ankr",ONE:"harmony",ROSE:"oasis-network",CELO:"celo",SKL:"skale",LUNA:"terra-luna-2",DAI:"dai",PAXG:"pax-gold",WBTC:"wrapped-bitcoin",LDO:"lido-dao",FXS:"frax-share",CVX:"convex-finance",BAT:"basic-attention-token",ENS:"ethereum-name-service",UMA:"uma",DYDX:"dydx",GMX:"gmx",PENDLE:"pendle",JUP:"jupiter",RNDR:"render-token",BLUR:"blur",APE:"apecoin",OKB:"okb",CRO:"crypto-com-chain",WOO:"woo-network",RDNT:"radiant-capital",SUPER:"superfarm",RAY:"raydium",PERP:"perpetual-protocol"};
-const COIN_LOGO={BTC:"https://assets.coingecko.com/coins/images/1/large/bitcoin.png",ETH:"https://assets.coingecko.com/coins/images/279/large/ethereum.png",SOL:"https://assets.coingecko.com/coins/images/4128/large/solana.png",LTC:"https://assets.coingecko.com/coins/images/2/large/litecoin.png",USDT:"https://assets.coingecko.com/coins/images/325/large/Tether.png",USDC:"https://assets.coingecko.com/coins/images/6319/large/usdc.png",XRP:"https://assets.coingecko.com/coins/images/44/large/xrp-symbol-white-128.png",BNB:"https://assets.coingecko.com/coins/images/825/large/binance-coin-logo.png",ADA:"https://assets.coingecko.com/coins/images/975/large/cardano.png",DOGE:"https://assets.coingecko.com/coins/images/5/large/dogecoin.png",MATIC:"https://assets.coingecko.com/coins/images/4713/large/matic-token-icon.png",AVAX:"https://assets.coingecko.com/coins/images/12559/large/Avalanche_Circle_RedWhite_Trans.png",DOT:"https://assets.coingecko.com/coins/images/12171/large/polkadot.png",LINK:"https://assets.coingecko.com/coins/images/877/large/chainlink-new-logo.png",TRX:"https://assets.coingecko.com/coins/images/1094/large/tron-logo.png",SHIB:"https://assets.coingecko.com/coins/images/11939/large/shiba.png",UNI:"https://assets.coingecko.com/coins/images/12504/large/uniswap-uni.png",ATOM:"https://assets.coingecko.com/coins/images/1481/large/cosmos_hub.png",NEAR:"https://assets.coingecko.com/coins/images/10365/large/near.jpg",ARB:"https://assets.coingecko.com/coins/images/16547/large/photo_2023-03-29_21.47.00.jpeg",OP:"https://assets.coingecko.com/coins/images/25244/large/Optimism.png",SUI:"https://assets.coingecko.com/coins/images/26375/large/sui_asset.jpeg",APT:"https://assets.coingecko.com/coins/images/26455/large/aptos_round.png",INJ:"https://assets.coingecko.com/coins/images/12882/large/Secondary_Symbol.png",TIA:"https://assets.coingecko.com/coins/images/31967/large/tia.jpg",BONK:"https://assets.coingecko.com/coins/images/28600/large/bonk.jpg",WIF:"https://assets.coingecko.com/coins/images/33566/large/dogwifhat.jpg",PEPE:"https://assets.coingecko.com/coins/images/29850/large/pepe-token.jpeg",FLOKI:"https://assets.coingecko.com/coins/images/16746/large/PNG_image.png",GALA:"https://assets.coingecko.com/coins/images/12493/large/GALA-COINGECKO.png",IMX:"https://assets.coingecko.com/coins/images/17233/large/immutableX-symbol-BLK-RGB.png",SAND:"https://assets.coingecko.com/coins/images/12129/large/sandbox_logo.jpg",MANA:"https://assets.coingecko.com/coins/images/878/large/decentraland-mana.png",AXS:"https://assets.coingecko.com/coins/images/13029/large/axie_infinity_logo.png",GRT:"https://assets.coingecko.com/coins/images/13397/large/Graph_Token.png",FIL:"https://assets.coingecko.com/coins/images/12817/large/filecoin.png",AAVE:"https://assets.coingecko.com/coins/images/12645/large/AAVE.png",MKR:"https://assets.coingecko.com/coins/images/1364/large/Mark_Maker.png",XLM:"https://assets.coingecko.com/coins/images/100/large/Stellar_symbol_black_RGB.png",ALGO:"https://assets.coingecko.com/coins/images/4380/large/download.png",BCH:"https://assets.coingecko.com/coins/images/780/large/bitcoin-cash-circle.png",LDO:"https://assets.coingecko.com/coins/images/13573/large/Lido_DAO.png",DAI:"https://assets.coingecko.com/coins/images/9956/large/Badge_Dai.png",WBTC:"https://assets.coingecko.com/coins/images/7598/large/wrapped_bitcoin_wbtc.png",DYDX:"https://assets.coingecko.com/coins/images/17500/large/hjnIm9bV.jpg",GMX:"https://assets.coingecko.com/coins/images/18323/large/arbit.png",PENDLE:"https://assets.coingecko.com/coins/images/15069/large/Pendle_Logo_Normal-03.png",JUP:"https://assets.coingecko.com/coins/images/34188/large/jup.png",RNDR:"https://assets.coingecko.com/coins/images/11636/large/rndr.png",APE:"https://assets.coingecko.com/coins/images/24383/large/apecoin.jpg",CRO:"https://assets.coingecko.com/coins/images/7310/large/cro_token_logo.png",WOO:"https://assets.coingecko.com/coins/images/12921/large/w2UiemF__400x400.jpg",RAY:"https://assets.coingecko.com/coins/images/13928/large/PSigc4ie_400x400.jpg",HBAR:"https://assets.coingecko.com/coins/images/3688/large/hbar.png",VET:"https://assets.coingecko.com/coins/images/1167/large/VET_Token_Icon.png",XMR:"https://assets.coingecko.com/coins/images/69/large/monero_logo.png",ZEC:"https://assets.coingecko.com/coins/images/486/large/circle-zcash-color.png",CAKE:"https://assets.coingecko.com/coins/images/12632/large/pancakeswap-cake-logo_%281%29.png",FTM:"https://assets.coingecko.com/coins/images/4001/large/Fantom_round.png",SEI:"https://assets.coingecko.com/coins/images/28205/large/Sei_Logo_-_Transparent.png",TURBO:"https://assets.coingecko.com/coins/images/30073/large/turbo.jpeg",BLUR:"https://assets.coingecko.com/coins/images/28453/large/blur.png",RDNT:"https://assets.coingecko.com/coins/images/26536/large/Radiant-Logo-200x200.png"};
+const COINS=["BTC","ETH","SOL","LTC","USDT","USDC","XRP","BNB","ADA","DOGE","MATIC","AVAX","DOT","LINK","TRX","SHIB","UNI","ATOM","FTM","NEAR"];
+const GECKO={BTC:"bitcoin",ETH:"ethereum",SOL:"solana",LTC:"litecoin",USDT:"tether",USDC:"usd-coin",XRP:"ripple",BNB:"binancecoin",ADA:"cardano",DOGE:"dogecoin",MATIC:"matic-network",AVAX:"avalanche-2",DOT:"polkadot",LINK:"chainlink",TRX:"tron",SHIB:"shiba-inu",UNI:"uniswap",ATOM:"cosmos",FTM:"fantom",NEAR:"near"};
+const COIN_LOGO={BTC:"https://assets.coingecko.com/coins/images/1/large/bitcoin.png",ETH:"https://assets.coingecko.com/coins/images/279/large/ethereum.png",SOL:"https://assets.coingecko.com/coins/images/4128/large/solana.png",LTC:"https://assets.coingecko.com/coins/images/2/large/litecoin.png",USDT:"https://assets.coingecko.com/coins/images/325/large/Tether.png",USDC:"https://assets.coingecko.com/coins/images/6319/large/usdc.png",XRP:"https://assets.coingecko.com/coins/images/44/large/xrp-symbol-white-128.png",BNB:"https://assets.coingecko.com/coins/images/825/large/binance-coin-logo.png",ADA:"https://assets.coingecko.com/coins/images/975/large/cardano.png",DOGE:"https://assets.coingecko.com/coins/images/5/large/dogecoin.png"};
 
 // ── PERSISTENT STORAGE ──────────────────────────────────────────────────────
 const DATA_DIR=process.env.DATA_DIR||"/tmp";
@@ -399,22 +398,22 @@ function isVipVolume(vol){return vol>=7000;}
 const base=title=>new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(title).setTimestamp();
 function log(guild,msg){if(!CONFIG.LOG_CHANNEL||!guild)return;const ch=guild.channels.cache.get(CONFIG.LOG_CHANNEL);if(ch)ch.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setDescription("```"+msg+"```").setTimestamp()]}).catch(()=>{});}
 
-const BINANCE={BTC:"BTCUSDT",ETH:"ETHUSDT",SOL:"SOLUSDT",LTC:"LTCUSDT",XRP:"XRPUSDT",BNB:"BNBUSDT",ADA:"ADAUSDT",DOGE:"DOGEUSDT",MATIC:"MATICUSDT",AVAX:"AVAXUSDT",DOT:"DOTUSDT",LINK:"LINKUSDT",TRX:"TRXUSDT",UNI:"UNIUSDT",ATOM:"ATOMUSDT",NEAR:"NEARUSDT",SHIB:"SHIBUSDT",ARB:"ARBUSDT",OP:"OPUSDT",SUI:"SUIUSDT",APT:"APTUSDT",INJ:"INJUSDT",TIA:"TIAUSDT",SEI:"SEIUSDT",BONK:"BONKUSDT",WIF:"WIFUSDT",PEPE:"PEPEUSDT",FLOKI:"FLOKIUSDT",GALA:"GALAUSDT",IMX:"IMXUSDT",SAND:"SANDUSDT",MANA:"MANAUSDT",ENJ:"ENJUSDT",AXS:"AXSUSDT",CHZ:"CHZUSDT",GMT:"GMTUSDT",GRT:"GRTUSDT",FIL:"FILUSDT",ICP:"ICPUSDT",HBAR:"HBARUSDT",VET:"VETUSDT",EOS:"EOSUSDT",XLM:"XLMUSDT",ALGO:"ALGOUSDT",THETA:"THETAUSDT",CAKE:"CAKEUSDT",AAVE:"AAVEUSDT",COMP:"COMPUSDT",MKR:"MKRUSDT",SNX:"SNXUSDT",YFI:"YFIUSDT",CRV:"CRVUSDT",BAL:"BALUSDT",SUSHI:"SUSHIUSDT",ZRX:"ZRXUSDT",LRC:"LRCUSDT",ZEC:"ZECUSDT",XMR:"XMRUSDT",DASH:"DASHUSDT",BCH:"BCHUSDT",DGB:"DGBUSDT",STX:"STXUSDT",KAVA:"KAVAUSDT",BAND:"BANDUSDT",OCEAN:"OCEANUSDT",ANKR:"ANKRUSDT",ONE:"ONEUSDT",ROSE:"ROSEUSDT",CELO:"CELOUSDT",SKL:"SKLUSDT",DAI:"DAIUSDT",WBTC:"WBTCUSDT",LDO:"LDOUSDT",FXS:"FXSUSDT",CVX:"CVXUSDT",BAT:"BATUSDT",ENS:"ENSUSDT",DYDX:"DYDXUSDT",GMX:"GMXUSDT",PENDLE:"PENDLEUSDT",RNDR:"RNDRUSDT",BLUR:"BLURUSDT",APE:"APEUSDT",OKB:"OKBUSDT",WOO:"WOOUSDT",SUPER:"SUPERUSDT",RAY:"RAYUSDT",PERP:"PERPUSDT",JUP:"JUPUSDT",CRO:"CROUSDT",TURBO:"TURBOUSDT",MAGIC:"MAGICUSDT"};
+const BINANCE={BTC:"BTCUSDT",ETH:"ETHUSDT",SOL:"SOLUSDT",LTC:"LTCUSDT",XRP:"XRPUSDT",BNB:"BNBUSDT",ADA:"ADAUSDT",DOGE:"DOGEUSDT",MATIC:"MATICUSDT",AVAX:"AVAXUSDT",DOT:"DOTUSDT",LINK:"LINKUSDT",TRX:"TRXUSDT",UNI:"UNIUSDT",ATOM:"ATOMUSDT",NEAR:"NEARUSDT",SHIB:"SHIBUSDT"};
 const STABLE=new Set(["USDT","USDC"]);
 const _priceCache={},_inFlight={};
 
 async function getPrice(coin){
   if(STABLE.has(coin))return 1;
   const cacheKey=coin;
-  if(_priceCache[cacheKey]&&Date.now()-_priceCache[cacheKey].ts<120000)return _priceCache[cacheKey].v;
+  if(_priceCache[cacheKey]&&Date.now()-_priceCache[cacheKey].ts<300000)return _priceCache[cacheKey].v;
   if(_inFlight[cacheKey])return _inFlight[cacheKey];
   _inFlight[cacheKey]=_fetchPrice(coin).finally(()=>delete _inFlight[cacheKey]);
   return _inFlight[cacheKey];
 }
 async function _fetchPrice(coin){
   const geckoId=GECKO[coin];
-  if(BINANCE[coin]){try{const r=await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${BINANCE[coin]}`,{signal:AbortSignal.timeout(3000)});if(r.ok){const d=await r.json();const v=parseFloat(d.price||0);if(v>0){_priceCache[coin]={v,ts:Date.now()};return v;}}}catch{}}
-  if(geckoId){try{const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${geckoId}&vs_currencies=usd`,{signal:AbortSignal.timeout(4000)});if(r.ok){const d=await r.json(),v=d[geckoId]?.usd||null;if(v){_priceCache[coin]={v,ts:Date.now()};return v;}}}catch{}}
+  if(BINANCE[coin]){try{const r=await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${BINANCE[coin]}`,{signal:AbortSignal.timeout(5000)});if(r.ok){const d=await r.json();const v=parseFloat(d.price||0);if(v>0){_priceCache[coin]={v,ts:Date.now()};return v;}}}catch{}}
+  if(geckoId){for(let i=0;i<2;i++){try{const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${geckoId}&vs_currencies=usd`,{signal:AbortSignal.timeout(8000)});if(r.status===429){await new Promise(res=>setTimeout(res,2000*(i+1)));continue;}if(!r.ok){await new Promise(res=>setTimeout(res,1000*(i+1)));continue;}const d=await r.json(),v=d[geckoId]?.usd||null;if(v){_priceCache[coin]={v,ts:Date.now()};return v;}}catch{await new Promise(res=>setTimeout(res,1000*(i+1)));}} }
   if(_priceCache[coin])return _priceCache[coin].v;
   return null;
 }
@@ -422,11 +421,12 @@ async function _fetchPrice(coin){
 async function fetchFullPrice(coin){
   if(STABLE.has(coin))return{usd:1,cad:1.37,eur:0.93,usd_24h_change:0,usd_market_cap:0,usd_24h_vol:0};
   const cKey=coin+"_full";
-  if(_priceCache[cKey]&&Date.now()-_priceCache[cKey].ts<120000)return _priceCache[cKey].v;
+  if(_priceCache[cKey]&&Date.now()-_priceCache[cKey].ts<300000)return _priceCache[cKey].v;
   let d=null;
-  if(BINANCE[coin]){try{const r=await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${BINANCE[coin]}`,{signal:AbortSignal.timeout(3000)});if(r.ok){const j=await r.json();const usd=parseFloat(j.lastPrice||0);if(usd>0){d={usd,cad:usd*1.37,eur:usd*0.93,usd_24h_change:parseFloat(j.priceChangePercent||0),usd_market_cap:0,usd_24h_vol:parseFloat(j.quoteVolume||0)};_priceCache[cKey]={v:d,ts:Date.now()};_priceCache[coin]={v:usd,ts:Date.now()};return d;}}}catch{}}
-  if(!d&&GECKO[coin]){try{const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${GECKO[coin]}&vs_currencies=usd,cad,eur&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`,{signal:AbortSignal.timeout(4000)});if(r.ok){const j=await r.json();if(j[GECKO[coin]]?.usd){d=j[GECKO[coin]];_priceCache[cKey]={v:d,ts:Date.now()};_priceCache[coin]={v:d.usd,ts:Date.now()};return d;}}}catch{}}
-  if(_priceCache[cKey])return _priceCache[cKey].v;
+  if(BINANCE[coin]){try{const r=await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${BINANCE[coin]}`,{signal:AbortSignal.timeout(5000)});if(r.ok){const j=await r.json();const usd=parseFloat(j.lastPrice||0);if(usd>0){d={usd,cad:usd*1.37,eur:usd*0.93,usd_24h_change:parseFloat(j.priceChangePercent||0),usd_market_cap:0,usd_24h_vol:parseFloat(j.quoteVolume||0)};_priceCache[cKey]={v:d,ts:Date.now()};_priceCache[coin]={v:usd,ts:Date.now()};return d;}}}catch(e){console.log(`[price] Binance failed for ${coin}: ${e.message}`);}}
+  if(!d&&GECKO[coin]){const id=GECKO[coin];for(let i=0;i<3;i++){try{const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd,cad,eur&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`,{signal:AbortSignal.timeout(10000)});if(r.status===429){await new Promise(res=>setTimeout(res,3000*(i+1)));continue;}if(!r.ok){await new Promise(res=>setTimeout(res,1000*(i+1)));continue;}const j=await r.json();if(j[id]?.usd){d=j[id];_priceCache[cKey]={v:d,ts:Date.now()};_priceCache[coin]={v:d.usd,ts:Date.now()};return d;}}catch{await new Promise(res=>setTimeout(res,1000*(i+1)));}} }
+  if(!d){const KRAKEN={BTC:"XBTUSD",ETH:"ETHUSD",LTC:"LTCUSD",XRP:"XRPUSD",ADA:"ADAUSD",SOL:"SOLUSD",DOGE:"XDGUSD",DOT:"DOTUSD",LINK:"LINKUSD",ATOM:"ATOMUSD"};if(KRAKEN[coin]){try{const r=await fetch(`https://api.kraken.com/0/public/Ticker?pair=${KRAKEN[coin]}`,{signal:AbortSignal.timeout(8000)});if(r.ok){const j=await r.json();const pair=Object.values(j.result||{})[0];const usd=parseFloat(pair?.c?.[0]||0);if(usd>0){d={usd,cad:usd*1.37,eur:usd*0.93,usd_24h_change:0,usd_market_cap:0,usd_24h_vol:0};_priceCache[cKey]={v:d,ts:Date.now()};_priceCache[coin]={v:usd,ts:Date.now()};return d;}}}catch(e){console.log(`[price] Kraken failed for ${coin}: ${e.message}`);}}}
+  if(_priceCache[cKey]){console.log(`[price] returning stale cache for ${coin}`);return _priceCache[cKey].v;}
   return null;
 }
 
@@ -711,8 +711,7 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   if(mRoleId&&mRoleId!==CONFIG.STAFF_ROLE)perms.push({id:mRoleId,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]});
   for(const oid of CONFIG.OWNER_IDS)perms.push({id:oid,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]});
   let ch;
-  const _co={name:`${m.value}-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,4)}`,type:ChannelType.GuildText,permissionOverwrites:perms};if(CONFIG.TICKET_CATEGORY)_co.parent=CONFIG.TICKET_CATEGORY;
-  try{ch=await guild.channels.create(_co);}
+  try{ch=await guild.channels.create({name:`${m.value}-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,4)}`,type:ChannelType.GuildText,parent:CONFIG.TICKET_CATEGORY||null,permissionOverwrites:perms});}
   catch(err){await interaction.editReply({content:`Failed to create ticket: ${err.message}`,embeds:[],components:[]});return null;}
   const ticketEmbed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(`${m.label} Exchange`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
     .setDescription(`**Welcome, <@${user.id}>**\n\nYour ticket is open. A **${m.label}** handler has been notified.\n\u200b`)
@@ -786,8 +785,6 @@ async function sendReceiptDM(clientUserId,exchangerId,ticketData,tradeCount,tota
 
 async function completeTrade(interaction,ticket,tickets){
   const m=getMethod(ticket.method);
-  const _live=_mem.tickets&&_mem.tickets[interaction.channel.id];
-  if(_live&&(_live.status==="vouched"||_live.status==="closed")){try{await interaction.editReply({content:"❌ Already completed."});}catch{}return;}
   ticket.status="vouched";ticket.completedBy=ticket._overrideExchangerId||interaction.user.id;delete ticket._overrideExchangerId;ticket.completedAt=Date.now();ticket.amountUSD=parseFloat(ticket.amountUSD)||0;
   const ticketKey=interaction.channel.id;tickets[ticketKey]=ticket;
   _mem.tickets={...(_mem.tickets||{}),...tickets};save("tickets",_mem.tickets);
@@ -965,7 +962,7 @@ client.on(Events.MessageCreate,async message=>{
   const match=message.content.trim().match(/^\$([A-Za-z]{2,10})$/i);
   if(!match)return;
   const coin=match[1].toUpperCase();
-  if(!BINANCE[coin]&&!GECKO[coin]&&!STABLE.has(coin))return;
+  if(!COINS.includes(coin))return;
   const d=await fetchFullPrice(coin);
   if(!d){await message.reply(`\u274C Could not fetch **${coin}** price right now. Try again in a moment.`).catch(()=>{});return;}
   const fmt=n=>{if(n>=1)return n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});if(n>=0.01)return n.toFixed(4);return n.toFixed(8);};
@@ -1122,7 +1119,7 @@ client.on(Events.InteractionCreate,async interaction=>{
         if(!Object.keys(byUser).length)return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Client Leaderboard").setThumbnail(IMG.LOGO).setDescription("No completed trades on record yet.\n\nComplete a trade to appear here.\n\u200b").setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  \u2022  Leaderboard"}).setTimestamp()]});
         const ranked=Object.entries(byUser).sort((a,b)=>b[1]-a[1]).slice(0,10);
         const medals=["🥇","🥈","🥉"];
-        const lines=ranked.map(([uid,vol],i)=>{const t=getTier(vol);return `${medals[i]||`**${i+1}.**`}  <@${uid}>  \u2014  **${fmtUSD(vol)}** ${t.emoji}`;}).join("\n");
+        const lines=ranked.map(([uid,vol],i)=>`${medals[i]||`**${i+1}.**`}  <@${uid}>  \u2014  **${fmtUSD(vol)}**`).join("\n");
         const totalVol=ranked.reduce((s,[,v])=>s+v,0);
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF)
           .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
@@ -1165,7 +1162,6 @@ client.on(Events.InteractionCreate,async interaction=>{
         const vt=load("tickets");
         vt["manual_"+Date.now()]={userId:clientUser.id,userTag:clientUser.tag,method,direction:null,coin:null,amountUSD:amount,feeUSD:calcFee(amount,"send"),walletInfo:"manual",notes:"Manual vouch via /vouch",status:"vouched",completedBy:exchUser.id,completedAt:Date.now(),createdAt:Date.now()};
         _mem.tickets=vt;save("tickets",vt);
-        updateStatChannel(interaction.guild).catch(()=>{});
         const _refD=getReferrals();
         const _refByManual=_refD.referred[clientUser.id]||null;
         await postVouch(interaction.guild,{clientId:clientUser.id,exchangerId:exchUser.id,method,amountUSD:amount,direction:null,coin:null,message,rating,referredBy:_refByManual});
@@ -1188,7 +1184,7 @@ client.on(Events.InteractionCreate,async interaction=>{
       if(cmd==="referral"){
         await interaction.deferReply({ephemeral:true});
         const userId=interaction.user.id,ref=getReferrals();
-        if(ref.blacklist?.[userId]&&!CONFIG.OWNER_IDS.includes(userId))return interaction.editReply({content:"You are not eligible for the Konvert referral program.",ephemeral:true});
+        if(ref.blacklist?.[userId])return interaction.editReply({content:"You are not eligible for the Konvert referral program.",ephemeral:true});
         const pts=ref.points[userId]?.balance||0,dollarVal=pointsToDollars(pts),pending=ref.points[userId]?.pendingPayout||false;
         let existingInvite=null;
         const existing=ref.inviteCodes[userId];
@@ -1241,7 +1237,7 @@ client.on(Events.InteractionCreate,async interaction=>{
       if(cmd==="blacklistref"){
         await interaction.deferReply({ephemeral:true});
         const target=interaction.options.getUser("user"),reason=interaction.options.getString("reason")||"No reason given";
-        const ref=getReferrals();if(!ref.blacklist)ref.blacklist={};if(CONFIG.OWNER_IDS.includes(target.id))return interaction.editReply({content:"\u274C Owners cannot be blacklisted.",ephemeral:true});ref.blacklist[target.id]={reason,by:interaction.user.tag,at:Date.now()};saveReferrals(ref);
+        const ref=getReferrals();if(!ref.blacklist)ref.blacklist={};ref.blacklist[target.id]={reason,by:interaction.user.tag,at:Date.now()};saveReferrals(ref);
         try{const u=await client.users.fetch(target.id);await u.send({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert  \u00b7  Referral Program",iconURL:PTS_IMG}).setTitle("Referral Access Removed").setDescription(`Your access to the Konvert referral program has been removed by staff.\n**Reason:** ${reason}\n\nContact support if you believe this is a mistake.`).setFooter({text:"Konvert Referral Program"}).setTimestamp()]});}catch{}
         return interaction.editReply({content:`**${target.username}** has been blacklisted from the referral program. Reason: ${reason}`,ephemeral:true});
       }
@@ -1281,7 +1277,7 @@ client.on(Events.InteractionCreate,async interaction=>{
       if(cmd==="calc"){await interaction.deferReply({ephemeral:true});if(!CONFIG.RATES_CHANNEL)return interaction.editReply("RATES_CHANNEL_ID not configured.");const ch=interaction.guild.channels.cache.get(CONFIG.RATES_CHANNEL);if(!ch)return interaction.editReply("Rates channel not found.");const embed=await buildRatesEmbed();if(ratesMsgId){const msg=await ch.messages.fetch(ratesMsgId).catch(()=>null);if(msg){await msg.edit({embeds:[embed]});}else{const s=await ch.send({embeds:[embed]});ratesMsgId=s.id;}}else{const s=await ch.send({embeds:[embed]});ratesMsgId=s.id;}return interaction.editReply("Rates posted.");}
       if(cmd==="setwallet"){const coin=interaction.options.getString("coin").toUpperCase(),addr=interaction.options.getString("address");const w=load("wallets");w[coin]=addr;save("wallets",w);log(interaction.guild,`WALLET: ${interaction.user.tag} set ${coin} to ${addr}`);return interaction.reply({content:`**${coin}** deposit address updated to \`${addr}\``,ephemeral:true});}
       if(cmd==="announce"){const message=interaction.options.getString("message"),channelId=interaction.options.getString("channel"),ping=interaction.options.getString("ping")||"none",ch=interaction.guild.channels.cache.get(channelId);if(!ch)return interaction.reply({content:"Channel not found.",ephemeral:true});const pingStr=ping==="everyone"?"@everyone ":ping==="here"?"@here ":"";await ch.send({content:pingStr||undefined,embeds:[base("Konvert Announcement").setThumbnail(IMG.LOGO).setDescription(message).setFooter({text:`Announced by ${interaction.user.tag}  \u2022  Konvert`})]});return interaction.reply({content:"Announced.",ephemeral:true});}
-      if(cmd==="blacklist"){const target=interaction.options.getUser("user"),reason=interaction.options.getString("reason")||"No reason given";if(CONFIG.OWNER_IDS.includes(target.id))return interaction.reply({content:"\u274C Owners cannot be blacklisted.",ephemeral:true});const bl=load("blacklist");bl[target.id]={tag:target.tag,reason,by:interaction.user.tag,at:Date.now()};save("blacklist",bl);log(interaction.guild,`BLACKLIST: ${target.tag} -- ${reason}`);return interaction.reply({content:`**${target.tag}** blacklisted. Reason: ${reason}`,ephemeral:true});}
+      if(cmd==="blacklist"){const target=interaction.options.getUser("user"),reason=interaction.options.getString("reason")||"No reason given";const bl=load("blacklist");bl[target.id]={tag:target.tag,reason,by:interaction.user.tag,at:Date.now()};save("blacklist",bl);log(interaction.guild,`BLACKLIST: ${target.tag} -- ${reason}`);return interaction.reply({content:`**${target.tag}** blacklisted. Reason: ${reason}`,ephemeral:true});}
       if(cmd==="unblacklist"){const target=interaction.options.getUser("user");const bl=load("blacklist");delete bl[target.id];save("blacklist",bl);return interaction.reply({content:`**${target.tag}** removed from blacklist.`,ephemeral:true});}
       if(cmd==="closeticket"){
         const reason=interaction.options.getString("reason")||"Deal complete";
@@ -1368,16 +1364,15 @@ Deleting in 10 seconds.`)
         await interaction.channel.send({embeds:[embed]});
         return interaction.reply({content:"Terms of Service embed posted.",ephemeral:true});
       }
-      if(cmd==="postlinks"){const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Official Links for Konvert").setThumbnail(IMG.LOGO).setDescription("All official Konvert social media. Follow us for updates, announcements, and giveaways.\n\u200b").addFields({name:"\uD835\uDD4F  Twitter / X",value:"[**@KonvertNow**](https://x.com/konvertnow)",inline:true},{name:"\uD83D\uDCF8  Instagram",value:"[**@KonvertNow**](https://www.instagram.com/konvertnow/)",inline:true},{name:"\uD83D\uDCEC  Telegram",value:"[**@konvertz**](https://t.me/konvertz)",inline:true},{name:"\u26A0\uFE0F  Stay Safe",value:"Only interact with accounts listed here. Any other account claiming to be Konvert is an impersonator.",inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert  \u2022  Official Links  \u2022  Follow us for updates"});await interaction.channel.send({embeds:[embed]});return interaction.reply({content:"Official links embed posted.",ephemeral:true});}
+      if(cmd==="postlinks"){const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Official Links for Konvert").setThumbnail(IMG.LOGO).setDescription("All official Konvert social media. Follow us for updates, announcements, and giveaways.\n\u200b").addFields({name:"\uD835\uDD4F  Twitter / X",value:"[**@KonvertNow**](https://x.com/konvertnow)",inline:true},{name:"\uD83D\uDCF8  Instagram",value:"[**@KonvertNow**](https://www.instagram.com/konvertnow/)",inline:true},{name:"\u26A0\uFE0F  Stay Safe",value:"Only interact with accounts listed here. Any other account claiming to be Konvert is an impersonator.",inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert  \u2022  Official Links  \u2022  Follow us for updates"});await interaction.channel.send({embeds:[embed]});return interaction.reply({content:"Official links embed posted.",ephemeral:true});}
 
       if(cmd==="adjuststats"){
         const target=interaction.options.getUser("user"),amount=interaction.options.getNumber("amount"),reason=interaction.options.getString("reason")||"Staff adjustment";
         if(amount===0)return interaction.reply({content:"Amount cannot be 0.",ephemeral:true});
-        const tickets=JSON.parse(JSON.stringify(Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets")));
+        const tickets=Object.keys(_mem.tickets||{}).length>0?{..._mem.tickets}:load("tickets");
         const key=`adj_${target.id}_${Date.now()}`;
         tickets[key]={userId:target.id,userTag:target.tag||target.username,method:"adjustment",direction:null,coin:null,amountUSD:amount,feeUSD:0,walletInfo:"staff",notes:reason,status:"vouched",completedBy:interaction.user.id,completedAt:Date.now(),createdAt:Date.now()};
         _mem.tickets=tickets;save("tickets",tickets);
-        updateStatChannel(interaction.guild).catch(()=>{});
         const newVol=getUserVolume(target.id);await applyTierRole(interaction.guild,target.id,newVol);
         const tier=getTier(newVol);
         log(interaction.guild,`ADJUSTSTATS: ${interaction.user.tag} adjusted ${target.tag||target.username} by ${amount>0?"+":""}${fmtUSD(amount)} | New total: ${fmtUSD(newVol)} | Reason: ${reason}`);
@@ -1390,7 +1385,6 @@ Deleting in 10 seconds.`)
         let removed=0;
         for(const [key,t] of Object.entries(tickets)){if(t.userId===target.id&&t.method==="adjustment"){delete tickets[key];removed++;}}
         _mem.tickets=tickets;save("tickets",tickets);
-        updateStatChannel(interaction.guild).catch(()=>{});
         const newVol=getUserVolume(target.id);await applyTierRole(interaction.guild,target.id,newVol);
         return interaction.reply({content:`Stats reset for **${target.tag||target.username}**. Removed **${removed}** adjustment entr${removed!==1?"ies":"y"}. Volume is now **${fmtUSD(newVol)}** from real trades only.`,ephemeral:true});
       }
@@ -1400,7 +1394,6 @@ Deleting in 10 seconds.`)
         const _before=Object.keys(_mem.tickets||{}).length;
         _mem.tickets={};save("tickets",{});
         dbSet("konvert_tickets",{}).catch(()=>{});
-        updateStatChannel(interaction.guild).catch(()=>{});
         state.volumeAdj={};
         try{
           const allM=await interaction.guild.members.fetch();
@@ -1445,7 +1438,6 @@ Deleting in 10 seconds.`)
         for(const [key,t] of Object.entries(tickets)){if(t.userId===target.id){delete tickets[key];removed++;}}
         _mem.tickets=tickets;save("tickets",tickets);
         dbSet("konvert_tickets",tickets).catch(()=>{});
-        updateStatChannel(interaction.guild).catch(()=>{});
         const ref=getReferrals();delete ref.points[target.id];delete ref.referred[target.id];
         for(const [code,uid] of Object.entries(ref.invites||{})){if(uid===target.id)delete ref.invites[code];}
         delete ref.inviteCodes[target.id];saveReferrals(ref);
@@ -1632,7 +1624,7 @@ Deleting in 10 seconds.`)
         const methods={};done.forEach(t=>{if(t.method)methods[t.method]=(methods[t.method]||0)+1;});
         const topM=Object.entries(methods).sort((a,b)=>b[1]-a[1])[0];
         const ref=getReferrals();const refBy=ref.referred[target.id];const refPts=ref.points[target.id]?.balance||0;
-        const bl=load("blacklist");const isBlacklisted=!!bl[target.id]&&!CONFIG.OWNER_IDS.includes(target.id);
+        const bl=load("blacklist");const isBlacklisted=!!bl[target.id];
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(isBlacklisted?0xef4444:0x7C4DFF).setAuthor({name:"Konvert Exchange \u00b7 Client Info",iconURL:IMG.LOGO}).setTitle(target.username).setThumbnail(target.displayAvatarURL({size:256})).setDescription(`${tier.emoji} **${tier.label}**${vip?" \u26A1 VIP":""}${isBlacklisted?" \uD83D\uDEAB BLACKLISTED":""}\n\u200b`).addFields({name:"Volume",value:`**${fmtUSD(volume)}**`,inline:true},{name:"Exchanges",value:`**${done.length}**`,inline:true},{name:"Avg Deal",value:`**${avg>0?fmtUSD(avg):"\u2014"}**`,inline:true},{name:"Open Tickets",value:`**${open.length}**`,inline:true},{name:"Top Method",value:topM?`**${getMethod(topM[0])?.label||topM[0]}**`:"\u2014",inline:true},{name:"Last Exchange",value:last?.completedAt?`<t:${Math.floor(last.completedAt/1000)}:R>`:"\u2014",inline:true},{name:"Referred By",value:refBy?`<@${refBy}>`:"No referral",inline:true},{name:"Referral Points",value:`**${refPts} pts**`,inline:true},{name:"VIP",value:vip?"Active \u2014 0.75% off":"Not yet",inline:true}).setFooter({text:"Konvert Exchange"}).setTimestamp()]});
       }
 
@@ -1946,7 +1938,7 @@ This is active immediately and persists until revoked or the bot restarts.
     }
 
     if(interaction.isButton()){
-      if(interaction.customId==="btn_exchange_now"){const bl=load("blacklist");if(bl[interaction.user.id]&&!CONFIG.OWNER_IDS.includes(interaction.user.id))return interaction.reply({content:"You are blacklisted from Konvert.",ephemeral:true});return interaction.reply({embeds:[step1Embed()],components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("select_method").setPlaceholder("Select your payment method...").addOptions(METHODS.map(m=>new StringSelectMenuOptionBuilder().setLabel(m.label).setValue(m.value).setDescription(`Exchange crypto with ${m.label}`))))],ephemeral:true});}
+      if(interaction.customId==="btn_exchange_now"){const bl=load("blacklist");if(bl[interaction.user.id])return interaction.reply({content:"You are blacklisted from Konvert.",ephemeral:true});return interaction.reply({embeds:[step1Embed()],components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("select_method").setPlaceholder("Select your payment method...").addOptions(METHODS.map(m=>new StringSelectMenuOptionBuilder().setLabel(m.label).setValue(m.value).setDescription(`Exchange crypto with ${m.label}`))))],ephemeral:true});}
       if(interaction.customId==="btn_fee_calc"){const modal=new ModalBuilder().setCustomId("modal_fee").setTitle("Fee Calculator");modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("fee_amt").setLabel("Amount in USD").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 250").setRequired(true)));return interaction.showModal(modal);}
       if(interaction.customId==="btn_rates_quick"){await interaction.deferReply({ephemeral:true});try{return interaction.editReply({embeds:[await buildRatesEmbed()]});}catch(e){return interaction.editReply("Could not fetch rates right now. Try again in a moment.");}}
       if(interaction.customId==="btn_refresh_rates"){await interaction.deferUpdate();try{const _re=await buildRatesEmbed();return interaction.editReply({embeds:[_re],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_refresh_rates").setLabel("Refresh").setStyle(ButtonStyle.Secondary))]});}catch(e){return interaction.editReply({content:"Could not fetch rates right now."});} return;}
@@ -2013,25 +2005,20 @@ This is active immediately and persists until revoked or the bot restarts.
       }
 
       if(interaction.customId==="btn_done"){
-        const _raw=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
-        const tickets=JSON.parse(JSON.stringify(_raw));
+        const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
         const ticket=tickets[interaction.channel.id];
-        if(!ticket)return interaction.reply({content:"❌ No ticket found for this channel.",ephemeral:true});
-        if(ticket.status==="vouched"||ticket.status==="closed")return interaction.reply({content:"❌ This exchange is already complete.",ephemeral:true});
         const isOwner=CONFIG.OWNER_IDS.includes(interaction.user.id);
         const isStaff=CONFIG.STAFF_ROLE?interaction.member.roles.cache.has(CONFIG.STAFF_ROLE):false;
-        const mRoleId=ticket.method?CONFIG.ROLES[ticket.method]:null;
+        const mRoleId=ticket?.method?CONFIG.ROLES[ticket.method]:null;
         const isHandler=mRoleId?interaction.member.roles.cache.has(mRoleId):false;
         const isAnyExchanger=CONFIG.EXCHANGER_ROLE?interaction.member.roles.cache.has(CONFIG.EXCHANGER_ROLE):false;
-        const hasAnyExchangerRole=Object.values(CONFIG.ROLES).filter(Boolean).some(r=>interaction.member.roles.cache.has(r));
+        const allExchangerRoles=Object.values(CONFIG.ROLES).filter(Boolean);
+        const hasAnyExchangerRole=allExchangerRoles.some(r=>interaction.member.roles.cache.has(r));
         if(!isOwner&&!isStaff&&!isHandler&&!isAnyExchanger&&!hasAnyExchangerRole)return interaction.reply({content:"Only exchangers can mark an exchange complete.",ephemeral:true});
-        try{
-          await interaction.deferReply();
-          await completeTrade(interaction,ticket,tickets);
-        }catch(e){
-          console.error("[btn_done]",e.message);
-          try{if(interaction.deferred)await interaction.editReply({content:`❌ Error: ${e.message}`});else await interaction.reply({content:`❌ Error: ${e.message}`,ephemeral:true});}catch{}
-        }
+        if(ticket?.status==="vouched"||ticket?.status==="closed")return interaction.reply({content:"This exchange has already been completed.",ephemeral:true});
+        // Auto-complete — person who clicks IS the exchanger, no form needed
+        await interaction.deferReply();
+        await completeTrade(interaction,ticket,tickets);
         return;
       }
       if(interaction.customId==="btn_close"){
@@ -2088,7 +2075,7 @@ This is active immediately and persists until revoked or the bot restarts.
       if(interaction.customId==="modal_support"){
         const issue=interaction.fields.getTextInputValue("sup_issue"),tried=interaction.fields.getTextInputValue("sup_tried")||"Not specified",user=interaction.user,guild=interaction.guild;
         let ch;
-        try{const _so={name:`support-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,12)}`,type:ChannelType.GuildText,permissionOverwrites:[{id:guild.roles.everyone,deny:[PermissionFlagsBits.ViewChannel]},{id:user.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]},...(CONFIG.STAFF_ROLE?[{id:CONFIG.STAFF_ROLE,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]}]:[]),...CONFIG.OWNER_IDS.map(id=>({id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]}))]};if(CONFIG.TICKET_CATEGORY)_so.parent=CONFIG.TICKET_CATEGORY;ch=await guild.channels.create(_so);}catch{return interaction.reply({content:"Failed to create support channel.",ephemeral:true});}
+        try{ch=await guild.channels.create({name:`support-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,12)}`,type:ChannelType.GuildText,parent:CONFIG.TICKET_CATEGORY||null,permissionOverwrites:[{id:guild.roles.everyone,deny:[PermissionFlagsBits.ViewChannel]},{id:user.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]},...(CONFIG.STAFF_ROLE?[{id:CONFIG.STAFF_ROLE,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]}]:[]),...CONFIG.OWNER_IDS.map(id=>({id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]}))]});}catch{return interaction.reply({content:"Failed to create support channel.",ephemeral:true});}
         await ch.send({content:`<@${user.id}>`,embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert  \u2022  Support",iconURL:IMG.LOGO}).setTitle("Support Ticket").setThumbnail(IMG.LOGO).setDescription(`**Welcome, <@${user.id}>**\n\nStaff will assist you shortly. Please be patient.\n\u200b`).addFields({name:"Issue",value:issue,inline:false},{name:"What Tried",value:tried,inline:false}).setTimestamp().setFooter({text:"Konvert  \u2022  Support Ticket"})],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_close").setLabel("Close Ticket").setStyle(ButtonStyle.Danger))]});
         if(CONFIG.STAFF_ROLE)await ch.send(`<@&${CONFIG.STAFF_ROLE}> -- New support ticket from <@${user.id}>`);
         log(guild,`SUPPORT: #${ch.name} opened by ${user.tag}`);
@@ -2216,7 +2203,6 @@ async function checkAlerts(){
 
 const GENERAL_CHANNEL_ID="1454793385750560894";
 const STAT_CHANNEL_ID="1491619261821485056";
-const VOLUME_OVERRIDE=198000;
 
 async function updateStatChannel(guild){
   try{
@@ -2224,9 +2210,7 @@ async function updateStatChannel(guild){
     if(!ch)return;
     const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
     const totalVol=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0).reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
-    const adj=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method==="adjustment").reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
-    const vol=Math.max(VOLUME_OVERRIDE,totalVol+adj);
-    const formatted=vol>=1000000?`$${(vol/1000000).toFixed(2)}M`:(vol>=1000?`$${Math.round(vol/1000)}K`:`$${Math.round(vol).toLocaleString("en-US")}`);
+    const formatted=totalVol>=1000000?`$${(totalVol/1000000).toFixed(2)}M`:(totalVol>=1000?`$${Math.round(totalVol/1000)}K`:`$${Math.round(totalVol).toLocaleString("en-US")}`);
     await ch.setName(`Total Exchanged: ${formatted}`).catch(()=>{});
     console.log(`[statChannel] updated to ${formatted}`);
   }catch(e){console.log("[statChannel]",e.message);}
@@ -2418,9 +2402,6 @@ client.once(Events.ClientReady,async()=>{
     setTimeout(()=>updateLiveLeaderboard(guild).catch(()=>{}),20*1000);
     // Update stat channel on startup
     setTimeout(()=>updateStatChannel(guild).catch(()=>{}),15*1000);
-    const _blB=load("blacklist");let _blC=false;for(const o of CONFIG.OWNER_IDS){if(_blB[o]){delete _blB[o];_blC=true;}}if(_blC)save("blacklist",_blB);
-    const _rB=getReferrals();let _rC=false;if(_rB.blacklist){for(const o of CONFIG.OWNER_IDS){if(_rB.blacklist[o]){delete _rB.blacklist[o];_rC=true;}}}if(_rC)saveReferrals(_rB);
-    setTimeout(async()=>{try{const tops=["BTC","ETH","SOL","XRP","BNB","ADA","DOGE","AVAX","LINK","DOT","MATIC","ATOM","NEAR","LTC","TRX","ARB","OP","SUI","APT","INJ","PEPE","WIF","BONK","TIA"];const syms=tops.filter(c=>BINANCE[c]).map(c=>BINANCE[c]);const r=await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${JSON.stringify(syms)}`,{signal:AbortSignal.timeout(5000)});if(r.ok){const data=await r.json();const sm=Object.fromEntries(tops.filter(c=>BINANCE[c]).map(c=>[BINANCE[c],c]));for(const j of data){const coin=sm[j.symbol];if(!coin)continue;const usd=parseFloat(j.lastPrice||0);if(usd>0){_priceCache[coin]={v:usd,ts:Date.now()};_priceCache[coin+"_full"]={v:{usd,cad:usd*1.37,eur:usd*0.93,usd_24h_change:parseFloat(j.priceChangePercent||0),usd_market_cap:0,usd_24h_vol:parseFloat(j.quoteVolume||0)},ts:Date.now()};}}console.log("[priceWarm] done");}}catch(e){console.log("[priceWarm]",e.message);}},5000);
     scheduleWeeklyReferralSummary(guild);
     scheduleDailyFact(guild);
     scheduleDailyDigest(guild);
