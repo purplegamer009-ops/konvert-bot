@@ -2226,7 +2226,7 @@ async function updateStatChannel(guild){
     const traded=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0).reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
     const adj=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method==="adjustment").reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
     const vol=Math.max(VOLUME_OVERRIDE,traded+adj);
-    const formatted=vol>=1000000?`$${(vol/1000000).toFixed(2)}M`:vol>=1000?`$${(vol/1000).toFixed(1)}K`:`$${Math.round(vol).toLocaleString("en-US")}`;
+    const formatted=vol>=1000000?`$${(vol/1000000).toFixed(1)}M`:vol>=1000?`$${Math.round(vol/1000)}K`:`$${Math.round(vol).toLocaleString("en-US")}`;
     const name=`Total Exchanged: ${formatted}`;
     if(ch.name===name){console.log("[statChannel] no change");return;}
     await ch.setName(name);
