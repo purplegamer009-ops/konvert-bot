@@ -200,8 +200,8 @@ const METHODS=[
 ];
 const getMethod=v=>METHODS.find(m=>m.value===v)||null;
 
-const COINS=["BTC","ETH","SOL","LTC","USDT","USDC","XRP","BNB","ADA","DOGE","MATIC","AVAX","DOT","LINK","TRX","SHIB","UNI","ATOM","FTM","NEAR"];
-const GECKO={BTC:"bitcoin",ETH:"ethereum",SOL:"solana",LTC:"litecoin",USDT:"tether",USDC:"usd-coin",XRP:"ripple",BNB:"binancecoin",ADA:"cardano",DOGE:"dogecoin",MATIC:"matic-network",AVAX:"avalanche-2",DOT:"polkadot",LINK:"chainlink",TRX:"tron",SHIB:"shiba-inu",UNI:"uniswap",ATOM:"cosmos",FTM:"fantom",NEAR:"near"};
+const COINS=["BTC","ETH","SOL","LTC","USDT","USDC","XRP","BNB","ADA","DOGE","MATIC","AVAX","DOT","LINK","TRX","SHIB","UNI","ATOM","FTM","NEAR","ARB","OP","SUI","APT","INJ","TIA","SEI","PYTH","JTO","BONK","WIF","PEPE","FLOKI","TURBO","GALA","IMX","SAND","MANA","ENJ","AXS","CHZ","SUPER","GMT","GST","MAGIC","GRT","FIL","ICP","HBAR","VET","EOS","XLM","ALGO","EGLD","THETA","FTT","CAKE","AAVE","COMP","MKR","SNX","YFI","CRV","BAL","1INCH","SUSHI","ZRX","LRC","OMG","ZEC","XMR","DASH","BCH","BSV","BTG","DGB","RVN","SC","ZIL","IOTA","ICX","ONT","QTUM","WAVES","ZEN","NANO","XEM","STX","MINA","KAVA","BAND","RSR","OCEAN","ANKR","CKB","CELR","ONE","ROSE","CELO","SKL","SRM","RAY","OKB","HT","CRO","KCS","MX","WOO","LUNA","LUNC","UST","DAI","BUSD","TUSD","USDP","FRAX","PAXG","WBTC","RETH","STETH","CBETH","RPL","LDO","FXS","CVX","BAT","ZRX","ENS","UMA","KEEP","NMR","BADGER","ALPHA","PERP","DYDX","GMX","RDNT","PENDLE","JUP","PYUSD","RNDR","BLUR","APE","LOOKS","X2Y2","RARE","NFT"];
+const GECKO={BTC:"bitcoin",ETH:"ethereum",SOL:"solana",LTC:"litecoin",USDT:"tether",USDC:"usd-coin",XRP:"ripple",BNB:"binancecoin",ADA:"cardano",DOGE:"dogecoin",MATIC:"matic-network",AVAX:"avalanche-2",DOT:"polkadot",LINK:"chainlink",TRX:"tron",SHIB:"shiba-inu",UNI:"uniswap",ATOM:"cosmos",FTM:"fantom",NEAR:"near",ARB:"arbitrum",OP:"optimism",SUI:"sui",APT:"aptos",INJ:"injective-protocol",TIA:"celestia",SEI:"sei-network",PYTH:"pyth-network",JTO:"jito-governance-token",BONK:"bonk",WIF:"dogwifcoin",PEPE:"pepe",FLOKI:"floki",TURBO:"turbo",GALA:"gala",IMX:"immutable-x",SAND:"the-sandbox",MANA:"decentraland",ENJ:"enjincoin",AXS:"axie-infinity",CHZ:"chiliz",GMT:"stepn",MAGIC:"magic",GRT:"the-graph",FIL:"filecoin",ICP:"internet-computer",HBAR:"hedera-hashgraph",VET:"vechain",EOS:"eos",XLM:"stellar",ALGO:"algorand",EGLD:"elrond-erd-2",THETA:"theta-token",CAKE:"pancakeswap-token",AAVE:"aave",COMP:"compound-governance-token",MKR:"maker",SNX:"havven",YFI:"yearn-finance",CRV:"curve-dao-token",BAL:"balancer",SUSHI:"sushi",ZRX:"0x",LRC:"loopring",ZEC:"zcash",XMR:"monero",DASH:"dash",BCH:"bitcoin-cash",BSV:"bitcoin-sv",DGB:"digibyte",ZEN:"horizen",NANO:"nano",STX:"blockstack",MINA:"mina-protocol",KAVA:"kava",BAND:"band-protocol",OCEAN:"ocean-protocol",ANKR:"ankr",ONE:"harmony",ROSE:"oasis-network",CELO:"celo",SKL:"skale",LUNA:"terra-luna-2",DAI:"dai",PAXG:"pax-gold",WBTC:"wrapped-bitcoin",LDO:"lido-dao",FXS:"frax-share",CVX:"convex-finance",BAT:"basic-attention-token",ENS:"ethereum-name-service",UMA:"uma",DYDX:"dydx",GMX:"gmx",PENDLE:"pendle",JUP:"jupiter",RNDR:"render-token",BLUR:"blur",APE:"apecoin",OKB:"okb",CRO:"crypto-com-chain",WOO:"woo-network",RDNT:"radiant-capital",SUPER:"superfarm",GST:"green-satoshi-token",RAY:"raydium",PERP:"perpetual-protocol",NFT:"apenft"};
 const COIN_LOGO={BTC:"https://assets.coingecko.com/coins/images/1/large/bitcoin.png",ETH:"https://assets.coingecko.com/coins/images/279/large/ethereum.png",SOL:"https://assets.coingecko.com/coins/images/4128/large/solana.png",LTC:"https://assets.coingecko.com/coins/images/2/large/litecoin.png",USDT:"https://assets.coingecko.com/coins/images/325/large/Tether.png",USDC:"https://assets.coingecko.com/coins/images/6319/large/usdc.png",XRP:"https://assets.coingecko.com/coins/images/44/large/xrp-symbol-white-128.png",BNB:"https://assets.coingecko.com/coins/images/825/large/binance-coin-logo.png",ADA:"https://assets.coingecko.com/coins/images/975/large/cardano.png",DOGE:"https://assets.coingecko.com/coins/images/5/large/dogecoin.png"};
 
 // ── PERSISTENT STORAGE ──────────────────────────────────────────────────────
@@ -399,22 +399,25 @@ function isVipVolume(vol){return vol>=7000;}
 const base=title=>new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(title).setTimestamp();
 function log(guild,msg){if(!CONFIG.LOG_CHANNEL||!guild)return;const ch=guild.channels.cache.get(CONFIG.LOG_CHANNEL);if(ch)ch.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setDescription("```"+msg+"```").setTimestamp()]}).catch(()=>{});}
 
-const BINANCE={BTC:"BTCUSDT",ETH:"ETHUSDT",SOL:"SOLUSDT",LTC:"LTCUSDT",XRP:"XRPUSDT",BNB:"BNBUSDT",ADA:"ADAUSDT",DOGE:"DOGEUSDT",MATIC:"MATICUSDT",AVAX:"AVAXUSDT",DOT:"DOTUSDT",LINK:"LINKUSDT",TRX:"TRXUSDT",UNI:"UNIUSDT",ATOM:"ATOMUSDT",NEAR:"NEARUSDT",SHIB:"SHIBUSDT"};
+const BINANCE={BTC:"BTCUSDT",ETH:"ETHUSDT",SOL:"SOLUSDT",LTC:"LTCUSDT",XRP:"XRPUSDT",BNB:"BNBUSDT",ADA:"ADAUSDT",DOGE:"DOGEUSDT",MATIC:"MATICUSDT",AVAX:"AVAXUSDT",DOT:"DOTUSDT",LINK:"LINKUSDT",TRX:"TRXUSDT",UNI:"UNIUSDT",ATOM:"ATOMUSDT",NEAR:"NEARUSDT",SHIB:"SHIBUSDT",ARB:"ARBUSDT",OP:"OPUSDT",SUI:"SUIUSDT",APT:"APTUSDT",INJ:"INJUSDT",TIA:"TIAUSDT",SEI:"SEIUSDT",BONK:"BONKUSDT",WIF:"WIFUSDT",PEPE:"PEPEUSDT",FLOKI:"FLOKIUSDT",GALA:"GALAUSDT",IMX:"IMXUSDT",SAND:"SANDUSDT",MANA:"MANAUSDT",ENJ:"ENJUSDT",AXS:"AXSUSDT",CHZ:"CHZUSDT",GMT:"GMTUSDT",GRT:"GRTUSDT",FIL:"FILUSDT",ICP:"ICPUSDT",HBAR:"HBARUSDT",VET:"VETUSDT",EOS:"EOSUSDT",XLM:"XLMUSDT",ALGO:"ALGOUSDT",THETA:"THETAUSDT",CAKE:"CAKEUSDT",AAVE:"AAVEUSDT",COMP:"COMPUSDT",MKR:"MKRUSDT",SNX:"SNXUSDT",YFI:"YFIUSDT",CRV:"CRVUSDT",BAL:"BALUSDT",SUSHI:"SUSHIUSDT",ZRX:"ZRXUSDT",LRC:"LRCUSDT",ZEC:"ZECUSDT",XMR:"XMRUSDT",DASH:"DASHUSDT",BCH:"BCHUSDT",DGB:"DGBUSDT",STX:"STXUSDT",KAVA:"KAVAUSDT",BAND:"BANDUSDT",OCEAN:"OCEANUSDT",ANKR:"ANKRUSDT",ONE:"ONEUSDT",ROSE:"ROSEUSDT",CELO:"CELOUSDT",SKL:"SKLUSDT",DAI:"DAIUSDT",WBTC:"WBTCUSDT",LDO:"LDOUSDT",FXS:"FXSUSDT",CVX:"CVXUSDT",BAT:"BATUSDT",ENS:"ENSUSDT",DYDX:"DYDXUSDT",GMX:"GMXUSDT",PENDLE:"PENDLEUSDT",RNDR:"RNDRUSDT",BLUR:"BLURUSDT",APE:"APEUSDT",OKB:"OKBUSDT",WOO:"WOOUSDT",SUPER:"SUPERUSDT",RAY:"RAYUSDT",PERP:"PERPUSDT",JUP:"JUPUSDT",CRO:"CROUSDT",TURBO:"TURBOUSDT",MAGIC:"MAGICUSDT"};
 const STABLE=new Set(["USDT","USDC"]);
 const _priceCache={},_inFlight={};
 
 async function getPrice(coin){
   if(STABLE.has(coin))return 1;
   const cacheKey=coin;
-  if(_priceCache[cacheKey]&&Date.now()-_priceCache[cacheKey].ts<300000)return _priceCache[cacheKey].v;
+  if(_priceCache[cacheKey]&&Date.now()-_priceCache[cacheKey].ts<120000)return _priceCache[cacheKey].v;
   if(_inFlight[cacheKey])return _inFlight[cacheKey];
   _inFlight[cacheKey]=_fetchPrice(coin).finally(()=>delete _inFlight[cacheKey]);
   return _inFlight[cacheKey];
 }
 async function _fetchPrice(coin){
   const geckoId=GECKO[coin];
-  if(BINANCE[coin]){try{const r=await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${BINANCE[coin]}`,{signal:AbortSignal.timeout(5000)});if(r.ok){const d=await r.json();const v=parseFloat(d.price||0);if(v>0){_priceCache[coin]={v,ts:Date.now()};return v;}}}catch{}}
-  if(geckoId){for(let i=0;i<2;i++){try{const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${geckoId}&vs_currencies=usd`,{signal:AbortSignal.timeout(8000)});if(r.status===429){await new Promise(res=>setTimeout(res,2000*(i+1)));continue;}if(!r.ok){await new Promise(res=>setTimeout(res,1000*(i+1)));continue;}const d=await r.json(),v=d[geckoId]?.usd||null;if(v){_priceCache[coin]={v,ts:Date.now()};return v;}}catch{await new Promise(res=>setTimeout(res,1000*(i+1)));}} }
+  // 1. Binance — fastest, always try first
+  if(BINANCE[coin]){try{const r=await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${BINANCE[coin]}`,{signal:AbortSignal.timeout(3000)});if(r.ok){const d=await r.json();const v=parseFloat(d.price||0);if(v>0){_priceCache[coin]={v,ts:Date.now()};return v;}}}catch{}}
+  // 2. CoinGecko — single attempt, no retries/sleeps
+  if(geckoId){try{const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${geckoId}&vs_currencies=usd`,{signal:AbortSignal.timeout(4000)});if(r.ok){const d=await r.json(),v=d[geckoId]?.usd||null;if(v){_priceCache[coin]={v,ts:Date.now()};return v;}}}catch{}}
+  // 3. Stale cache as last resort
   if(_priceCache[coin])return _priceCache[coin].v;
   return null;
 }
@@ -422,12 +425,14 @@ async function _fetchPrice(coin){
 async function fetchFullPrice(coin){
   if(STABLE.has(coin))return{usd:1,cad:1.37,eur:0.93,usd_24h_change:0,usd_market_cap:0,usd_24h_vol:0};
   const cKey=coin+"_full";
-  if(_priceCache[cKey]&&Date.now()-_priceCache[cKey].ts<300000)return _priceCache[cKey].v;
+  if(_priceCache[cKey]&&Date.now()-_priceCache[cKey].ts<120000)return _priceCache[cKey].v;
   let d=null;
-  if(BINANCE[coin]){try{const r=await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${BINANCE[coin]}`,{signal:AbortSignal.timeout(5000)});if(r.ok){const j=await r.json();const usd=parseFloat(j.lastPrice||0);if(usd>0){d={usd,cad:usd*1.37,eur:usd*0.93,usd_24h_change:parseFloat(j.priceChangePercent||0),usd_market_cap:0,usd_24h_vol:parseFloat(j.quoteVolume||0)};_priceCache[cKey]={v:d,ts:Date.now()};_priceCache[coin]={v:usd,ts:Date.now()};return d;}}}catch(e){console.log(`[price] Binance failed for ${coin}: ${e.message}`);}}
-  if(!d&&GECKO[coin]){const id=GECKO[coin];for(let i=0;i<3;i++){try{const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd,cad,eur&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`,{signal:AbortSignal.timeout(10000)});if(r.status===429){await new Promise(res=>setTimeout(res,3000*(i+1)));continue;}if(!r.ok){await new Promise(res=>setTimeout(res,1000*(i+1)));continue;}const j=await r.json();if(j[id]?.usd){d=j[id];_priceCache[cKey]={v:d,ts:Date.now()};_priceCache[coin]={v:d.usd,ts:Date.now()};return d;}}catch{await new Promise(res=>setTimeout(res,1000*(i+1)));}} }
-  if(!d){const KRAKEN={BTC:"XBTUSD",ETH:"ETHUSD",LTC:"LTCUSD",XRP:"XRPUSD",ADA:"ADAUSD",SOL:"SOLUSD",DOGE:"XDGUSD",DOT:"DOTUSD",LINK:"LINKUSD",ATOM:"ATOMUSD"};if(KRAKEN[coin]){try{const r=await fetch(`https://api.kraken.com/0/public/Ticker?pair=${KRAKEN[coin]}`,{signal:AbortSignal.timeout(8000)});if(r.ok){const j=await r.json();const pair=Object.values(j.result||{})[0];const usd=parseFloat(pair?.c?.[0]||0);if(usd>0){d={usd,cad:usd*1.37,eur:usd*0.93,usd_24h_change:0,usd_market_cap:0,usd_24h_vol:0};_priceCache[cKey]={v:d,ts:Date.now()};_priceCache[coin]={v:usd,ts:Date.now()};return d;}}}catch(e){console.log(`[price] Kraken failed for ${coin}: ${e.message}`);}}}
-  if(_priceCache[cKey]){console.log(`[price] returning stale cache for ${coin}`);return _priceCache[cKey].v;}
+  // 1. Binance — instant, most coins covered
+  if(BINANCE[coin]){try{const r=await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${BINANCE[coin]}`,{signal:AbortSignal.timeout(3000)});if(r.ok){const j=await r.json();const usd=parseFloat(j.lastPrice||0);if(usd>0){d={usd,cad:usd*1.37,eur:usd*0.93,usd_24h_change:parseFloat(j.priceChangePercent||0),usd_market_cap:0,usd_24h_vol:parseFloat(j.quoteVolume||0)};_priceCache[cKey]={v:d,ts:Date.now()};_priceCache[coin]={v:usd,ts:Date.now()};return d;}}}catch{}}
+  // 2. CoinGecko — single attempt, no retries
+  if(!d&&GECKO[coin]){try{const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${GECKO[coin]}&vs_currencies=usd,cad,eur&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`,{signal:AbortSignal.timeout(4000)});if(r.ok){const j=await r.json();if(j[GECKO[coin]]?.usd){d=j[GECKO[coin]];_priceCache[cKey]={v:d,ts:Date.now()};_priceCache[coin]={v:d.usd,ts:Date.now()};return d;}}}catch{}}
+  // 3. Stale cache
+  if(_priceCache[cKey])return _priceCache[cKey].v;
   return null;
 }
 
@@ -965,7 +970,7 @@ client.on(Events.MessageCreate,async message=>{
   const match=message.content.trim().match(/^\$([A-Za-z]{2,10})$/i);
   if(!match)return;
   const coin=match[1].toUpperCase();
-  if(!COINS.includes(coin))return;
+  if(!BINANCE[coin]&&!GECKO[coin]&&!STABLE.has(coin))return;
   const d=await fetchFullPrice(coin);
   if(!d){await message.reply(`\u274C Could not fetch **${coin}** price right now. Try again in a moment.`).catch(()=>{});return;}
   const fmt=n=>{if(n>=1)return n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});if(n>=0.01)return n.toFixed(4);return n.toFixed(8);};
@@ -2413,6 +2418,15 @@ client.once(Events.ClientReady,async()=>{
     const refData=getReferrals();let refBLChanged=false;
     if(refData.blacklist){for(const oid of CONFIG.OWNER_IDS){if(refData.blacklist[oid]){delete refData.blacklist[oid];refBLChanged=true;console.log(`[startup] removed owner ${oid} from referral blacklist`);}}}
     if(refBLChanged)saveReferrals(refData);
+    // Pre-warm price cache for top coins so first lookups are instant
+    setTimeout(async()=>{
+      const topCoins=["BTC","ETH","SOL","XRP","BNB","ADA","DOGE","AVAX","LINK","DOT","MATIC","UNI","ATOM","NEAR","LTC","TRX","ARB","OP","SUI","APT","INJ","PEPE","WIF","BONK","TIA"];
+      try{
+        const symbols=topCoins.filter(c=>BINANCE[c]).map(c=>BINANCE[c]);
+        const r=await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${JSON.stringify(symbols)}`,{signal:AbortSignal.timeout(5000)});
+        if(r.ok){const data=await r.json();const symMap=Object.fromEntries(topCoins.filter(c=>BINANCE[c]).map(c=>[BINANCE[c],c]));for(const j of data){const coin=symMap[j.symbol];if(!coin)continue;const usd=parseFloat(j.lastPrice||0);if(usd>0){const cKey=coin+"_full";const d={usd,cad:usd*1.37,eur:usd*0.93,usd_24h_change:parseFloat(j.priceChangePercent||0),usd_market_cap:0,usd_24h_vol:parseFloat(j.quoteVolume||0)};_priceCache[coin]={v:usd,ts:Date.now()};_priceCache[cKey]={v:d,ts:Date.now()};}}console.log("[priceWarm] pre-warmed "+Object.keys(_priceCache).length+" coins");}
+      }catch(e){console.log("[priceWarm] failed:",e.message);}
+    },5000);
     scheduleWeeklyReferralSummary(guild);
     scheduleDailyFact(guild);
     scheduleDailyDigest(guild);
