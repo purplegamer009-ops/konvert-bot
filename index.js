@@ -114,7 +114,7 @@ const CONFIG = {
 };
 
 const TIERS = [
-  { min:20000, label:"Opulent Client",  role:"1514890647436394496", emoji:"\u26F5" },
+  { min:20000, label:"Opulent Client",  role:"1514890647436394496", emoji:"\uD83D\uDEE5\uFE0F" },
   { min:10000, label:"Whale Client",    role:"1483159341899976905", emoji:"\uD83D\uDC0B" },
   { min:7000,  label:"Godly Client",   role:"1483159233049657550", emoji:"\u26A1"        },
   { min:5000,  label:"Ethereal Client",role:"1483159184651325622", emoji:"\u2728"        },
@@ -1185,7 +1185,7 @@ client.on(Events.InteractionCreate,async interaction=>{
       if(cmd==="referral"){
         await interaction.deferReply({ephemeral:true});
         const userId=interaction.user.id,ref=getReferrals();
-        if(ref.blacklist?.[userId])return interaction.editReply({content:"You are not eligible for the Konvert referral program.",ephemeral:true});
+        if(ref.blacklist?.[userId]&&!CONFIG.OWNER_IDS.includes(userId))return interaction.editReply({content:"You are not eligible for the Konvert referral program.",ephemeral:true});
         const pts=ref.points[userId]?.balance||0,dollarVal=pointsToDollars(pts),pending=ref.points[userId]?.pendingPayout||false;
         let existingInvite=null;
         const existing=ref.inviteCodes[userId];
@@ -1238,7 +1238,7 @@ client.on(Events.InteractionCreate,async interaction=>{
       if(cmd==="blacklistref"){
         await interaction.deferReply({ephemeral:true});
         const target=interaction.options.getUser("user"),reason=interaction.options.getString("reason")||"No reason given";
-        const ref=getReferrals();if(!ref.blacklist)ref.blacklist={};ref.blacklist[target.id]={reason,by:interaction.user.tag,at:Date.now()};saveReferrals(ref);
+        const ref=getReferrals();if(!ref.blacklist)ref.blacklist={};if(CONFIG.OWNER_IDS.includes(target.id))return interaction.editReply({content:"❌ Owners cannot be blacklisted.",ephemeral:true});ref.blacklist[target.id]={reason,by:interaction.user.tag,at:Date.now()};saveReferrals(ref);
         try{const u=await client.users.fetch(target.id);await u.send({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert  \u00b7  Referral Program",iconURL:PTS_IMG}).setTitle("Referral Access Removed").setDescription(`Your access to the Konvert referral program has been removed by staff.\n**Reason:** ${reason}\n\nContact support if you believe this is a mistake.`).setFooter({text:"Konvert Referral Program"}).setTimestamp()]});}catch{}
         return interaction.editReply({content:`**${target.username}** has been blacklisted from the referral program. Reason: ${reason}`,ephemeral:true});
       }
@@ -1278,7 +1278,7 @@ client.on(Events.InteractionCreate,async interaction=>{
       if(cmd==="calc"){await interaction.deferReply({ephemeral:true});if(!CONFIG.RATES_CHANNEL)return interaction.editReply("RATES_CHANNEL_ID not configured.");const ch=interaction.guild.channels.cache.get(CONFIG.RATES_CHANNEL);if(!ch)return interaction.editReply("Rates channel not found.");const embed=await buildRatesEmbed();if(ratesMsgId){const msg=await ch.messages.fetch(ratesMsgId).catch(()=>null);if(msg){await msg.edit({embeds:[embed]});}else{const s=await ch.send({embeds:[embed]});ratesMsgId=s.id;}}else{const s=await ch.send({embeds:[embed]});ratesMsgId=s.id;}return interaction.editReply("Rates posted.");}
       if(cmd==="setwallet"){const coin=interaction.options.getString("coin").toUpperCase(),addr=interaction.options.getString("address");const w=load("wallets");w[coin]=addr;save("wallets",w);log(interaction.guild,`WALLET: ${interaction.user.tag} set ${coin} to ${addr}`);return interaction.reply({content:`**${coin}** deposit address updated to \`${addr}\``,ephemeral:true});}
       if(cmd==="announce"){const message=interaction.options.getString("message"),channelId=interaction.options.getString("channel"),ping=interaction.options.getString("ping")||"none",ch=interaction.guild.channels.cache.get(channelId);if(!ch)return interaction.reply({content:"Channel not found.",ephemeral:true});const pingStr=ping==="everyone"?"@everyone ":ping==="here"?"@here ":"";await ch.send({content:pingStr||undefined,embeds:[base("Konvert Announcement").setThumbnail(IMG.LOGO).setDescription(message).setFooter({text:`Announced by ${interaction.user.tag}  \u2022  Konvert`})]});return interaction.reply({content:"Announced.",ephemeral:true});}
-      if(cmd==="blacklist"){const target=interaction.options.getUser("user"),reason=interaction.options.getString("reason")||"No reason given";const bl=load("blacklist");bl[target.id]={tag:target.tag,reason,by:interaction.user.tag,at:Date.now()};save("blacklist",bl);log(interaction.guild,`BLACKLIST: ${target.tag} -- ${reason}`);return interaction.reply({content:`**${target.tag}** blacklisted. Reason: ${reason}`,ephemeral:true});}
+      if(cmd==="blacklist"){const target=interaction.options.getUser("user"),reason=interaction.options.getString("reason")||"No reason given";if(CONFIG.OWNER_IDS.includes(target.id))return interaction.reply({content:"❌ Owners cannot be blacklisted.",ephemeral:true});const bl=load("blacklist");bl[target.id]={tag:target.tag,reason,by:interaction.user.tag,at:Date.now()};save("blacklist",bl);log(interaction.guild,`BLACKLIST: ${target.tag} -- ${reason}`);return interaction.reply({content:`**${target.tag}** blacklisted. Reason: ${reason}`,ephemeral:true});}
       if(cmd==="unblacklist"){const target=interaction.options.getUser("user");const bl=load("blacklist");delete bl[target.id];save("blacklist",bl);return interaction.reply({content:`**${target.tag}** removed from blacklist.`,ephemeral:true});}
       if(cmd==="closeticket"){
         const reason=interaction.options.getString("reason")||"Deal complete";
@@ -1625,7 +1625,7 @@ Deleting in 10 seconds.`)
         const methods={};done.forEach(t=>{if(t.method)methods[t.method]=(methods[t.method]||0)+1;});
         const topM=Object.entries(methods).sort((a,b)=>b[1]-a[1])[0];
         const ref=getReferrals();const refBy=ref.referred[target.id];const refPts=ref.points[target.id]?.balance||0;
-        const bl=load("blacklist");const isBlacklisted=!!bl[target.id];
+        const bl=load("blacklist");const isBlacklisted=!!bl[target.id]&&!CONFIG.OWNER_IDS.includes(target.id);
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(isBlacklisted?0xef4444:0x7C4DFF).setAuthor({name:"Konvert Exchange \u00b7 Client Info",iconURL:IMG.LOGO}).setTitle(target.username).setThumbnail(target.displayAvatarURL({size:256})).setDescription(`${tier.emoji} **${tier.label}**${vip?" \u26A1 VIP":""}${isBlacklisted?" \uD83D\uDEAB BLACKLISTED":""}\n\u200b`).addFields({name:"Volume",value:`**${fmtUSD(volume)}**`,inline:true},{name:"Exchanges",value:`**${done.length}**`,inline:true},{name:"Avg Deal",value:`**${avg>0?fmtUSD(avg):"\u2014"}**`,inline:true},{name:"Open Tickets",value:`**${open.length}**`,inline:true},{name:"Top Method",value:topM?`**${getMethod(topM[0])?.label||topM[0]}**`:"\u2014",inline:true},{name:"Last Exchange",value:last?.completedAt?`<t:${Math.floor(last.completedAt/1000)}:R>`:"\u2014",inline:true},{name:"Referred By",value:refBy?`<@${refBy}>`:"No referral",inline:true},{name:"Referral Points",value:`**${refPts} pts**`,inline:true},{name:"VIP",value:vip?"Active \u2014 0.75% off":"Not yet",inline:true}).setFooter({text:"Konvert Exchange"}).setTimestamp()]});
       }
 
@@ -1939,7 +1939,7 @@ This is active immediately and persists until revoked or the bot restarts.
     }
 
     if(interaction.isButton()){
-      if(interaction.customId==="btn_exchange_now"){const bl=load("blacklist");if(bl[interaction.user.id])return interaction.reply({content:"You are blacklisted from Konvert.",ephemeral:true});return interaction.reply({embeds:[step1Embed()],components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("select_method").setPlaceholder("Select your payment method...").addOptions(METHODS.map(m=>new StringSelectMenuOptionBuilder().setLabel(m.label).setValue(m.value).setDescription(`Exchange crypto with ${m.label}`))))],ephemeral:true});}
+      if(interaction.customId==="btn_exchange_now"){const bl=load("blacklist");if(bl[interaction.user.id]&&!CONFIG.OWNER_IDS.includes(interaction.user.id))return interaction.reply({content:"You are blacklisted from Konvert.",ephemeral:true});return interaction.reply({embeds:[step1Embed()],components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("select_method").setPlaceholder("Select your payment method...").addOptions(METHODS.map(m=>new StringSelectMenuOptionBuilder().setLabel(m.label).setValue(m.value).setDescription(`Exchange crypto with ${m.label}`))))],ephemeral:true});}
       if(interaction.customId==="btn_fee_calc"){const modal=new ModalBuilder().setCustomId("modal_fee").setTitle("Fee Calculator");modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("fee_amt").setLabel("Amount in USD").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 250").setRequired(true)));return interaction.showModal(modal);}
       if(interaction.customId==="btn_rates_quick"){await interaction.deferReply({ephemeral:true});try{return interaction.editReply({embeds:[await buildRatesEmbed()]});}catch(e){return interaction.editReply("Could not fetch rates right now. Try again in a moment.");}}
       if(interaction.customId==="btn_refresh_rates"){await interaction.deferUpdate();try{const _re=await buildRatesEmbed();return interaction.editReply({embeds:[_re],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_refresh_rates").setLabel("Refresh").setStyle(ButtonStyle.Secondary))]});}catch(e){return interaction.editReply({content:"Could not fetch rates right now."});} return;}
@@ -2403,6 +2403,14 @@ client.once(Events.ClientReady,async()=>{
     setTimeout(()=>updateLiveLeaderboard(guild).catch(()=>{}),20*1000);
     // Update stat channel on startup
     setTimeout(()=>updateStatChannel(guild).catch(()=>{}),15*1000);
+    // Auto-remove owners from blacklist — owners can never be blacklisted
+    const bl=load("blacklist");let blChanged=false;
+    for(const oid of CONFIG.OWNER_IDS){if(bl[oid]){delete bl[oid];blChanged=true;console.log(`[startup] removed owner ${oid} from blacklist`);}}
+    if(blChanged)save("blacklist",bl);
+    // Also clean referral blacklist
+    const refData=getReferrals();let refBLChanged=false;
+    if(refData.blacklist){for(const oid of CONFIG.OWNER_IDS){if(refData.blacklist[oid]){delete refData.blacklist[oid];refBLChanged=true;console.log(`[startup] removed owner ${oid} from referral blacklist`);}}}
+    if(refBLChanged)saveReferrals(refData);
     scheduleWeeklyReferralSummary(guild);
     scheduleDailyFact(guild);
     scheduleDailyDigest(guild);
