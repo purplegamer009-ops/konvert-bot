@@ -2282,10 +2282,8 @@ function fmtVolume(v){
 }
 
 let _lastStatUpdate=0;
-async function updateStatChannel(guild){
-  // Discord rate-limits channel renames — enforce 5-min minimum between updates
-  const now=Date.now();
-  if(now-_lastStatUpdate<300000&&_lastStatUpdate!==0){console.log("[statChannel] skipped — rate limit cooldown");return;}
+let _statUpdateTimer=null;
+async function _doStatChannelUpdate(guild){
   try{
     const ch=guild.channels.cache.get(STAT_CHANNEL_ID)||await guild.channels.fetch(STAT_CHANNEL_ID).catch(()=>null);
     if(!ch){console.log("[statChannel] channel not found:",STAT_CHANNEL_ID);return;}
@@ -2295,6 +2293,16 @@ async function updateStatChannel(guild){
     _lastStatUpdate=Date.now();
     console.log(`[statChannel] updated to ${formatted}`);
   }catch(e){console.log("[statChannel] ERROR:",e.message);}
+}
+function updateStatChannel(guild){
+  // Discord allows ~2 renames per 10min. Queue the update — always fires, never skips.
+  if(_statUpdateTimer)clearTimeout(_statUpdateTimer);
+  const now=Date.now();
+  const elapsed=now-_lastStatUpdate;
+  // If last update was recent, delay to respect rate limit; otherwise fire immediately
+  const delay=elapsed<310000?Math.max(310000-elapsed,1000):0;
+  _statUpdateTimer=setTimeout(()=>{_doStatChannelUpdate(guild).catch(e=>console.log("[statChannel]",e.message));_statUpdateTimer=null;},delay);
+  if(delay>0)console.log(`[statChannel] queued in ${Math.round(delay/1000)}s`);
 }
 
 async function postDailyCryptoFact(guild){
