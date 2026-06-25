@@ -114,6 +114,7 @@ const CONFIG = {
 };
 
 const TIERS = [
+  { min:20000, label:"Opulent Client",  role:"1514890647436394496", emoji:"\u26F5" },
   { min:10000, label:"Whale Client",    role:"1483159341899976905", emoji:"\uD83D\uDC0B" },
   { min:7000,  label:"Godly Client",   role:"1483159233049657550", emoji:"\u26A1"        },
   { min:5000,  label:"Ethereal Client",role:"1483159184651325622", emoji:"\u2728"        },
@@ -1119,7 +1120,7 @@ client.on(Events.InteractionCreate,async interaction=>{
         if(!Object.keys(byUser).length)return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Client Leaderboard").setThumbnail(IMG.LOGO).setDescription("No completed trades on record yet.\n\nComplete a trade to appear here.\n\u200b").setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  \u2022  Leaderboard"}).setTimestamp()]});
         const ranked=Object.entries(byUser).sort((a,b)=>b[1]-a[1]).slice(0,10);
         const medals=["🥇","🥈","🥉"];
-        const lines=ranked.map(([uid,vol],i)=>`${medals[i]||`**${i+1}.**`}  <@${uid}>  \u2014  **${fmtUSD(vol)}**`).join("\n");
+        const lines=ranked.map(([uid,vol],i)=>{const t=getTier(vol);return `${medals[i]||`**${i+1}.**`}  <@${uid}>  \u2014  **${fmtUSD(vol)}** ${t.emoji}`;}).join("\n");
         const totalVol=ranked.reduce((s,[,v])=>s+v,0);
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF)
           .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
