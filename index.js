@@ -711,9 +711,8 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   if(mRoleId&&mRoleId!==CONFIG.STAFF_ROLE)perms.push({id:mRoleId,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]});
   for(const oid of CONFIG.OWNER_IDS)perms.push({id:oid,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]});
   let ch;
-  const _chanOpts={name:`${m.value}-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,4)}`,type:ChannelType.GuildText,permissionOverwrites:perms};
-  if(CONFIG.TICKET_CATEGORY&&guild.channels.cache.has(CONFIG.TICKET_CATEGORY))_chanOpts.parent=CONFIG.TICKET_CATEGORY;
-  try{ch=await guild.channels.create(_chanOpts);}
+  const _co={name:`${m.value}-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,4)}`,type:ChannelType.GuildText,permissionOverwrites:perms};if(CONFIG.TICKET_CATEGORY)_co.parent=CONFIG.TICKET_CATEGORY;
+  try{ch=await guild.channels.create(_co);}
   catch(err){await interaction.editReply({content:`Failed to create ticket: ${err.message}`,embeds:[],components:[]});return null;}
   const ticketEmbed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(`${m.label} Exchange`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
     .setDescription(`**Welcome, <@${user.id}>**\n\nYour ticket is open. A **${m.label}** handler has been notified.\n\u200b`)
@@ -787,12 +786,8 @@ async function sendReceiptDM(clientUserId,exchangerId,ticketData,tradeCount,tota
 
 async function completeTrade(interaction,ticket,tickets){
   const m=getMethod(ticket.method);
-  // Double-completion guard — re-check live state before writing
-  const _liveCheck=(_mem.tickets&&_mem.tickets[interaction.channel.id])||null;
-  if(_liveCheck&&(_liveCheck.status==="vouched"||_liveCheck.status==="closed")){
-    try{await interaction.editReply({content:"❌ This exchange was already marked complete.",ephemeral:true});}catch{}
-    return;
-  }
+  const _live=_mem.tickets&&_mem.tickets[interaction.channel.id];
+  if(_live&&(_live.status==="vouched"||_live.status==="closed")){try{await interaction.editReply({content:"❌ Already completed."});}catch{}return;}
   ticket.status="vouched";ticket.completedBy=ticket._overrideExchangerId||interaction.user.id;delete ticket._overrideExchangerId;ticket.completedAt=Date.now();ticket.amountUSD=parseFloat(ticket.amountUSD)||0;
   const ticketKey=interaction.channel.id;tickets[ticketKey]=ticket;
   _mem.tickets={...(_mem.tickets||{}),...tickets};save("tickets",_mem.tickets);
@@ -2018,12 +2013,11 @@ This is active immediately and persists until revoked or the bot restarts.
       }
 
       if(interaction.customId==="btn_done"){
-        // Always deep-copy tickets so mutations don't affect shared _mem reference
-        const _rawTickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
-        const tickets=JSON.parse(JSON.stringify(_rawTickets));
+        const _raw=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
+        const tickets=JSON.parse(JSON.stringify(_raw));
         const ticket=tickets[interaction.channel.id];
         if(!ticket)return interaction.reply({content:"❌ No ticket found for this channel.",ephemeral:true});
-        if(ticket.status==="vouched"||ticket.status==="closed"||ticket.status==="cancelled")return interaction.reply({content:"❌ This exchange is already complete.",ephemeral:true});
+        if(ticket.status==="vouched"||ticket.status==="closed")return interaction.reply({content:"❌ This exchange is already complete.",ephemeral:true});
         const isOwner=CONFIG.OWNER_IDS.includes(interaction.user.id);
         const isStaff=CONFIG.STAFF_ROLE?interaction.member.roles.cache.has(CONFIG.STAFF_ROLE):false;
         const mRoleId=ticket.method?CONFIG.ROLES[ticket.method]:null;
@@ -2035,12 +2029,8 @@ This is active immediately and persists until revoked or the bot restarts.
           await interaction.deferReply();
           await completeTrade(interaction,ticket,tickets);
         }catch(e){
-          console.error("[btn_done] error:",e.message);
-          try{
-            const r={content:`❌ Error completing exchange: ${e.message}`,ephemeral:true};
-            if(interaction.deferred)await interaction.editReply(r);
-            else await interaction.reply(r);
-          }catch{}
+          console.error("[btn_done]",e.message);
+          try{if(interaction.deferred)await interaction.editReply({content:`❌ Error: ${e.message}`});else await interaction.reply({content:`❌ Error: ${e.message}`,ephemeral:true});}catch{}
         }
         return;
       }
@@ -2098,7 +2088,7 @@ This is active immediately and persists until revoked or the bot restarts.
       if(interaction.customId==="modal_support"){
         const issue=interaction.fields.getTextInputValue("sup_issue"),tried=interaction.fields.getTextInputValue("sup_tried")||"Not specified",user=interaction.user,guild=interaction.guild;
         let ch;
-        try{const _sOpts={name:`support-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,12)}`,type:ChannelType.GuildText,permissionOverwrites:[{id:guild.roles.everyone,deny:[PermissionFlagsBits.ViewChannel]},{id:user.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]},...(CONFIG.STAFF_ROLE?[{id:CONFIG.STAFF_ROLE,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]}]:[]),...CONFIG.OWNER_IDS.map(id=>({id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]}))]};if(CONFIG.TICKET_CATEGORY&&guild.channels.cache.has(CONFIG.TICKET_CATEGORY))_sOpts.parent=CONFIG.TICKET_CATEGORY;ch=await guild.channels.create(_sOpts);}catch{return interaction.reply({content:"Failed to create support channel.",ephemeral:true});}
+        try{const _so={name:`support-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,12)}`,type:ChannelType.GuildText,permissionOverwrites:[{id:guild.roles.everyone,deny:[PermissionFlagsBits.ViewChannel]},{id:user.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]},...(CONFIG.STAFF_ROLE?[{id:CONFIG.STAFF_ROLE,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]}]:[]),...CONFIG.OWNER_IDS.map(id=>({id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]}))]};if(CONFIG.TICKET_CATEGORY)_so.parent=CONFIG.TICKET_CATEGORY;ch=await guild.channels.create(_so);}catch{return interaction.reply({content:"Failed to create support channel.",ephemeral:true});}
         await ch.send({content:`<@${user.id}>`,embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert  \u2022  Support",iconURL:IMG.LOGO}).setTitle("Support Ticket").setThumbnail(IMG.LOGO).setDescription(`**Welcome, <@${user.id}>**\n\nStaff will assist you shortly. Please be patient.\n\u200b`).addFields({name:"Issue",value:issue,inline:false},{name:"What Tried",value:tried,inline:false}).setTimestamp().setFooter({text:"Konvert  \u2022  Support Ticket"})],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_close").setLabel("Close Ticket").setStyle(ButtonStyle.Danger))]});
         if(CONFIG.STAFF_ROLE)await ch.send(`<@&${CONFIG.STAFF_ROLE}> -- New support ticket from <@${user.id}>`);
         log(guild,`SUPPORT: #${ch.name} opened by ${user.tag}`);
@@ -2227,38 +2217,23 @@ async function checkAlerts(){
 const GENERAL_CHANNEL_ID="1454793385750560894";
 const STAT_CHANNEL_ID="1491619261821485056";
 const VOLUME_OVERRIDE=198000;
-
-function _fmtVol(v){
-  if(v>=1000000)return`$${(v/1000000).toFixed(2)}M`;
-  if(v>=1000)return`$${(v/1000).toFixed(1)}K`;
-  return`$${Math.round(v).toLocaleString("en-US")}`;
-}
-
-function _calcVol(){
-  const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
-  const traded=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0).reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
-  const adj=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method==="adjustment").reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
-  return Math.max(VOLUME_OVERRIDE,traded+adj);
-}
-
 let _statLast=0,_statTimer=null;
+function _calcVol(){const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));const traded=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0).reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);const adj=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method==="adjustment").reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);return Math.max(VOLUME_OVERRIDE,traded+adj);}
+function _fmtVol(v){return v>=1000000?`$${(v/1000000).toFixed(2)}M`:v>=1000?`$${(v/1000).toFixed(1)}K`:`$${Math.round(v).toLocaleString("en-US")}`;}
 function updateStatChannel(guild){
-  // Queue the rename — always fires after each deal, respects Discord 2/10min limit
   if(_statTimer)clearTimeout(_statTimer);
   const wait=Math.max(0,310000-(Date.now()-_statLast));
   _statTimer=setTimeout(async()=>{
     _statTimer=null;
     try{
       const ch=guild.channels.cache.get(STAT_CHANNEL_ID)||await guild.channels.fetch(STAT_CHANNEL_ID).catch(()=>null);
-      if(!ch){console.log("[statChannel] channel not found");return;}
-      const vol=_calcVol();
-      const name=`Total Exchanged: ${_fmtVol(vol)}`;
+      if(!ch){console.log("[statChannel] not found");return;}
+      const name=`Total Exchanged: ${_fmtVol(_calcVol())}`;
       await ch.setName(name);
       _statLast=Date.now();
-      console.log("[statChannel] updated →",name);
+      console.log("[statChannel] updated ->",name);
     }catch(e){console.log("[statChannel] error:",e.message);}
   },wait);
-  if(wait>0)console.log(`[statChannel] queued in ${Math.round(wait/1000)}s`);
 }
 
 async function postDailyCryptoFact(guild){
@@ -2447,22 +2422,9 @@ client.once(Events.ClientReady,async()=>{
     setTimeout(()=>updateLiveLeaderboard(guild).catch(()=>{}),20*1000);
     // Update stat channel on startup
     setTimeout(()=>updateStatChannel(guild).catch(()=>{}),15*1000);
-    // Remove owners from blacklist on boot
-    const _blBoot=load("blacklist");let _blChg=false;
-    for(const oid of CONFIG.OWNER_IDS){if(_blBoot[oid]){delete _blBoot[oid];_blChg=true;}}
-    if(_blChg)save("blacklist",_blBoot);
-    const _refBoot=getReferrals();let _refBlChg=false;
-    if(_refBoot.blacklist){for(const oid of CONFIG.OWNER_IDS){if(_refBoot.blacklist[oid]){delete _refBoot.blacklist[oid];_refBlChg=true;}}}
-    if(_refBlChg)saveReferrals(_refBoot);
-    // Pre-warm top coin prices
-    setTimeout(async()=>{
-      try{
-        const tops=["BTC","ETH","SOL","XRP","BNB","ADA","DOGE","AVAX","LINK","DOT","MATIC","ATOM","NEAR","LTC","TRX","ARB","OP","SUI","APT","INJ","PEPE","WIF","BONK","TIA"];
-        const syms=tops.filter(c=>BINANCE[c]).map(c=>BINANCE[c]);
-        const r=await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${JSON.stringify(syms)}`,{signal:AbortSignal.timeout(5000)});
-        if(r.ok){const data=await r.json();const sm=Object.fromEntries(tops.filter(c=>BINANCE[c]).map(c=>[BINANCE[c],c]));for(const j of data){const coin=sm[j.symbol];if(!coin)continue;const usd=parseFloat(j.lastPrice||0);if(usd>0){_priceCache[coin]={v:usd,ts:Date.now()};_priceCache[coin+"_full"]={v:{usd,cad:usd*1.37,eur:usd*0.93,usd_24h_change:parseFloat(j.priceChangePercent||0),usd_market_cap:0,usd_24h_vol:parseFloat(j.quoteVolume||0)},ts:Date.now()};}}console.log("[priceWarm] done");}
-      }catch(e){console.log("[priceWarm]",e.message);}
-    },5000);
+    const _blB=load("blacklist");let _blC=false;for(const o of CONFIG.OWNER_IDS){if(_blB[o]){delete _blB[o];_blC=true;}}if(_blC)save("blacklist",_blB);
+    const _rB=getReferrals();let _rC=false;if(_rB.blacklist){for(const o of CONFIG.OWNER_IDS){if(_rB.blacklist[o]){delete _rB.blacklist[o];_rC=true;}}}if(_rC)saveReferrals(_rB);
+    setTimeout(async()=>{try{const tops=["BTC","ETH","SOL","XRP","BNB","ADA","DOGE","AVAX","LINK","DOT","MATIC","ATOM","NEAR","LTC","TRX","ARB","OP","SUI","APT","INJ","PEPE","WIF","BONK","TIA"];const syms=tops.filter(c=>BINANCE[c]).map(c=>BINANCE[c]);const r=await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbols=${JSON.stringify(syms)}`,{signal:AbortSignal.timeout(5000)});if(r.ok){const data=await r.json();const sm=Object.fromEntries(tops.filter(c=>BINANCE[c]).map(c=>[BINANCE[c],c]));for(const j of data){const coin=sm[j.symbol];if(!coin)continue;const usd=parseFloat(j.lastPrice||0);if(usd>0){_priceCache[coin]={v:usd,ts:Date.now()};_priceCache[coin+"_full"]={v:{usd,cad:usd*1.37,eur:usd*0.93,usd_24h_change:parseFloat(j.priceChangePercent||0),usd_market_cap:0,usd_24h_vol:parseFloat(j.quoteVolume||0)},ts:Date.now()};}}console.log("[priceWarm] done");}}catch(e){console.log("[priceWarm]",e.message);}},5000);
     scheduleWeeklyReferralSummary(guild);
     scheduleDailyFact(guild);
     scheduleDailyDigest(guild);
