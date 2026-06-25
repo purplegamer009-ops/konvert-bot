@@ -787,10 +787,16 @@ async function sendReceiptDM(clientUserId,exchangerId,ticketData,tradeCount,tota
 
 async function completeTrade(interaction,ticket,tickets){
   const m=getMethod(ticket.method);
+  // Double-completion guard — re-check live state before writing
+  const _liveCheck=(_mem.tickets&&_mem.tickets[interaction.channel.id])||null;
+  if(_liveCheck&&(_liveCheck.status==="vouched"||_liveCheck.status==="closed")){
+    try{await interaction.editReply({content:"❌ This exchange was already marked complete.",ephemeral:true});}catch{}
+    return;
+  }
   ticket.status="vouched";ticket.completedBy=ticket._overrideExchangerId||interaction.user.id;delete ticket._overrideExchangerId;ticket.completedAt=Date.now();ticket.amountUSD=parseFloat(ticket.amountUSD)||0;
   const ticketKey=interaction.channel.id;tickets[ticketKey]=ticket;
   _mem.tickets={...(_mem.tickets||{}),...tickets};save("tickets",_mem.tickets);
-  if(interaction.guild){updateStatChannel(interaction.guild).catch(()=>{});}
+  if(interaction.guild){updateStatChannel(interaction.guild);}
   console.log(`[completeTrade] userId=${ticket.userId} amount=${ticket.amountUSD} total=${Object.keys(_mem.tickets).length}`);
   const _refData=getReferrals();
   const _referredByForVouch=_refData.referred[ticket.userId]||null;
@@ -1372,7 +1378,7 @@ Deleting in 10 seconds.`)
       if(cmd==="adjuststats"){
         const target=interaction.options.getUser("user"),amount=interaction.options.getNumber("amount"),reason=interaction.options.getString("reason")||"Staff adjustment";
         if(amount===0)return interaction.reply({content:"Amount cannot be 0.",ephemeral:true});
-        const tickets=Object.keys(_mem.tickets||{}).length>0?{..._mem.tickets}:load("tickets");
+        const tickets=JSON.parse(JSON.stringify(Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets")));
         const key=`adj_${target.id}_${Date.now()}`;
         tickets[key]={userId:target.id,userTag:target.tag||target.username,method:"adjustment",direction:null,coin:null,amountUSD:amount,feeUSD:0,walletInfo:"staff",notes:reason,status:"vouched",completedBy:interaction.user.id,completedAt:Date.now(),createdAt:Date.now()};
         _mem.tickets=tickets;save("tickets",tickets);
@@ -2012,20 +2018,30 @@ This is active immediately and persists until revoked or the bot restarts.
       }
 
       if(interaction.customId==="btn_done"){
-        const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
+        // Always deep-copy tickets so mutations don't affect shared _mem reference
+        const _rawTickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
+        const tickets=JSON.parse(JSON.stringify(_rawTickets));
         const ticket=tickets[interaction.channel.id];
+        if(!ticket)return interaction.reply({content:"❌ No ticket found for this channel.",ephemeral:true});
+        if(ticket.status==="vouched"||ticket.status==="closed"||ticket.status==="cancelled")return interaction.reply({content:"❌ This exchange is already complete.",ephemeral:true});
         const isOwner=CONFIG.OWNER_IDS.includes(interaction.user.id);
         const isStaff=CONFIG.STAFF_ROLE?interaction.member.roles.cache.has(CONFIG.STAFF_ROLE):false;
-        const mRoleId=ticket?.method?CONFIG.ROLES[ticket.method]:null;
+        const mRoleId=ticket.method?CONFIG.ROLES[ticket.method]:null;
         const isHandler=mRoleId?interaction.member.roles.cache.has(mRoleId):false;
         const isAnyExchanger=CONFIG.EXCHANGER_ROLE?interaction.member.roles.cache.has(CONFIG.EXCHANGER_ROLE):false;
-        const allExchangerRoles=Object.values(CONFIG.ROLES).filter(Boolean);
-        const hasAnyExchangerRole=allExchangerRoles.some(r=>interaction.member.roles.cache.has(r));
+        const hasAnyExchangerRole=Object.values(CONFIG.ROLES).filter(Boolean).some(r=>interaction.member.roles.cache.has(r));
         if(!isOwner&&!isStaff&&!isHandler&&!isAnyExchanger&&!hasAnyExchangerRole)return interaction.reply({content:"Only exchangers can mark an exchange complete.",ephemeral:true});
-        if(ticket?.status==="vouched"||ticket?.status==="closed")return interaction.reply({content:"This exchange has already been completed.",ephemeral:true});
-        // Auto-complete — person who clicks IS the exchanger, no form needed
-        await interaction.deferReply();
-        await completeTrade(interaction,ticket,tickets);
+        try{
+          await interaction.deferReply();
+          await completeTrade(interaction,ticket,tickets);
+        }catch(e){
+          console.error("[btn_done] error:",e.message);
+          try{
+            const r={content:`❌ Error completing exchange: ${e.message}`,ephemeral:true};
+            if(interaction.deferred)await interaction.editReply(r);
+            else await interaction.reply(r);
+          }catch{}
+        }
         return;
       }
       if(interaction.customId==="btn_close"){
