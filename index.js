@@ -1315,7 +1315,30 @@ Deleting in 10 seconds.`)
 
       if(cmd==="note"){const text=interaction.options.getString("text");await interaction.channel.send({embeds:[new EmbedBuilder().setColor(0xFFB347).setAuthor({name:`Staff Note -- ${interaction.user.tag}`,iconURL:interaction.user.displayAvatarURL()}).setDescription(text).setTimestamp().setFooter({text:"Konvert  \u2022  Staff Note"})]});return interaction.reply({content:"Note added.",ephemeral:true});}
       if(cmd==="tradelog"){const limit=interaction.options.getInteger("limit")||5;const done=Object.values(load("tickets")).filter(t=>t.status==="vouched"&&t.completedAt&&t.method!=="adjustment").sort((a,b)=>b.completedAt-a.completedAt).slice(0,limit);if(!done.length)return interaction.reply({content:"No completed exchanges yet.",ephemeral:true});const lines=done.map((t,i)=>{const m=getMethod(t.method);return `**${i+1}.** <@${t.userId}>  \u00b7  ${m?.label||t.method}  \u00b7  ${fmtUSD(t.amountUSD)}  \u00b7  <t:${Math.floor(t.completedAt/1000)}:R>`;}).join("\n");return interaction.reply({embeds:[base(`Last ${done.length} Completed Trades`).setDescription(lines).setFooter({text:"Konvert  \u2022  Trade Log"})],ephemeral:true});}
-      if(cmd==="volume"){const all=Object.values(load("tickets")),done=all.filter(t=>t.status==="vouched"&&t.amountUSD&&t.method!=="adjustment"),totalVol=done.reduce((s,t)=>s+(t.amountUSD||0),0),totalFees=done.reduce((s,t)=>s+(t.feeUSD||0),0),open=all.filter(t=>t.status==="open").length,today=done.filter(t=>t.completedAt&&Date.now()-t.completedAt<86400000),methods={};done.forEach(t=>{if(t.method)methods[t.method]=(methods[t.method]||0)+1;});const topMethod=Object.entries(methods).sort((a,b)=>b[1]-a[1])[0];return interaction.reply({embeds:[base("Konvert Volume Stats").setThumbnail(IMG.LOGO).addFields({name:"Total Exchanges",value:`**${done.length}** exchanges`,inline:true},{name:"Total Volume",value:`**${fmtUSD(totalVol)}**`,inline:true},{name:"Total Fees",value:`**${fmtUSD(totalFees)}**`,inline:true},{name:"Open Tickets",value:`**${open}**`,inline:true},{name:"Today's Volume",value:`**${fmtUSD(today.reduce((s,t)=>s+(t.amountUSD||0),0))}** (${today.length} trades)`,inline:true},{name:"Top Method",value:topMethod?`**${getMethod(topMethod[0])?.label||topMethod[0]}** (${topMethod[1]})`:"--",inline:true}).setFooter({text:"Konvert  \u2022  Server Volume Statistics"})],ephemeral:true});}
+      if(cmd==="volume"){
+        await interaction.deferReply({ephemeral:true});
+        const pgV=await dbGet("konvert_tickets").catch(()=>null);
+        const allV=Object.values(pgV&&Object.keys(pgV).length>0?pgV:(Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets")));
+        const DONEV=["vouched","completed"];
+        const doneV=allV.filter(t=>DONEV.includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0);
+        const totalVol=await getTotalVolume();
+        const totalFees=doneV.reduce((s,t)=>s+(parseFloat(t.feeUSD)||calcFee(parseFloat(t.amountUSD||0),t.direction||"send")),0);
+        const openV=allV.filter(t=>t.status==="open").length;
+        const midV=new Date();midV.setUTCHours(0,0,0,0);
+        const todayV=doneV.filter(t=>t.completedAt&&t.completedAt>=midV.getTime());
+        const weekV=doneV.filter(t=>t.completedAt&&t.completedAt>=(midV.getTime()-6*86400000));
+        const methodsV={};doneV.forEach(t=>{if(t.method)methodsV[t.method]=(methodsV[t.method]||0)+1;});
+        const topMethodV=Object.entries(methodsV).sort((a,b)=>b[1]-a[1])[0];
+        return interaction.editReply({embeds:[base("Konvert Volume Stats").setThumbnail(IMG.LOGO).addFields(
+          {name:"Total Exchanges",value:`**${doneV.length}** exchanges`,inline:true},
+          {name:"Total Volume",value:`**${fmtUSD(totalVol)}**`,inline:true},
+          {name:"Total Fees",value:`**${fmtUSD(totalFees)}**`,inline:true},
+          {name:"Open Tickets",value:`**${openV}**`,inline:true},
+          {name:"Today's Volume",value:`**${fmtUSD(todayV.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0))}** (${todayV.length} trades)`,inline:true},
+          {name:"This Week",value:`**${fmtUSD(weekV.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0))}** (${weekV.length} trades)`,inline:true},
+          {name:"Top Method",value:topMethodV?`**${getMethod(topMethodV[0])?.label||topMethodV[0]}** (${topMethodV[1]})`:"--",inline:true}
+        ).setFooter({text:"Konvert  \u2022  Server Volume Statistics"})],ephemeral:true});
+      }
 
       if(cmd==="snapshot"){
         await interaction.deferReply({ephemeral:true});
@@ -1335,9 +1358,8 @@ Deleting in 10 seconds.`)
         const weekStart=todayStart-6*86400000;
         const today=done.filter(t=>t.completedAt&&t.completedAt>=todayStart);
         const week=done.filter(t=>t.completedAt&&t.completedAt>=weekStart);
-        // Volume = real trades + adjustments
-        const adjVol=all.filter(t=>DONE.includes(t.status)&&t.method==="adjustment").reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
-        const totalVol=done.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0)+adjVol;
+        // Volume — always uses same source of truth as stat channel
+        const totalVol=await getTotalVolume();
         const totalFees=done.reduce((s,t)=>s+(parseFloat(t.feeUSD)||calcFee(parseFloat(t.amountUSD||0),t.direction||"send")),0);
         const methods={},coins={},byEx={};
         done.forEach(t=>{if(t.method)methods[t.method]=(methods[t.method]||0)+1;if(t.coin)coins[t.coin]=(coins[t.coin]||0)+1;if(t.completedBy)byEx[t.completedBy]=(byEx[t.completedBy]||0)+1;});
@@ -1647,9 +1669,10 @@ Deleting in 10 seconds.`)
         const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
         const done=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0);
         const open=allT.filter(t=>t.status==="open");
-        const totalVol=done.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
-        const today=done.filter(t=>t.completedAt&&Date.now()-t.completedAt<86400000);
-        const week=done.filter(t=>t.completedAt&&Date.now()-t.completedAt<7*86400000);
+        const totalVol=await getTotalVolume();
+        const midSI=new Date();midSI.setUTCHours(0,0,0,0);
+        const today=done.filter(t=>t.completedAt&&t.completedAt>=midSI.getTime());
+        const week=done.filter(t=>t.completedAt&&t.completedAt>=(midSI.getTime()-6*86400000));
         const ref=getReferrals();
         const ms=process.uptime()*1000;const uh=Math.floor(ms/3600000);const um=Math.floor((ms%3600000)/60000);
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Server Info").setThumbnail(IMG.LOGO).addFields({name:"Members",value:`**${guild.memberCount}**`,inline:true},{name:"Open Tickets",value:`**${open.length}**`,inline:true},{name:"Total Exchanges",value:`**${done.length}**`,inline:true},{name:"Total Volume",value:`**${fmtUSD(totalVol)}**`,inline:true},{name:"Today",value:`**${today.length}** \u00b7 ${fmtUSD(today.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0))}`,inline:true},{name:"This Week",value:`**${week.length}** \u00b7 ${fmtUSD(week.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0))}`,inline:true},{name:"Referrers",value:`**${Object.keys(ref.points||{}).length}**`,inline:true},{name:"Referred Members",value:`**${Object.keys(ref.referred||{}).length}**`,inline:true},{name:"Fee Mode",value:`**${state.feeMode==="reduced"?"Reduced (5-9%)":"Standard (5-10%)"}**`,inline:true},{name:"Live Feed",value:state.feedEnabled&&state.feedChannel?`On \u2014 <#${state.feedChannel}>`:"Off",inline:true},{name:"Price Alerts",value:`**${state.alerts.length}** active`,inline:true},{name:"Uptime",value:`**${uh}h ${um}m**`,inline:true}).setFooter({text:"Konvert Exchange"}).setTimestamp()]});
@@ -2248,14 +2271,31 @@ async function checkAlerts(){
 
 const GENERAL_CHANNEL_ID="1454793385750560894";
 const STAT_CHANNEL_ID="1491619261821485056";
+// Volume override — set to match real historical volume (used by stat channel, snapshot, digest)
+const VOLUME_OVERRIDE=198000;
+
+// Single source of truth for total volume — always pulls fresh from Postgres
+async function getTotalVolume(){
+  const pgData=await dbGet("konvert_tickets").catch(()=>null);
+  const allT=Object.values(pgData&&Object.keys(pgData).length>0?pgData:(Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets")));
+  const DONE=["vouched","completed"];
+  const tradeVol=allT.filter(t=>DONE.includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0).reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
+  const adjVol=allT.filter(t=>DONE.includes(t.status)&&t.method==="adjustment").reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
+  return Math.max(VOLUME_OVERRIDE, tradeVol+adjVol);
+}
+
+function fmtVolume(v){
+  if(v>=1000000)return`$${(v/1000000).toFixed(2)}M`;
+  if(v>=1000)return`$${(v/1000).toFixed(1)}K`;
+  return`$${Math.round(v).toLocaleString("en-US")}`;
+}
 
 async function updateStatChannel(guild){
   try{
     const ch=guild.channels.cache.get(STAT_CHANNEL_ID)||await guild.channels.fetch(STAT_CHANNEL_ID).catch(()=>null);
     if(!ch)return;
-    const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
-    const totalVol=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0).reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
-    const formatted=totalVol>=1000000?`$${(totalVol/1000000).toFixed(2)}M`:(totalVol>=1000?`$${Math.round(totalVol/1000)}K`:`$${Math.round(totalVol).toLocaleString("en-US")}`);
+    const totalVol=await getTotalVolume();
+    const formatted=fmtVolume(totalVol);
     await ch.setName(`Total Exchanged: ${formatted}`).catch(()=>{});
     console.log(`[statChannel] updated to ${formatted}`);
   }catch(e){console.log("[statChannel]",e.message);}
@@ -2321,8 +2361,8 @@ async function postDailyDigest(guild){
     const todayFees=today.reduce((s,t)=>s+(parseFloat(t.feeUSD)||calcFee(parseFloat(t.amountUSD||0),t.direction||"send")),0);
     const open=allT.filter(t=>t.status==="open").length;
     const disputes=allT.filter(t=>t.status==="dispute").length;
-    // All-time totals for context
-    const totalVol=done.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
+    // All-time totals for context — same source of truth as stat channel
+    const totalVol=await getTotalVolume();
     const totalDone=done.length;
 
     // Top exchanger today by volume
