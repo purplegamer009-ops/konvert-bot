@@ -200,8 +200,8 @@ const METHODS=[
 ];
 const getMethod=v=>METHODS.find(m=>m.value===v)||null;
 
-const COINS=["BTC","ETH","SOL","LTC","USDT","USDC","XRP","BNB","ADA","DOGE","MATIC","AVAX","DOT","LINK","TRX","SHIB","UNI","ATOM","FTM","NEAR","ARB","OP","SUI","APT","INJ","TIA","SEI","PYTH","JTO","BONK","WIF","PEPE","FLOKI","TURBO","GALA","IMX","SAND","MANA","ENJ","AXS","CHZ","SUPER","GMT","GST","MAGIC","GRT","FIL","ICP","HBAR","VET","EOS","XLM","ALGO","EGLD","THETA","FTT","CAKE","AAVE","COMP","MKR","SNX","YFI","CRV","BAL","1INCH","SUSHI","ZRX","LRC","OMG","ZEC","XMR","DASH","BCH","BSV","BTG","DGB","RVN","SC","ZIL","IOTA","ICX","ONT","QTUM","WAVES","ZEN","NANO","XEM","STX","MINA","KAVA","BAND","RSR","OCEAN","ANKR","CKB","CELR","ONE","ROSE","CELO","SKL","SRM","RAY","OKB","HT","CRO","KCS","MX","WOO","LUNA","LUNC","UST","DAI","BUSD","TUSD","USDP","FRAX","PAXG","WBTC","RETH","STETH","CBETH","RPL","LDO","FXS","CVX","BAT","ZRX","ENS","UMA","KEEP","NMR","BADGER","ALPHA","PERP","DYDX","GMX","RDNT","PENDLE","JUP","PYUSD","RNDR","BLUR","APE","LOOKS","X2Y2","RARE","NFT"];
-const GECKO={BTC:"bitcoin",ETH:"ethereum",SOL:"solana",LTC:"litecoin",USDT:"tether",USDC:"usd-coin",XRP:"ripple",BNB:"binancecoin",ADA:"cardano",DOGE:"dogecoin",MATIC:"matic-network",AVAX:"avalanche-2",DOT:"polkadot",LINK:"chainlink",TRX:"tron",SHIB:"shiba-inu",UNI:"uniswap",ATOM:"cosmos",FTM:"fantom",NEAR:"near",ARB:"arbitrum",OP:"optimism",SUI:"sui",APT:"aptos",INJ:"injective-protocol",TIA:"celestia",SEI:"sei-network",PYTH:"pyth-network",JTO:"jito-governance-token",BONK:"bonk",WIF:"dogwifcoin",PEPE:"pepe",FLOKI:"floki",TURBO:"turbo",GALA:"gala",IMX:"immutable-x",SAND:"the-sandbox",MANA:"decentraland",ENJ:"enjincoin",AXS:"axie-infinity",CHZ:"chiliz",GMT:"stepn",MAGIC:"magic",GRT:"the-graph",FIL:"filecoin",ICP:"internet-computer",HBAR:"hedera-hashgraph",VET:"vechain",EOS:"eos",XLM:"stellar",ALGO:"algorand",EGLD:"elrond-erd-2",THETA:"theta-token",CAKE:"pancakeswap-token",AAVE:"aave",COMP:"compound-governance-token",MKR:"maker",SNX:"havven",YFI:"yearn-finance",CRV:"curve-dao-token",BAL:"balancer",SUSHI:"sushi",ZRX:"0x",LRC:"loopring",ZEC:"zcash",XMR:"monero",DASH:"dash",BCH:"bitcoin-cash",BSV:"bitcoin-sv",DGB:"digibyte",ZEN:"horizen",NANO:"nano",STX:"blockstack",MINA:"mina-protocol",KAVA:"kava",BAND:"band-protocol",OCEAN:"ocean-protocol",ANKR:"ankr",ONE:"harmony",ROSE:"oasis-network",CELO:"celo",SKL:"skale",LUNA:"terra-luna-2",DAI:"dai",PAXG:"pax-gold",WBTC:"wrapped-bitcoin",LDO:"lido-dao",FXS:"frax-share",CVX:"convex-finance",BAT:"basic-attention-token",ENS:"ethereum-name-service",UMA:"uma",DYDX:"dydx",GMX:"gmx",PENDLE:"pendle",JUP:"jupiter",RNDR:"render-token",BLUR:"blur",APE:"apecoin",OKB:"okb",CRO:"crypto-com-chain",WOO:"woo-network",RDNT:"radiant-capital",SUPER:"superfarm",GST:"green-satoshi-token",RAY:"raydium",PERP:"perpetual-protocol",NFT:"apenft"};
+const COINS=["BTC","ETH","SOL","LTC","USDT","USDC","XRP","BNB","ADA","DOGE","MATIC","AVAX","DOT","LINK","TRX","SHIB","UNI","ATOM","FTM","NEAR","ARB","OP","SUI","APT","INJ","TIA","SEI","BONK","WIF","PEPE","FLOKI","TURBO","GALA","IMX","SAND","MANA","ENJ","AXS","CHZ","SUPER","GMT","MAGIC","GRT","FIL","ICP","HBAR","VET","EOS","XLM","ALGO","EGLD","THETA","CAKE","AAVE","COMP","MKR","SNX","YFI","CRV","BAL","SUSHI","ZRX","LRC","ZEC","XMR","DASH","BCH","DGB","ZEN","NANO","STX","MINA","KAVA","BAND","OCEAN","ANKR","ONE","ROSE","CELO","SKL","RAY","OKB","CRO","WOO","LUNA","DAI","PAXG","WBTC","LDO","FXS","CVX","BAT","ENS","UMA","PERP","DYDX","GMX","PENDLE","JUP","RNDR","BLUR","APE","RDNT"];
+const GECKO={BTC:"bitcoin",ETH:"ethereum",SOL:"solana",LTC:"litecoin",USDT:"tether",USDC:"usd-coin",XRP:"ripple",BNB:"binancecoin",ADA:"cardano",DOGE:"dogecoin",MATIC:"matic-network",AVAX:"avalanche-2",DOT:"polkadot",LINK:"chainlink",TRX:"tron",SHIB:"shiba-inu",UNI:"uniswap",ATOM:"cosmos",FTM:"fantom",NEAR:"near",ARB:"arbitrum",OP:"optimism",SUI:"sui",APT:"aptos",INJ:"injective-protocol",TIA:"celestia",SEI:"sei-network",BONK:"bonk",WIF:"dogwifcoin",PEPE:"pepe",FLOKI:"floki",TURBO:"turbo",GALA:"gala",IMX:"immutable-x",SAND:"the-sandbox",MANA:"decentraland",ENJ:"enjincoin",AXS:"axie-infinity",CHZ:"chiliz",GMT:"stepn",MAGIC:"magic",GRT:"the-graph",FIL:"filecoin",ICP:"internet-computer",HBAR:"hedera-hashgraph",VET:"vechain",EOS:"eos",XLM:"stellar",ALGO:"algorand",EGLD:"elrond-erd-2",THETA:"theta-token",CAKE:"pancakeswap-token",AAVE:"aave",COMP:"compound-governance-token",MKR:"maker",SNX:"havven",YFI:"yearn-finance",CRV:"curve-dao-token",BAL:"balancer",SUSHI:"sushi",ZRX:"0x",LRC:"loopring",ZEC:"zcash",XMR:"monero",DASH:"dash",BCH:"bitcoin-cash",DGB:"digibyte",ZEN:"horizen",NANO:"nano",STX:"blockstack",MINA:"mina-protocol",KAVA:"kava",BAND:"band-protocol",OCEAN:"ocean-protocol",ANKR:"ankr",ONE:"harmony",ROSE:"oasis-network",CELO:"celo",SKL:"skale",LUNA:"terra-luna-2",DAI:"dai",PAXG:"pax-gold",WBTC:"wrapped-bitcoin",LDO:"lido-dao",FXS:"frax-share",CVX:"convex-finance",BAT:"basic-attention-token",ENS:"ethereum-name-service",UMA:"uma",DYDX:"dydx",GMX:"gmx",PENDLE:"pendle",JUP:"jupiter",RNDR:"render-token",BLUR:"blur",APE:"apecoin",OKB:"okb",CRO:"crypto-com-chain",WOO:"woo-network",RDNT:"radiant-capital",SUPER:"superfarm",RAY:"raydium",PERP:"perpetual-protocol"};
 const COIN_LOGO={BTC:"https://assets.coingecko.com/coins/images/1/large/bitcoin.png",ETH:"https://assets.coingecko.com/coins/images/279/large/ethereum.png",SOL:"https://assets.coingecko.com/coins/images/4128/large/solana.png",LTC:"https://assets.coingecko.com/coins/images/2/large/litecoin.png",USDT:"https://assets.coingecko.com/coins/images/325/large/Tether.png",USDC:"https://assets.coingecko.com/coins/images/6319/large/usdc.png",XRP:"https://assets.coingecko.com/coins/images/44/large/xrp-symbol-white-128.png",BNB:"https://assets.coingecko.com/coins/images/825/large/binance-coin-logo.png",ADA:"https://assets.coingecko.com/coins/images/975/large/cardano.png",DOGE:"https://assets.coingecko.com/coins/images/5/large/dogecoin.png"};
 
 // ── PERSISTENT STORAGE ──────────────────────────────────────────────────────
@@ -413,11 +413,8 @@ async function getPrice(coin){
 }
 async function _fetchPrice(coin){
   const geckoId=GECKO[coin];
-  // 1. Binance — fastest, always try first
   if(BINANCE[coin]){try{const r=await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${BINANCE[coin]}`,{signal:AbortSignal.timeout(3000)});if(r.ok){const d=await r.json();const v=parseFloat(d.price||0);if(v>0){_priceCache[coin]={v,ts:Date.now()};return v;}}}catch{}}
-  // 2. CoinGecko — single attempt, no retries/sleeps
   if(geckoId){try{const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${geckoId}&vs_currencies=usd`,{signal:AbortSignal.timeout(4000)});if(r.ok){const d=await r.json(),v=d[geckoId]?.usd||null;if(v){_priceCache[coin]={v,ts:Date.now()};return v;}}}catch{}}
-  // 3. Stale cache as last resort
   if(_priceCache[coin])return _priceCache[coin].v;
   return null;
 }
@@ -427,11 +424,8 @@ async function fetchFullPrice(coin){
   const cKey=coin+"_full";
   if(_priceCache[cKey]&&Date.now()-_priceCache[cKey].ts<120000)return _priceCache[cKey].v;
   let d=null;
-  // 1. Binance — instant, most coins covered
   if(BINANCE[coin]){try{const r=await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${BINANCE[coin]}`,{signal:AbortSignal.timeout(3000)});if(r.ok){const j=await r.json();const usd=parseFloat(j.lastPrice||0);if(usd>0){d={usd,cad:usd*1.37,eur:usd*0.93,usd_24h_change:parseFloat(j.priceChangePercent||0),usd_market_cap:0,usd_24h_vol:parseFloat(j.quoteVolume||0)};_priceCache[cKey]={v:d,ts:Date.now()};_priceCache[coin]={v:usd,ts:Date.now()};return d;}}}catch{}}
-  // 2. CoinGecko — single attempt, no retries
   if(!d&&GECKO[coin]){try{const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${GECKO[coin]}&vs_currencies=usd,cad,eur&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`,{signal:AbortSignal.timeout(4000)});if(r.ok){const j=await r.json();if(j[GECKO[coin]]?.usd){d=j[GECKO[coin]];_priceCache[cKey]={v:d,ts:Date.now()};_priceCache[coin]={v:d.usd,ts:Date.now()};return d;}}}catch{}}
-  // 3. Stale cache
   if(_priceCache[cKey])return _priceCache[cKey].v;
   return null;
 }
@@ -1246,7 +1240,7 @@ client.on(Events.InteractionCreate,async interaction=>{
       if(cmd==="blacklistref"){
         await interaction.deferReply({ephemeral:true});
         const target=interaction.options.getUser("user"),reason=interaction.options.getString("reason")||"No reason given";
-        const ref=getReferrals();if(!ref.blacklist)ref.blacklist={};if(CONFIG.OWNER_IDS.includes(target.id))return interaction.editReply({content:"❌ Owners cannot be blacklisted.",ephemeral:true});ref.blacklist[target.id]={reason,by:interaction.user.tag,at:Date.now()};saveReferrals(ref);
+        const ref=getReferrals();if(!ref.blacklist)ref.blacklist={};if(CONFIG.OWNER_IDS.includes(target.id))return interaction.editReply({content:"\u274C Owners cannot be blacklisted.",ephemeral:true});ref.blacklist[target.id]={reason,by:interaction.user.tag,at:Date.now()};saveReferrals(ref);
         try{const u=await client.users.fetch(target.id);await u.send({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert  \u00b7  Referral Program",iconURL:PTS_IMG}).setTitle("Referral Access Removed").setDescription(`Your access to the Konvert referral program has been removed by staff.\n**Reason:** ${reason}\n\nContact support if you believe this is a mistake.`).setFooter({text:"Konvert Referral Program"}).setTimestamp()]});}catch{}
         return interaction.editReply({content:`**${target.username}** has been blacklisted from the referral program. Reason: ${reason}`,ephemeral:true});
       }
@@ -1286,7 +1280,7 @@ client.on(Events.InteractionCreate,async interaction=>{
       if(cmd==="calc"){await interaction.deferReply({ephemeral:true});if(!CONFIG.RATES_CHANNEL)return interaction.editReply("RATES_CHANNEL_ID not configured.");const ch=interaction.guild.channels.cache.get(CONFIG.RATES_CHANNEL);if(!ch)return interaction.editReply("Rates channel not found.");const embed=await buildRatesEmbed();if(ratesMsgId){const msg=await ch.messages.fetch(ratesMsgId).catch(()=>null);if(msg){await msg.edit({embeds:[embed]});}else{const s=await ch.send({embeds:[embed]});ratesMsgId=s.id;}}else{const s=await ch.send({embeds:[embed]});ratesMsgId=s.id;}return interaction.editReply("Rates posted.");}
       if(cmd==="setwallet"){const coin=interaction.options.getString("coin").toUpperCase(),addr=interaction.options.getString("address");const w=load("wallets");w[coin]=addr;save("wallets",w);log(interaction.guild,`WALLET: ${interaction.user.tag} set ${coin} to ${addr}`);return interaction.reply({content:`**${coin}** deposit address updated to \`${addr}\``,ephemeral:true});}
       if(cmd==="announce"){const message=interaction.options.getString("message"),channelId=interaction.options.getString("channel"),ping=interaction.options.getString("ping")||"none",ch=interaction.guild.channels.cache.get(channelId);if(!ch)return interaction.reply({content:"Channel not found.",ephemeral:true});const pingStr=ping==="everyone"?"@everyone ":ping==="here"?"@here ":"";await ch.send({content:pingStr||undefined,embeds:[base("Konvert Announcement").setThumbnail(IMG.LOGO).setDescription(message).setFooter({text:`Announced by ${interaction.user.tag}  \u2022  Konvert`})]});return interaction.reply({content:"Announced.",ephemeral:true});}
-      if(cmd==="blacklist"){const target=interaction.options.getUser("user"),reason=interaction.options.getString("reason")||"No reason given";if(CONFIG.OWNER_IDS.includes(target.id))return interaction.reply({content:"❌ Owners cannot be blacklisted.",ephemeral:true});const bl=load("blacklist");bl[target.id]={tag:target.tag,reason,by:interaction.user.tag,at:Date.now()};save("blacklist",bl);log(interaction.guild,`BLACKLIST: ${target.tag} -- ${reason}`);return interaction.reply({content:`**${target.tag}** blacklisted. Reason: ${reason}`,ephemeral:true});}
+      if(cmd==="blacklist"){const target=interaction.options.getUser("user"),reason=interaction.options.getString("reason")||"No reason given";if(CONFIG.OWNER_IDS.includes(target.id))return interaction.reply({content:"\u274C Owners cannot be blacklisted.",ephemeral:true});const bl=load("blacklist");bl[target.id]={tag:target.tag,reason,by:interaction.user.tag,at:Date.now()};save("blacklist",bl);log(interaction.guild,`BLACKLIST: ${target.tag} -- ${reason}`);return interaction.reply({content:`**${target.tag}** blacklisted. Reason: ${reason}`,ephemeral:true});}
       if(cmd==="unblacklist"){const target=interaction.options.getUser("user");const bl=load("blacklist");delete bl[target.id];save("blacklist",bl);return interaction.reply({content:`**${target.tag}** removed from blacklist.`,ephemeral:true});}
       if(cmd==="closeticket"){
         const reason=interaction.options.getString("reason")||"Deal complete";
@@ -1327,7 +1321,6 @@ Deleting in 10 seconds.`)
         const openV=allV.filter(t=>t.status==="open").length;
         const midV=new Date();midV.setUTCHours(0,0,0,0);
         const todayV=doneV.filter(t=>t.completedAt&&t.completedAt>=midV.getTime());
-        const weekV=doneV.filter(t=>t.completedAt&&t.completedAt>=(midV.getTime()-6*86400000));
         const methodsV={};doneV.forEach(t=>{if(t.method)methodsV[t.method]=(methodsV[t.method]||0)+1;});
         const topMethodV=Object.entries(methodsV).sort((a,b)=>b[1]-a[1])[0];
         return interaction.editReply({embeds:[base("Konvert Volume Stats").setThumbnail(IMG.LOGO).addFields(
@@ -1336,7 +1329,6 @@ Deleting in 10 seconds.`)
           {name:"Total Fees",value:`**${fmtUSD(totalFees)}**`,inline:true},
           {name:"Open Tickets",value:`**${openV}**`,inline:true},
           {name:"Today's Volume",value:`**${fmtUSD(todayV.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0))}** (${todayV.length} trades)`,inline:true},
-          {name:"This Week",value:`**${fmtUSD(weekV.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0))}** (${weekV.length} trades)`,inline:true},
           {name:"Top Method",value:topMethodV?`**${getMethod(topMethodV[0])?.label||topMethodV[0]}** (${topMethodV[1]})`:"--",inline:true}
         ).setFooter({text:"Konvert  \u2022  Server Volume Statistics"})],ephemeral:true});
       }
@@ -1344,7 +1336,6 @@ Deleting in 10 seconds.`)
       if(cmd==="snapshot"){
         await interaction.deferReply({ephemeral:true});
         const guild=interaction.guild;
-        // Always pull freshest data — Postgres first via _mem, then disk
         const pgSnap=await dbGet("konvert_tickets").catch(()=>null);
         const allTickets=pgSnap&&Object.keys(pgSnap).length>0?pgSnap:(Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets"));
         const all=Object.values(allTickets);
@@ -1352,24 +1343,19 @@ Deleting in 10 seconds.`)
         const done=all.filter(t=>DONE.includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0);
         const open=all.filter(t=>t.status==="open");
         const disputes=all.filter(t=>t.status==="dispute");
-        // Calendar-day today (midnight UTC)
-        const nowSnap=Date.now();
-        const midnightToday=new Date();midnightToday.setUTCHours(0,0,0,0);
-        const todayStart=midnightToday.getTime();
-        const weekStart=todayStart-6*86400000;
+        const midSnap=new Date();midSnap.setUTCHours(0,0,0,0);
+        const todayStart=midSnap.getTime();
         const today=done.filter(t=>t.completedAt&&t.completedAt>=todayStart);
-        const week=done.filter(t=>t.completedAt&&t.completedAt>=weekStart);
-        // Volume — always uses same source of truth as stat channel
+        const week=done.filter(t=>t.completedAt&&t.completedAt>=(todayStart-6*86400000));
         const totalVol=await getTotalVolume();
         const totalFees=done.reduce((s,t)=>s+(parseFloat(t.feeUSD)||calcFee(parseFloat(t.amountUSD||0),t.direction||"send")),0);
+        const todayVol=today.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
+        const weekVol=week.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
         const methods={},coins={},byEx={};
         done.forEach(t=>{if(t.method)methods[t.method]=(methods[t.method]||0)+1;if(t.coin)coins[t.coin]=(coins[t.coin]||0)+1;if(t.completedBy)byEx[t.completedBy]=(byEx[t.completedBy]||0)+1;});
         const topMethod=Object.entries(methods).sort((a,b)=>b[1]-a[1])[0];
         const topCoin=Object.entries(coins).sort((a,b)=>b[1]-a[1])[0];
         const topEx=Object.entries(byEx).sort((a,b)=>b[1]-a[1])[0];
-        const todayVol=today.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
-        const todayFees=today.reduce((s,t)=>s+(parseFloat(t.feeUSD)||0),0);
-        const weekVol=week.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
         await guild.members.fetch();
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert  \u2022  Server Snapshot",iconURL:IMG.LOGO}).setTitle("Server Snapshot").setThumbnail(IMG.LOGO).setDescription(`Snapshot taken <t:${Math.floor(Date.now()/1000)}:F>\n\u200b`).addFields(
           {name:"\uD83D\uDC65  Members",value:`**${guild.memberCount}**`,inline:true},
@@ -1378,12 +1364,12 @@ Deleting in 10 seconds.`)
           {name:"\u2705  Total Exchanges",value:`**${done.length}**`,inline:true},
           {name:"\uD83D\uDCB0  Total Volume",value:`**${fmtUSD(totalVol)}**`,inline:true},
           {name:"\uD83D\uDCB8  Total Fees",value:`**${fmtUSD(totalFees)}**`,inline:true},
-          {name:"\uD83D\uDCC5  Today",value:`**${today.length}** trades  \u00b7  ${fmtUSD(todayVol)}  \u00b7  ${fmtUSD(todayFees)} fees`,inline:false},
-          {name:"\uD83D\uDCC6  This Week",value:`**${week.length}** trades  \u00b7  ${fmtUSD(weekVol)}`,inline:false},
-          {name:"\uD83D\uDCB3  Top Method",value:topMethod?`**${getMethod(topMethod[0])?.label||topMethod[0]}** (${topMethod[1]} trades)`:"--",inline:true},
-          {name:"\uD83E\uDE99  Top Coin",value:topCoin?`**${topCoin[0]}** (${topCoin[1]} trades)`:"--",inline:true},
+          {name:"\uD83D\uDCC5  Today",value:`**${today.length}** trades  \u00b7  ${fmtUSD(todayVol)}`,inline:true},
+          {name:"\uD83D\uDCC6  This Week",value:`**${week.length}** trades  \u00b7  ${fmtUSD(weekVol)}`,inline:true},
+          {name:"\uD83D\uDCB3  Top Method",value:topMethod?`**${getMethod(topMethod[0])?.label||topMethod[0]}** (${topMethod[1]})`:"--",inline:true},
+          {name:"\uD83E\uDE99  Top Coin",value:topCoin?`**${topCoin[0]}** (${topCoin[1]})`:"--",inline:true},
           {name:"\uD83C\uDFC6  Top Exchanger",value:topEx?`<@${topEx[0]}> (${topEx[1]} trades)`:"--",inline:true}
-        ).setFooter({text:`${all.length} total tickets in DB  \u00b7  Konvert Snapshot`}).setTimestamp()]});
+        ).setFooter({text:`${all.length} total tickets  \u00b7  Konvert Snapshot`}).setTimestamp()]});
       }
 
       if(cmd==="exchangerboard"){const done=Object.values(load("tickets")).filter(t=>t.status==="vouched"&&t.completedBy&&t.method!=="adjustment"),byEx={};done.forEach(t=>{if(!byEx[t.completedBy])byEx[t.completedBy]={trades:0,volume:0};byEx[t.completedBy].trades+=1;byEx[t.completedBy].volume+=(t.amountUSD||0);});const ranked=Object.entries(byEx).sort((a,b)=>b[1].trades-a[1].trades).slice(0,10);if(!ranked.length)return interaction.reply({content:"No completed exchanges yet.",ephemeral:true});const medals=["\uD83E\uDD47","\uD83E\uDD48","\uD83E\uDD49"];const lines=ranked.map(([uid,d],i)=>`${medals[i]||`**${i+1}.**`}  <@${uid}>  --  **${d.trades}** exchange${d.trades!==1?"s":""}  \u00b7  ${fmtUSD(d.volume)}`).join("\n");return interaction.reply({embeds:[base("Exchanger Leaderboard").setThumbnail(IMG.LOGO).setDescription("Top Konvert exchangers ranked by completed trades.\n\u200b").addFields({name:"Rankings",value:lines,inline:false}).setFooter({text:"Konvert  \u2022  Exchanger Leaderboard"}).setTimestamp()],ephemeral:true});}
@@ -2276,17 +2262,15 @@ async function checkAlerts(){
 
 const GENERAL_CHANNEL_ID="1454793385750560894";
 const STAT_CHANNEL_ID="1491619261821485056";
-// Volume override — set to match real historical volume (used by stat channel, snapshot, digest)
 const VOLUME_OVERRIDE=198000;
 
-// Single source of truth for total volume — always pulls fresh from Postgres
 async function getTotalVolume(){
   const pgData=await dbGet("konvert_tickets").catch(()=>null);
   const allT=Object.values(pgData&&Object.keys(pgData).length>0?pgData:(Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets")));
   const DONE=["vouched","completed"];
   const tradeVol=allT.filter(t=>DONE.includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0).reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
   const adjVol=allT.filter(t=>DONE.includes(t.status)&&t.method==="adjustment").reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
-  return Math.max(VOLUME_OVERRIDE, tradeVol+adjVol);
+  return Math.max(VOLUME_OVERRIDE,tradeVol+adjVol);
 }
 
 function fmtVolume(v){
@@ -2350,45 +2334,33 @@ async function postWeeklyReferralSummary(guild){
 // Every day at 11pm UTC, DM all owners a quick performance summary
 async function postDailyDigest(guild){
   try{
-    // Pull freshest data directly from Postgres — never stale
     const pgData=await dbGet("konvert_tickets").catch(()=>null);
     const allT=Object.values(pgData&&Object.keys(pgData).length>0?pgData:(Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets")));
-
-    // Use calendar day midnight UTC — not rolling 24h
     const midnightUTC=new Date();midnightUTC.setUTCHours(0,0,0,0);
     const todayStart=midnightUTC.getTime();
-
     const DONE=["vouched","completed"];
     const done=allT.filter(t=>DONE.includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0);
     const today=done.filter(t=>t.completedAt&&t.completedAt>=todayStart);
     const todayVol=today.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
-    // Accurate fees: use stored feeUSD if present, otherwise calculate
     const todayFees=today.reduce((s,t)=>s+(parseFloat(t.feeUSD)||calcFee(parseFloat(t.amountUSD||0),t.direction||"send")),0);
     const open=allT.filter(t=>t.status==="open").length;
     const disputes=allT.filter(t=>t.status==="dispute").length;
-    // All-time totals for context — same source of truth as stat channel
     const totalVol=await getTotalVolume();
     const totalDone=done.length;
-
-    // Top exchanger today by volume
     const byEx={},byExTrades={};
     today.forEach(t=>{if(t.completedBy){byEx[t.completedBy]=(byEx[t.completedBy]||0)+(parseFloat(t.amountUSD)||0);byExTrades[t.completedBy]=(byExTrades[t.completedBy]||0)+1;}});
     const topEx=Object.entries(byEx).sort((a,b)=>b[1]-a[1])[0];
-
-    // Top method today
     const todayMethods={};today.forEach(t=>{if(t.method)todayMethods[t.method]=(todayMethods[t.method]||0)+1;});
     const topMethod=Object.entries(todayMethods).sort((a,b)=>b[1]-a[1])[0];
-
     if(today.length===0&&open===0&&disputes===0){
       console.log("[dailyDigest] nothing to report, skipping");
       return;
     }
-
     const embed=new EmbedBuilder()
       .setColor(0x7C4DFF)
       .setAuthor({name:"Konvert Exchange  \u00b7  Daily Digest",iconURL:IMG.LOGO})
-      .setTitle("\uD83D\uDCCA Today's Summary")
-      .setDescription(`<t:${Math.floor(todayStart/1000)}:D>  \u2014  Data pulled live from Postgres\n\u200b`)
+      .setTitle("Today's Summary")
+      .setDescription(`<t:${Math.floor(todayStart/1000)}:D>\n\u200b`)
       .addFields(
         {name:"\u2705  Exchanges Today",value:`**${today.length}**`,inline:true},
         {name:"\uD83D\uDCB0  Volume Today",value:`**${fmtUSD(todayVol)}**`,inline:true},
@@ -2401,7 +2373,6 @@ async function postDailyDigest(guild){
       )
       .setFooter({text:`Konvert Exchange  \u00b7  Daily digest  \u00b7  ${allT.length} tickets in DB`})
       .setTimestamp();
-
     for(const oid of CONFIG.OWNER_IDS){
       try{
         const owner=await client.users.fetch(oid);
@@ -2503,15 +2474,14 @@ client.once(Events.ClientReady,async()=>{
     setTimeout(()=>updateLiveLeaderboard(guild).catch(()=>{}),20*1000);
     // Update stat channel on startup
     setTimeout(()=>updateStatChannel(guild).catch(()=>{}),15*1000);
-    // Auto-remove owners from blacklist — owners can never be blacklisted
+    // Auto-remove owners from blacklist
     const bl=load("blacklist");let blChanged=false;
     for(const oid of CONFIG.OWNER_IDS){if(bl[oid]){delete bl[oid];blChanged=true;console.log(`[startup] removed owner ${oid} from blacklist`);}}
     if(blChanged)save("blacklist",bl);
-    // Also clean referral blacklist
     const refData=getReferrals();let refBLChanged=false;
-    if(refData.blacklist){for(const oid of CONFIG.OWNER_IDS){if(refData.blacklist[oid]){delete refData.blacklist[oid];refBLChanged=true;console.log(`[startup] removed owner ${oid} from referral blacklist`);}}}
+    if(refData.blacklist){for(const oid of CONFIG.OWNER_IDS){if(refData.blacklist[oid]){delete refData.blacklist[oid];refBLChanged=true;console.log(`[startup] removed owner ${oid} from referral blacklist`);}}} 
     if(refBLChanged)saveReferrals(refData);
-    // Pre-warm price cache for top coins so first lookups are instant
+    // Pre-warm price cache
     setTimeout(async()=>{
       const topCoins=["BTC","ETH","SOL","XRP","BNB","ADA","DOGE","AVAX","LINK","DOT","MATIC","UNI","ATOM","NEAR","LTC","TRX","ARB","OP","SUI","APT","INJ","PEPE","WIF","BONK","TIA"];
       try{
