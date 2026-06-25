@@ -2218,25 +2218,49 @@ const GENERAL_CHANNEL_ID="1454793385750560894";
 const STAT_CHANNEL_ID="1491619261821485056";
 const VOLUME_OVERRIDE=198000;
 let _statTimer=null;
-async function updateStatChannel(guild){
-  // Debounce — only fire once per 5s of inactivity, never queue more than one
+let _statPending=false;
+
+function _getVol(){
+  const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
+  const traded=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0).reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
+  const adj=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method==="adjustment").reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
+  return Math.max(VOLUME_OVERRIDE,traded+adj);
+}
+
+async function _doRename(guild){
+  _statPending=false;
+  try{
+    const vol=_getVol();
+    const formatted=vol>=1000000?`$${(vol/1000000).toFixed(2)}M`:vol>=1000?`$${(vol/1000).toFixed(1)}K`:`$${Math.round(vol).toLocaleString("en-US")}`;
+    const name=`Total Exchanged: ${formatted}`;
+    const ch=guild.channels.cache.get(STAT_CHANNEL_ID)||await guild.channels.fetch(STAT_CHANNEL_ID).catch(()=>null);
+    if(!ch){console.log("[statChannel] channel not found:",STAT_CHANNEL_ID);return;}
+    if(ch.name===name){console.log("[statChannel] already correct:",name);return;}
+    // Use REST directly so we get the real error + retry_after on 429
+    const rest=guild.client.rest;
+    const res=await rest.patch(`/channels/${STAT_CHANNEL_ID}`,{body:{name},reason:"Konvert volume update"}).catch(e=>({_err:e}));
+    if(res&&res._err){
+      const e=res._err;
+      const retryAfter=e?.rawError?.retry_after||e?.retry_after||null;
+      if(retryAfter){
+        const ms=Math.ceil(retryAfter*1000)+2000;
+        console.log(`[statChannel] rate limited, retrying in ${Math.round(ms/1000)}s`);
+        _statPending=true;
+        setTimeout(()=>_doRename(guild),ms);
+      } else {
+        console.log("[statChannel] error:",e.message);
+      }
+      return;
+    }
+    console.log("[statChannel] renamed ->",name);
+  }catch(e){console.log("[statChannel] unexpected error:",e.message);}
+}
+
+function updateStatChannel(guild){
+  // Debounce: coalesce multiple rapid calls into one rename after 3s
   if(_statTimer)clearTimeout(_statTimer);
-  _statTimer=setTimeout(async()=>{
-    _statTimer=null;
-    try{
-      const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
-      const traded=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0).reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
-      const adj=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method==="adjustment").reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
-      const vol=Math.max(VOLUME_OVERRIDE,traded+adj);
-      const formatted=vol>=1000000?`$${(vol/1000000).toFixed(2)}M`:vol>=1000?`$${(vol/1000).toFixed(1)}K`:`$${Math.round(vol).toLocaleString("en-US")}`;
-      const name=`Total Exchanged: ${formatted}`;
-      const ch=guild.channels.cache.get(STAT_CHANNEL_ID)||await guild.channels.fetch(STAT_CHANNEL_ID).catch(()=>null);
-      if(!ch){console.log("[statChannel] channel not found:",STAT_CHANNEL_ID);return;}
-      if(ch.name===name){console.log("[statChannel] no change needed:",name);return;}
-      await ch.setName(name);
-      console.log("[statChannel] updated ->",name);
-    }catch(e){console.log("[statChannel] error:",e.message);}
-  },5000);
+  if(_statPending)return; // already queued for retry after rate limit
+  _statTimer=setTimeout(()=>{_statTimer=null;_doRename(guild);},3000);
 }
 
 async function postDailyCryptoFact(guild){
