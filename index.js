@@ -396,6 +396,8 @@ const fmtUSD=n=>{if(n>=1)return`$${n.toLocaleString("en-US",{minimumFractionDigi
 function calcFee(usd,dir,isVip=false){const red=state.feeMode==="reduced";const base=dir==="receive"?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(red?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(usd<150?10:usd<350?9:usd<600?8:usd<800?7:6));const r=isVip?Math.max(base-0.75,1):base;return Math.max(usd*r/100,CONFIG.MIN_FEE);}
 function feeRate(usd,dir,isVip=false){const red=state.feeMode==="reduced";const base=dir==="receive"?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(red?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(usd<150?10:usd<350?9:usd<600?8:usd<800?7:6));return isVip?Math.max(base-0.75,1):base;}
 function isVipVolume(vol){return vol>=7000;}
+function isKonvTag(userId){return state.konvTagUsers&&state.konvTagUsers.has(userId);}
+function calcFeeWithTag(usd,dir,isVip,hasTag){const base=calcFee(usd,dir,isVip);if(hasTag)return Math.max(base-(usd*0.002),CONFIG.MIN_FEE);return base;}
 const base=title=>new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(title).setTimestamp();
 function log(guild,msg){if(!CONFIG.LOG_CHANNEL||!guild)return;const ch=guild.channels.cache.get(CONFIG.LOG_CHANNEL);if(ch)ch.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setDescription("```"+msg+"```").setTimestamp()]}).catch(()=>{});}
 
@@ -432,7 +434,7 @@ async function fetchFullPrice(coin){
 }
 
 const client=new Client({intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent,GatewayIntentBits.GuildMembers,GatewayIntentBits.GuildInvites],partials:[Partials.Channel]});
-const state={pending:{},mineGames:{},cooldowns:{},alerts:[],passes:{},c2cSelections:{},feedChannel:null,feedEnabled:false,volumeAdj:{},feeMode:"standard",referralDMsEnabled:true,liveLbMessageId:null,liveLbChannelId:null,promos:{}};
+const state={pending:{},mineGames:{},cooldowns:{},alerts:[],passes:{},c2cSelections:{},feedChannel:null,feedEnabled:false,volumeAdj:{},feeMode:"standard",referralDMsEnabled:true,liveLbMessageId:null,liveLbChannelId:null,promos:{},konvTagUsers:new Set(),personalWallets:{}};
 
 function buildLeaderboardVolumes(){
   const DONE_STATUS=["vouched","completed"];
@@ -571,6 +573,12 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("listpromos").setDescription("[Owner] View all active promo codes").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("rank").setDescription("See your rank on the leaderboard").addUserOption(o=>o.setName("user").setDescription("User to check (leave blank for yourself)").setRequired(false)),
   new SlashCommandBuilder().setName("exchangerstats").setDescription("View your exchanger performance stats").addUserOption(o=>o.setName("user").setDescription("Exchanger to check").setRequired(false)),
+  new SlashCommandBuilder().setName("claimtag").setDescription("Claim the KONV tag perk for 0.2% fee discount"),
+  new SlashCommandBuilder().setName("jbtc").setDescription("[Owner] Set your BTC wallet address").addStringOption(o=>o.setName("address").setDescription("BTC address").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("jeth").setDescription("[Owner] Set your ETH wallet address").addStringOption(o=>o.setName("address").setDescription("ETH address").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("jsol").setDescription("[Owner] Set your SOL wallet address").addStringOption(o=>o.setName("address").setDescription("SOL address").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("jltc").setDescription("[Owner] Set your LTC wallet address").addStringOption(o=>o.setName("address").setDescription("LTC address").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("jusdtbnb").setDescription("[Owner] Set your USDT-BNB wallet address").addStringOption(o=>o.setName("address").setDescription("USDT BNB address").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("setfeemode").setDescription("[Owner] Switch between standard (5-10%) and reduced (5-9%) fee tiers").addStringOption(o=>o.setName("mode").setDescription("Fee mode").setRequired(true).addChoices({name:"Standard (5-10%)",value:"standard"},{name:"Reduced (5-9%)",value:"reduced"})).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 ].map(c=>c.toJSON());
 
@@ -967,9 +975,9 @@ client.on(Events.MessageCreate,async message=>{
     const jwMap={btc:"BTC",eth:"ETH",sol:"SOL",ltc:"LTC",usdtbnb:"USDT-BNB"};
     const jwCoin=jwMap[jwKey];
     if(jwCoin&&state.personalWallets[jwCoin]){
-      await message.reply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange  \u2022  Personal Wallet",iconURL:IMG.LOGO}).setTitle(`${jwCoin} Address`).setDescription(`\`\`\`${state.personalWallets[jwCoin]}\`\`\``).setFooter({text:"Only send to addresses confirmed by staff in your ticket  \u2022  Konvert"}).setTimestamp()]}).catch(()=>{});
+      await message.reply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange  \u2022  Wallet",iconURL:IMG.LOGO}).setTitle(`${jwCoin} Address`).setDescription(`\`\`\`${state.personalWallets[jwCoin]}\`\`\``).setFooter({text:"Only send to addresses confirmed by staff in your ticket  \u2022  Konvert"}).setTimestamp()]}).catch(()=>{});
     } else {
-      await message.reply({content:`\u274C No **${(jwCoin||jwKey.toUpperCase())}** address set yet. Owner can set it with \`/j${jwKey}\`.`}).catch(()=>{});
+      await message.reply({content:`\u274C No **${jwCoin||jwKey.toUpperCase()}** address set yet.`}).catch(()=>{});
     }
     return;
   }
@@ -1544,14 +1552,12 @@ Deleting in 10 seconds.`)
         await interaction.deferReply({ephemeral:true});
         const userId=interaction.user.id;
         const member=await interaction.guild.members.fetch({user:userId,force:true}).catch(()=>null);
-        if(!member)return interaction.editReply({content:"\u274C Could not fetch your member data. Try again.",ephemeral:true});
-        const displayName=(member.displayName||"").toUpperCase();
-        const globalName=(member.user.globalName||"").toUpperCase();
-        const username=(member.user.username||"").toUpperCase();
-        const hasKonv=displayName.includes("KONV")||globalName.includes("KONV")||username.includes("KONV");
-        if(!hasKonv){return interaction.editReply({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("\u274C KONV Tag Not Detected").setDescription("Your Discord profile must display the **KONV** clan tag to claim this perk.\n\u200b").addFields({name:"How to get it",value:"Set the Konvert server as your active clan in Discord profile settings so **KONV** shows next to your name.",inline:false}).setFooter({text:"Konvert Exchange  \u2022  Claim again after setting the tag"}).setTimestamp()],ephemeral:true});}
+        if(!member)return interaction.editReply({content:"\u274C Could not fetch your profile. Try again.",ephemeral:true});
+        const dn=(member.displayName||"").toUpperCase(),gn=(member.user.globalName||"").toUpperCase(),un=(member.user.username||"").toUpperCase();
+        const hasKonv=dn.includes("KONV")||gn.includes("KONV")||un.includes("KONV");
+        if(!hasKonv)return interaction.editReply({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("\u274C KONV Tag Not Detected").setDescription("Your Discord profile must show the **KONV** clan tag.\n\u200b").addFields({name:"How",value:"Set Konvert as your active clan in Discord profile settings.",inline:false}).setFooter({text:"Try again after setting the tag"}).setTimestamp()],ephemeral:true});
         state.konvTagUsers.add(userId);
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  KONV Tag Perk",iconURL:IMG.LOGO}).setTitle("\u2705  KONV Tag Verified!").setDescription("Your tag has been verified. You now receive a **0.2% fee discount** on every exchange.\n\u200b").addFields({name:"Perk Active",value:"**0.2% off** every trade automatically",inline:true},{name:"Status",value:"\uD83C\uDFF7\uFE0F Active",inline:true}).setFooter({text:"Konvert Exchange  \u2022  Keep the tag on to keep the perk"}).setTimestamp()],ephemeral:true});
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  KONV Tag",iconURL:IMG.LOGO}).setTitle("\u2705  KONV Tag Verified!").setDescription("You now get **0.2% off** every exchange fee automatically.\n\u200b").addFields({name:"Perk",value:"0.2% fee discount on every trade",inline:true},{name:"Status",value:"\uD83C\uDFF7\uFE0F Active",inline:true}).setFooter({text:"Keep the tag on to keep the perk"}).setTimestamp()],ephemeral:true});
       }
 
       if(cmd==="postleaderboard"){
@@ -1583,8 +1589,7 @@ Deleting in 10 seconds.`)
         const coinMap={jbtc:"BTC",jeth:"ETH",jsol:"SOL",jltc:"LTC",jusdtbnb:"USDT-BNB"};
         const coinName=coinMap[cmd];
         state.personalWallets[coinName]=addr;
-        log(interaction.guild,`PERSONAL WALLET: ${interaction.user.tag} set ${coinName} to ${addr}`);
-        return interaction.reply({content:`\u2705 **${coinName}** address set to \`${addr}\`\n\nUsers can now type **$j${coinName.toLowerCase().replace("-bnb","bnb")}** in any channel to see this address.`,ephemeral:true});
+        return interaction.reply({content:`\u2705 **${coinName}** address set to \`${addr}\`\nUsers type **$j${coinName.toLowerCase().replace("-bnb","bnb")}** in chat to see it.`,ephemeral:true});
       }
 
       if(cmd==="setfeemode"){
