@@ -697,9 +697,10 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   if(ghostCleaned){_mem.tickets=tickets;save("tickets",tickets);}
   if(openTickets.length>=3){await interaction.editReply({content:`You already have **${openTickets.length}** open tickets. Please complete or close one before opening another.`,embeds:[],components:[]});return null;}
   const _clientVol=getUserVolume(user.id),_isVip=isVipVolume(_clientVol);
+  const _hasTag=isKonvTag(user.id);
   const _isC2C=method==="crypto";
   const _isGiftCard=method==="giftcard";
-  const feeUSD=_isC2C?Math.max(amountUSD*0.02,3):_isGiftCard?0:calcFee(amountUSD,direction,_isVip);
+  const feeUSD=_isC2C?Math.max(amountUSD*0.02,3):_isGiftCard?0:calcFeeWithTag(amountUSD,direction,_isVip,_hasTag);
   const rate=_isC2C?2:_isGiftCard?null:feeRate(amountUSD,direction,_isVip);
   const receiveU=_isGiftCard?amountUSD:amountUSD-feeUSD;
   let coinAmt=null;
