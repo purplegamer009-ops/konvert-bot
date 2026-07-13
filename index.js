@@ -975,7 +975,7 @@ client.on(Events.MessageCreate,async message=>{
     const jwMap={btc:"BTC",eth:"ETH",sol:"SOL",ltc:"LTC",usdtbnb:"USDT-BNB"};
     const jwCoin=jwMap[jwKey];
     if(jwCoin&&state.personalWallets[jwCoin]){
-      await message.reply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange  \u2022  Wallet",iconURL:IMG.LOGO}).setTitle(`${jwCoin} Address`).setDescription(`\`\`\`${state.personalWallets[jwCoin]}\`\`\``).setFooter({text:"Only send to addresses confirmed by staff in your ticket  \u2022  Konvert"}).setTimestamp()]}).catch(()=>{});
+      await message.reply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange  \u2022  Wallet",iconURL:IMG.LOGO}).setTitle(`${jwCoin} Address`).setDescription(`**Tap to copy:**\n\`\`\`\n${state.personalWallets[jwCoin]}\n\`\`\``).setFooter({text:"Only send to addresses confirmed by staff in your ticket  \u2022  Konvert"}).setTimestamp()]}).catch(()=>{});
     } else {
       await message.reply({content:`\u274C No **${jwCoin||jwKey.toUpperCase()}** address set yet.`}).catch(()=>{});
     }
@@ -1551,13 +1551,9 @@ Deleting in 10 seconds.`)
       if(cmd==="claimtag"){
         await interaction.deferReply({ephemeral:true});
         const userId=interaction.user.id;
-        const member=await interaction.guild.members.fetch({user:userId,force:true}).catch(()=>null);
-        if(!member)return interaction.editReply({content:"\u274C Could not fetch your profile. Try again.",ephemeral:true});
-        const dn=(member.displayName||"").toUpperCase(),gn=(member.user.globalName||"").toUpperCase(),un=(member.user.username||"").toUpperCase();
-        const hasKonv=dn.includes("KONV")||gn.includes("KONV")||un.includes("KONV");
-        if(!hasKonv)return interaction.editReply({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("\u274C KONV Tag Not Detected").setDescription("Your Discord profile must show the **KONV** clan tag.\n\u200b").addFields({name:"How",value:"Set Konvert as your active clan in Discord profile settings.",inline:false}).setFooter({text:"Try again after setting the tag"}).setTimestamp()],ephemeral:true});
+        if(state.konvTagUsers.has(userId))return interaction.editReply({content:"\uD83C\uDFF7\uFE0F You already have the KONV tag perk active!",ephemeral:true});
         state.konvTagUsers.add(userId);
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  KONV Tag",iconURL:IMG.LOGO}).setTitle("\u2705  KONV Tag Verified!").setDescription("You now get **0.2% off** every exchange fee automatically.\n\u200b").addFields({name:"Perk",value:"0.2% fee discount on every trade",inline:true},{name:"Status",value:"\uD83C\uDFF7\uFE0F Active",inline:true}).setFooter({text:"Keep the tag on to keep the perk"}).setTimestamp()],ephemeral:true});
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  KONV Tag",iconURL:IMG.LOGO}).setTitle("\u2705  KONV Tag Perk Activated!").setDescription("You now get **0.2% off** every exchange fee automatically.\n\u200b").addFields({name:"Perk",value:"**0.2% fee discount** on every trade",inline:true},{name:"Status",value:"\uD83C\uDFF7\uFE0F Active",inline:true}).setFooter({text:"Konvert Exchange  \u2022  Keep the tag on to keep the perk"}).setTimestamp()],ephemeral:true});
       }
 
       if(cmd==="postleaderboard"){
