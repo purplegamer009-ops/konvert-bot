@@ -114,6 +114,7 @@ const CONFIG = {
 };
 
 const TIERS = [
+  { min:20000, label:"Opulent Client",  role:"1514890647436394496", emoji:"\uD83D\uDEE5\uFE0F" },
   { min:10000, label:"Whale Client",    role:"1483159341899976905", emoji:"\uD83D\uDC0B" },
   { min:7000,  label:"Godly Client",   role:"1483159233049657550", emoji:"\u26A1"        },
   { min:5000,  label:"Ethereal Client",role:"1483159184651325622", emoji:"\u2728"        },
@@ -569,7 +570,7 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("editpromo").setDescription("[Owner] Edit an existing promo code").addStringOption(o=>o.setName("code").setDescription("The promo code to edit").setRequired(true)).addStringOption(o=>o.setName("newcode").setDescription("Rename the code to something new").setRequired(false)).addNumberOption(o=>o.setName("discount").setDescription("New discount % off the fee (e.g. 25 = 25% off the fee amount)").setRequired(false)).addIntegerOption(o=>o.setName("maxuses").setDescription("New max uses (0 = unlimited)").setRequired(false)).addIntegerOption(o=>o.setName("addhours").setDescription("Extend expiry by X more hours").setRequired(false)).addStringOption(o=>o.setName("status").setDescription("Activate or deactivate").setRequired(false).addChoices({name:"Active",value:"active"},{name:"Paused",value:"paused"})).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("listpromos").setDescription("[Owner] View all active promo codes").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("rank").setDescription("See your rank on the leaderboard").addUserOption(o=>o.setName("user").setDescription("User to check (leave blank for yourself)").setRequired(false)),
-  new SlashCommandBuilder().setName("exchangerstats").setDescription("View your exchanger performance stats").addUserOption(o=>o.setName("user").setDescription("Exchanger to check").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("exchangerstats").setDescription("View your exchanger performance stats").addUserOption(o=>o.setName("user").setDescription("Exchanger to check").setRequired(false)),
   new SlashCommandBuilder().setName("setfeemode").setDescription("[Owner] Switch between standard (5-10%) and reduced (5-9%) fee tiers").addStringOption(o=>o.setName("mode").setDescription("Fee mode").setRequired(true).addChoices({name:"Standard (5-10%)",value:"standard"},{name:"Reduced (5-9%)",value:"reduced"})).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 ].map(c=>c.toJSON());
 
@@ -698,7 +699,7 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   const _clientVol=getUserVolume(user.id),_isVip=isVipVolume(_clientVol);
   const _isC2C=method==="crypto";
   const _isGiftCard=method==="giftcard";
-  const feeUSD=_isC2C?amountUSD*0.02:_isGiftCard?0:calcFee(amountUSD,direction,_isVip);
+  const feeUSD=_isC2C?Math.max(amountUSD*0.02,3):_isGiftCard?0:calcFee(amountUSD,direction,_isVip);
   const rate=_isC2C?2:_isGiftCard?null:feeRate(amountUSD,direction,_isVip);
   const receiveU=_isGiftCard?amountUSD:amountUSD-feeUSD;
   let coinAmt=null;
@@ -715,7 +716,7 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   catch(err){await interaction.editReply({content:`Failed to create ticket: ${err.message}`,embeds:[],components:[]});return null;}
   const ticketEmbed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(`${m.label} Exchange`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
     .setDescription(`**Welcome, <@${user.id}>**\n\nYour ticket is open. A **${m.label}** handler has been notified.\n\u200b`)
-    .addFields({name:"__Sending__",value:`**${sendLabel}**`,inline:true},{name:"__Receiving__",value:`**${receiveLabel}**`,inline:true},{name:"__Fee__",value:_isGiftCard?"**To be decided** — staff will confirm in ticket":`**${rate}%**  --  ${fmtUSD(feeUSD)}${_isVip?" \u26A1 VIP rate":""}`,inline:true},{name:direction==="send"?"__Your Receiving Wallet__":`__Your ${m.label} Details__`,value:`\`${walletInfo}\``,inline:false});
+    .addFields({name:"__Sending__",value:`**${sendLabel}**`,inline:true},{name:"__Receiving__",value:`**${receiveLabel}**`,inline:true},{name:_hasTag?"__Fee__ \uD83C\uDFF7\uFE0F":"__Fee__",value:_isGiftCard?"**To be decided** — staff will confirm in ticket":`**${rate}%**  --  ${fmtUSD(feeUSD)}${_isVip?" \u26A1 VIP rate":""}${_hasTag?" \uD83C\uDFF7\uFE0F KONV -0.2%":""}`,inline:true},{name:direction==="send"?"__Your Receiving Wallet__":`__Your ${m.label} Details__`,value:`\`${walletInfo}\``,inline:false});
   // Referral indicator
   const _tRefData=getReferrals();
   const _tReferrer=_tRefData.referred[user.id];
@@ -788,7 +789,7 @@ async function completeTrade(interaction,ticket,tickets){
   ticket.status="vouched";ticket.completedBy=ticket._overrideExchangerId||interaction.user.id;delete ticket._overrideExchangerId;ticket.completedAt=Date.now();ticket.amountUSD=parseFloat(ticket.amountUSD)||0;
   const ticketKey=interaction.channel.id;tickets[ticketKey]=ticket;
   _mem.tickets={...(_mem.tickets||{}),...tickets};save("tickets",_mem.tickets);
-  if(interaction.guild){updateStatChannel(interaction.guild).catch(()=>{});}
+  if(interaction.guild){updateStatChannel(interaction.guild).catch(()=>{});updateLiveLeaderboard(interaction.guild).catch(()=>{});}
   console.log(`[completeTrade] userId=${ticket.userId} amount=${ticket.amountUSD} total=${Object.keys(_mem.tickets).length}`);
   const _refData=getReferrals();
   const _referredByForVouch=_refData.referred[ticket.userId]||null;
@@ -957,6 +958,18 @@ client.on(Events.MessageCreate,async message=>{
       else if(isCoin(toRaw)&&COIN_LOGO[toRaw])embed.setThumbnail(COIN_LOGO[toRaw]);
       await message.reply({embeds:[embed]}).catch(()=>{});
     }catch(e){console.log("[autoConvert]",e.message);}
+    return;
+  }
+  const jwMatch=message.content.trim().match(/^\$j([A-Za-z]{2,10})$/i);
+  if(jwMatch){
+    const jwKey=jwMatch[1].toLowerCase();
+    const jwMap={btc:"BTC",eth:"ETH",sol:"SOL",ltc:"LTC",usdtbnb:"USDT-BNB"};
+    const jwCoin=jwMap[jwKey];
+    if(jwCoin&&state.personalWallets[jwCoin]){
+      await message.reply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange  \u2022  Personal Wallet",iconURL:IMG.LOGO}).setTitle(`${jwCoin} Address`).setDescription(`\`\`\`${state.personalWallets[jwCoin]}\`\`\``).setFooter({text:"Only send to addresses confirmed by staff in your ticket  \u2022  Konvert"}).setTimestamp()]}).catch(()=>{});
+    } else {
+      await message.reply({content:`\u274C No **${(jwCoin||jwKey.toUpperCase())}** address set yet. Owner can set it with \`/j${jwKey}\`.`}).catch(()=>{});
+    }
     return;
   }
   const match=message.content.trim().match(/^\$([A-Za-z]{2,10})$/i);
@@ -1250,9 +1263,9 @@ client.on(Events.InteractionCreate,async interaction=>{
         const entries=Object.entries(ref.points||{}).map(([uid,data])=>({uid,balance:data.balance||0,paid:data.paid||0,total:(data.balance||0)+(data.paid||0)})).filter(e=>e.total>0).sort((a,b)=>b.total-a.total).slice(0,10);
         if(!entries.length){return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert  \u00b7  Referral Program",iconURL:PTS_IMG}).setTitle("Referral Leaderboard").setThumbnail(PTS_IMG).setDescription("No referral activity yet. Be the first to refer someone and start earning.\n\nUse `/referral` to get your personal invite link.\n\u200b").setImage(IMG.BANNER).setFooter({text:"Konvert Referral Program  \u00b7  Top referrers by lifetime points"}).setTimestamp()]});}
         const medals=["🥇","🥈","🥉"];
-        const lines=entries.map((e,i)=>{const referredCount=Object.values(ref.referred).filter(r=>r===e.uid).length;return `${medals[i]||`**${i+1}.**`}  <@${e.uid}>  \u2014  **${e.total} pts** ($${pointsToDollars(e.total)})  \u00b7  ${referredCount} referred`;}).join("\n");
+        const lines=entries.map((e,i)=>{const referredCount=Object.values(ref.referred).filter(r=>r===e.uid).length;return `${medals[i]||`**${i+1}.**`}  <@${e.uid}>  \u2014  **${e.balance} pts bal**  \u00b7  **$${pointsToDollars(e.total)}** earned  \u00b7  ${referredCount} referred`;}).join("\n");
         const totalPts=entries.reduce((s,e)=>s+e.total,0);
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert  \u00b7  Referral Program",iconURL:PTS_IMG}).setTitle("Referral Leaderboard").setDescription(`Ranked by lifetime points earned. Top ${entries.length} referrers at Konvert.\n\u200b`).setThumbnail(PTS_IMG).addFields({name:"Rankings",value:lines,inline:false}).setImage(IMG.BANNER).setFooter({text:`${totalPts} total pts earned across all referrers  \u00b7  Konvert Referral Program`}).setTimestamp()]});
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert  \u00b7  Referral Program",iconURL:PTS_IMG}).setTitle("Referral Leaderboard").setDescription(`Ranked by lifetime points earned. Top ${entries.length} referrers at Konvert.\n\u200b`).setThumbnail(PTS_IMG).addFields({name:"Rankings",value:lines||"No referral activity yet.",inline:false}).setImage(IMG.BANNER).setFooter({text:`${totalPts} total pts earned  \u00b7  Konvert Referral Program`}).setTimestamp()]});
       }
 
       if(cmd==="referraladmin"){
@@ -1526,6 +1539,20 @@ Deleting in 10 seconds.`)
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  Trade Estimate",iconURL:IMG.LOGO}).setTitle(`${m.label}  \u2194  ${coinRaw}  \u2014  Estimate`).setThumbnail(COIN_LOGO[coinRaw]||IMG.LOGO).setDescription(`Live quote for your proposed trade. Open a ticket to proceed.\n\u200b`).addFields({name:"\uD83D\uDCE4  You Send",value:sendStr,inline:true},{name:"\uD83D\uDCE5  You Receive",value:receiveStr,inline:true},{name:"\u200b",value:"\u200b",inline:true},{name:"\uD83D\uDCB8  Fee",value:`**${rate}%**${vip?" \u26A1 VIP":""} \u2014 ${fmtUSD(fee)}`,inline:true},{name:`\uD83D\uDCC8  ${coinRaw} Price`,value:coinPrice?`**${fmtUSD(coinPrice)}**`:"Unavailable",inline:true},{name:`${tier.emoji}  Your Tier`,value:`**${tier.label}**`,inline:true}).setImage(IMG.BANNER).setFooter({text:"Estimate only  \u00b7  Final rate confirmed in your ticket  \u00b7  Konvert Exchange"}).setTimestamp()]});
       }
 
+      if(cmd==="claimtag"){
+        await interaction.deferReply({ephemeral:true});
+        const userId=interaction.user.id;
+        const member=await interaction.guild.members.fetch({user:userId,force:true}).catch(()=>null);
+        if(!member)return interaction.editReply({content:"\u274C Could not fetch your member data. Try again.",ephemeral:true});
+        const displayName=(member.displayName||"").toUpperCase();
+        const globalName=(member.user.globalName||"").toUpperCase();
+        const username=(member.user.username||"").toUpperCase();
+        const hasKonv=displayName.includes("KONV")||globalName.includes("KONV")||username.includes("KONV");
+        if(!hasKonv){return interaction.editReply({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("\u274C KONV Tag Not Detected").setDescription("Your Discord profile must display the **KONV** clan tag to claim this perk.\n\u200b").addFields({name:"How to get it",value:"Set the Konvert server as your active clan in Discord profile settings so **KONV** shows next to your name.",inline:false}).setFooter({text:"Konvert Exchange  \u2022  Claim again after setting the tag"}).setTimestamp()],ephemeral:true});}
+        state.konvTagUsers.add(userId);
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  KONV Tag Perk",iconURL:IMG.LOGO}).setTitle("\u2705  KONV Tag Verified!").setDescription("Your tag has been verified. You now receive a **0.2% fee discount** on every exchange.\n\u200b").addFields({name:"Perk Active",value:"**0.2% off** every trade automatically",inline:true},{name:"Status",value:"\uD83C\uDFF7\uFE0F Active",inline:true}).setFooter({text:"Konvert Exchange  \u2022  Keep the tag on to keep the perk"}).setTimestamp()],ephemeral:true});
+      }
+
       if(cmd==="postleaderboard"){
         await interaction.deferReply({ephemeral:true});
         const embed=await buildLiveLeaderboardEmbed();
@@ -1533,7 +1560,7 @@ Deleting in 10 seconds.`)
         state.liveLbMessageId=msg.id;
         state.liveLbChannelId=interaction.channel.id;
         saveLiveLb();
-        return interaction.editReply({content:`✅ Live leaderboard posted. It will auto-update every 10 minutes.`,ephemeral:true});
+        return interaction.editReply({content:`\u2705 Live leaderboard posted. It will auto-update after every exchange and every 10 minutes.`,ephemeral:true});
       }
 
       if(cmd==="togglereferraldms"){
@@ -1548,6 +1575,15 @@ Deleting in 10 seconds.`)
             :"Referral deal DM alerts are now off. You can re-enable anytime.")
           .setFooter({text:"Konvert Exchange"})
           .setTimestamp()],ephemeral:true});
+      }
+
+      if(["jbtc","jeth","jsol","jltc","jusdtbnb"].includes(cmd)){
+        const addr=interaction.options.getString("address");
+        const coinMap={jbtc:"BTC",jeth:"ETH",jsol:"SOL",jltc:"LTC",jusdtbnb:"USDT-BNB"};
+        const coinName=coinMap[cmd];
+        state.personalWallets[coinName]=addr;
+        log(interaction.guild,`PERSONAL WALLET: ${interaction.user.tag} set ${coinName} to ${addr}`);
+        return interaction.reply({content:`\u2705 **${coinName}** address set to \`${addr}\`\n\nUsers can now type **$j${coinName.toLowerCase().replace("-bnb","bnb")}** in any channel to see this address.`,ephemeral:true});
       }
 
       if(cmd==="setfeemode"){
@@ -2100,7 +2136,7 @@ This is active immediately and persists until revoked or the bot restarts.
         const parts=interaction.customId.split("__"),sendCoin=parts[1],recvCoin=parts[2];
         const rawAmt=parseFloat(interaction.fields.getTextInputValue("c2c_amount"));
         if(isNaN(rawAmt)||rawAmt<=0)return interaction.editReply("Please enter a valid amount greater than $0.");
-        const fee=rawAmt*0.02,rate=2;
+        const fee=Math.max(rawAmt*0.02,3),rate=2;
         state.pending[interaction.user.id]={method:"crypto",direction:"send",rawAmt,coin:sendCoin,walletInf:"C2C — staff will confirm wallet in ticket",notes:"",recvCoin};
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Confirm Crypto to Crypto Exchange").setThumbnail(COIN_LOGO[sendCoin]||IMG.LOGO).setDescription("Review your details before confirming. Staff will handle wallet addresses inside your ticket.\n\u200b").addFields({name:"You Send",value:`**${sendCoin}** worth **${fmtUSD(rawAmt)}**`,inline:true},{name:"You Receive",value:`**${recvCoin}**`,inline:true},{name:"Fee",value:`**2%** \u2014 ${fmtUSD(fee)}`,inline:true}).setFooter({text:"Wallet addresses confirmed inside your ticket  \u2022  Konvert"})],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_confirm_ticket").setLabel("Confirm & Open Ticket").setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId("btn_cancel_ticket").setLabel("Cancel").setStyle(ButtonStyle.Secondary))]});
       }
