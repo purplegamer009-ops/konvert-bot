@@ -396,7 +396,8 @@ const fmtUSD=n=>{if(n>=1)return`$${n.toLocaleString("en-US",{minimumFractionDigi
 function calcFee(usd,dir,isVip=false){const red=state.feeMode==="reduced";const base=dir==="receive"?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(red?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(usd<150?10:usd<350?9:usd<600?8:usd<800?7:6));const r=isVip?Math.max(base-0.75,1):base;return Math.max(usd*r/100,CONFIG.MIN_FEE);}
 function feeRate(usd,dir,isVip=false){const red=state.feeMode==="reduced";const base=dir==="receive"?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(red?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(usd<150?10:usd<350?9:usd<600?8:usd<800?7:6));return isVip?Math.max(base-0.75,1):base;}
 function isVipVolume(vol){return vol>=7000;}
-function isKonvTag(userId){return state.konvTagUsers&&state.konvTagUsers.has(userId);}
+const KONV_TAG_ROLE="1526282822468370566";
+function isKonvTag(userId,member){if(member)return member.roles.cache.has(KONV_TAG_ROLE)||(member.user.clan?.tag||"").toUpperCase()==="KONV";return state.konvTagUsers&&state.konvTagUsers.has(userId);}
 function calcFeeWithTag(usd,dir,isVip,hasTag){const base=calcFee(usd,dir,isVip);if(hasTag)return Math.max(base-(usd*0.002),CONFIG.MIN_FEE);return base;}
 const base=title=>new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(title).setTimestamp();
 function log(guild,msg){if(!CONFIG.LOG_CHANNEL||!guild)return;const ch=guild.channels.cache.get(CONFIG.LOG_CHANNEL);if(ch)ch.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setDescription("```"+msg+"```").setTimestamp()]}).catch(()=>{});}
@@ -574,6 +575,7 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("rank").setDescription("See your rank on the leaderboard").addUserOption(o=>o.setName("user").setDescription("User to check (leave blank for yourself)").setRequired(false)),
   new SlashCommandBuilder().setName("exchangerstats").setDescription("View your exchanger performance stats").addUserOption(o=>o.setName("user").setDescription("Exchanger to check").setRequired(false)),
   new SlashCommandBuilder().setName("claimtag").setDescription("Claim the KONV tag perk for 0.2% fee discount"),
+  new SlashCommandBuilder().setName("removetag").setDescription("[Owner] Remove KONV tag perk from a user").addUserOption(o=>o.setName("user").setDescription("User to remove (leave blank to remove yourself)").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("jbtc").setDescription("[Owner] Set your BTC wallet address").addStringOption(o=>o.setName("address").setDescription("BTC address").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("jeth").setDescription("[Owner] Set your ETH wallet address").addStringOption(o=>o.setName("address").setDescription("ETH address").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("jsol").setDescription("[Owner] Set your SOL wallet address").addStringOption(o=>o.setName("address").setDescription("SOL address").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
@@ -1003,6 +1005,31 @@ let _inviteCache=new Map();
 async function cacheInvites(guild){
   try{const invites=await guild.invites.fetch();_inviteCache=new Map(invites.map(i=>[i.code,i.uses]));}catch(e){console.error("[inviteCache]",e.message);}
 }
+
+// Real-time clan tag detection via raw gateway
+client.ws.on("GUILD_MEMBER_UPDATE",async(data)=>{
+  try{
+    if(data.guild_id!==CONFIG.GUILD_ID)return;
+    const userId=data.user?.id;
+    if(!userId)return;
+    const clanTag=(data.user?.clan?.tag||"").toUpperCase();
+    const hasKonv=clanTag==="KONV";
+    const guild=client.guilds.cache.get(CONFIG.GUILD_ID);
+    if(!guild)return;
+    const member=await guild.members.fetch({user:userId,force:true}).catch(()=>null);
+    if(!member)return;
+    const hasRole=member.roles.cache.has(KONV_TAG_ROLE);
+    if(hasKonv&&!hasRole){
+      await member.roles.add(KONV_TAG_ROLE).catch(()=>{});
+      state.konvTagUsers.add(userId);
+      console.log(`[konvTag] Auto-added: ${data.user.username}`);
+    }else if(!hasKonv&&hasRole){
+      await member.roles.remove(KONV_TAG_ROLE).catch(()=>{});
+      state.konvTagUsers.delete(userId);
+      console.log(`[konvTag] Auto-removed: ${data.user.username}`);
+    }
+  }catch(e){console.error("[konvTag]",e.message);}
+});
 
 client.on(Events.GuildMemberAdd,async member=>{
   try{
@@ -1551,9 +1578,17 @@ Deleting in 10 seconds.`)
       if(cmd==="claimtag"){
         await interaction.deferReply({ephemeral:true});
         const userId=interaction.user.id;
-        if(state.konvTagUsers.has(userId))return interaction.editReply({content:"\uD83C\uDFF7\uFE0F You already have the KONV tag perk active!",ephemeral:true});
+        const already=state.konvTagUsers.has(userId);
         state.konvTagUsers.add(userId);
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  KONV Tag",iconURL:IMG.LOGO}).setTitle("\u2705  KONV Tag Perk Activated!").setDescription("You now get **0.2% off** every exchange fee automatically.\n\u200b").addFields({name:"Perk",value:"**0.2% fee discount** on every trade",inline:true},{name:"Status",value:"\uD83C\uDFF7\uFE0F Active",inline:true}).setFooter({text:"Konvert Exchange  \u2022  Keep the tag on to keep the perk"}).setTimestamp()],ephemeral:true});
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  KONV Tag",iconURL:IMG.LOGO}).setTitle("\u2705  KONV Tag Perk Activated!").setDescription(`${already?"Tag perk refreshed.":"You now get **0.2% off** every exchange fee automatically."}\n\u200b`).addFields({name:"Perk",value:"**0.2% fee discount** on every trade",inline:true},{name:"Status",value:"\uD83C\uDFF7\uFE0F Active",inline:true}).setFooter({text:"Konvert Exchange  \u2022  Keep the tag on to keep the perk"}).setTimestamp()],ephemeral:true});
+      }
+
+      if(cmd==="removetag"){
+        await interaction.deferReply({ephemeral:true});
+        const target=interaction.options.getUser("user")||interaction.user;
+        state.konvTagUsers.delete(target.id);
+        try{const m=await interaction.guild.members.fetch(target.id).catch(()=>null);if(m&&m.roles.cache.has(KONV_TAG_ROLE))await m.roles.remove(KONV_TAG_ROLE).catch(()=>{});}catch{}
+        return interaction.editReply({content:`\u2705 KONV tag perk removed from **${target.username}**.`,ephemeral:true});
       }
 
       if(cmd==="postleaderboard"){
@@ -2436,6 +2471,8 @@ client.once(Events.ClientReady,async()=>{
     setInterval(()=>syncAllTierRoles(guild).catch(()=>{}),60*60*1000);
     // Run once on startup after a short delay (let everything load first)
     setTimeout(()=>syncAllTierRoles(guild).catch(()=>{}),30*1000);
+    // Sync KONV tag role holders into memory on startup
+    setTimeout(async()=>{try{const allM=await guild.members.fetch();let ct=0;for(const m of allM.values()){const clan=(m.user.clan?.tag||"").toUpperCase();if(m.roles.cache.has(KONV_TAG_ROLE)||clan==="KONV"){state.konvTagUsers.add(m.id);ct++;}}console.log(`[konvTag] Synced ${ct} holders`);}catch(e){console.error("[konvTag sync]",e.message);}},35*1000);
     // Refresh live leaderboard on startup
     setTimeout(()=>updateLiveLeaderboard(guild).catch(()=>{}),20*1000);
     // Update stat channel on startup
