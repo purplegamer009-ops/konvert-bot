@@ -397,7 +397,7 @@ function calcFee(usd,dir,isVip=false){const red=state.feeMode==="reduced";const 
 function feeRate(usd,dir,isVip=false){const red=state.feeMode==="reduced";const base=dir==="receive"?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(red?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(usd<150?10:usd<350?9:usd<600?8:usd<800?7:6));return isVip?Math.max(base-0.75,1):base;}
 function isVipVolume(vol){return vol>=7000;}
 const KONV_TAG_ROLE="1526282822468370566";
-function isKonvTag(userId,member){if(member)return member.roles.cache.has(KONV_TAG_ROLE)||(member.user.clan?.tag||"").toUpperCase()==="KONV";return state.konvTagUsers&&state.konvTagUsers.has(userId);}
+function isKonvTag(userId,member){if(member){const pg=member.user.primaryGuild;const hasPG=pg&&pg.identityEnabled&&pg.identityGuildId===CONFIG.GUILD_ID;return member.roles.cache.has(KONV_TAG_ROLE)||hasPG;}return state.konvTagUsers&&state.konvTagUsers.has(userId);}
 function calcFeeWithTag(usd,dir,isVip,hasTag){const base=calcFee(usd,dir,isVip);if(hasTag)return Math.max(base-(usd*0.002),CONFIG.MIN_FEE);return base;}
 const base=title=>new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(title).setTimestamp();
 function log(guild,msg){if(!CONFIG.LOG_CHANNEL||!guild)return;const ch=guild.channels.cache.get(CONFIG.LOG_CHANNEL);if(ch)ch.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setDescription("```"+msg+"```").setTimestamp()]}).catch(()=>{});}
@@ -1031,6 +1031,28 @@ client.ws.on("GUILD_MEMBER_UPDATE",async(data)=>{
   }catch(e){console.error("[konvTag]",e.message);}
 });
 
+// Auto assign/remove KONV role when user changes their primary guild (clan tag)
+client.on(Events.UserUpdate,async(oldUser,newUser)=>{
+  try{
+    const guild=client.guilds.cache.get(CONFIG.GUILD_ID);
+    if(!guild)return;
+    const member=await guild.members.fetch({user:newUser.id,force:false}).catch(()=>null);
+    if(!member)return;
+    const pg=newUser.primaryGuild;
+    const hasKonv=!!(pg&&pg.identityEnabled&&pg.identityGuildId===CONFIG.GUILD_ID);
+    const hasRole=member.roles.cache.has(KONV_TAG_ROLE);
+    if(hasKonv&&!hasRole){
+      await member.roles.add(KONV_TAG_ROLE).catch(()=>{});
+      state.konvTagUsers.add(newUser.id);
+      console.log(`[konvTag] Auto-added: ${newUser.username}`);
+    }else if(!hasKonv&&hasRole){
+      await member.roles.remove(KONV_TAG_ROLE).catch(()=>{});
+      state.konvTagUsers.delete(newUser.id);
+      console.log(`[konvTag] Auto-removed: ${newUser.username}`);
+    }
+  }catch(e){console.error("[konvTag UserUpdate]",e.message);}
+});
+
 client.on(Events.GuildMemberAdd,async member=>{
   try{
     const guild=member.guild;
@@ -1578,9 +1600,15 @@ Deleting in 10 seconds.`)
       if(cmd==="claimtag"){
         await interaction.deferReply({ephemeral:true});
         const userId=interaction.user.id;
-        const already=state.konvTagUsers.has(userId);
+        const member=await interaction.guild.members.fetch({user:userId,force:true}).catch(()=>null);
+        if(!member)return interaction.editReply({content:"\u274C Could not fetch your profile. Try again.",ephemeral:true});
+        const hasRole=member.roles.cache.has(KONV_TAG_ROLE);
+        const pg=member.user.primaryGuild;
+        const hasPG=pg&&pg.identityEnabled&&pg.identityGuildId===CONFIG.GUILD_ID;
+        if(!hasRole&&!hasPG)return interaction.editReply({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("\u274C KONV Tag Not Detected").setDescription("Set **Konvert** as your active clan in Discord profile settings, then run this command again.\n\u200b").setFooter({text:"Konvert Exchange  \u2022  Tag must be active"}).setTimestamp()],ephemeral:true});
         state.konvTagUsers.add(userId);
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  KONV Tag",iconURL:IMG.LOGO}).setTitle("\u2705  KONV Tag Perk Activated!").setDescription(`${already?"Tag perk refreshed.":"You now get **0.2% off** every exchange fee automatically."}\n\u200b`).addFields({name:"Perk",value:"**0.2% fee discount** on every trade",inline:true},{name:"Status",value:"\uD83C\uDFF7\uFE0F Active",inline:true}).setFooter({text:"Konvert Exchange  \u2022  Keep the tag on to keep the perk"}).setTimestamp()],ephemeral:true});
+        if(!hasRole)await member.roles.add(KONV_TAG_ROLE).catch(()=>{});
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  KONV Tag",iconURL:IMG.LOGO}).setTitle("\u2705  KONV Tag Perk Activated!").setDescription("KONV tag verified — **0.2% off** every exchange automatically.\n\u200b").addFields({name:"Perk",value:"**0.2% fee discount** on every trade",inline:true},{name:"Status",value:"\uD83C\uDFF7\uFE0F Active",inline:true}).setFooter({text:"Konvert Exchange  \u2022  Perk auto-removes when you remove the tag"}).setTimestamp()],ephemeral:true});
       }
 
       if(cmd==="removetag"){
@@ -2472,7 +2500,7 @@ client.once(Events.ClientReady,async()=>{
     // Run once on startup after a short delay (let everything load first)
     setTimeout(()=>syncAllTierRoles(guild).catch(()=>{}),30*1000);
     // Sync KONV tag role holders into memory on startup
-    setTimeout(async()=>{try{const allM=await guild.members.fetch();let ct=0;for(const m of allM.values()){const clan=(m.user.clan?.tag||"").toUpperCase();if(m.roles.cache.has(KONV_TAG_ROLE)||clan==="KONV"){state.konvTagUsers.add(m.id);ct++;}}console.log(`[konvTag] Synced ${ct} holders`);}catch(e){console.error("[konvTag sync]",e.message);}},35*1000);
+    setTimeout(async()=>{try{const allM=await guild.members.fetch();let ct=0;for(const m of allM.values()){const pg=m.user.primaryGuild;const hasPG=pg&&pg.identityEnabled&&pg.identityGuildId===CONFIG.GUILD_ID;if(m.roles.cache.has(KONV_TAG_ROLE)||hasPG){state.konvTagUsers.add(m.id);ct++;}}console.log(`[konvTag] Synced ${ct} holders`);}catch(e){console.error("[konvTag sync]",e.message);}},35*1000);
     // Refresh live leaderboard on startup
     setTimeout(()=>updateLiveLeaderboard(guild).catch(()=>{}),20*1000);
     // Update stat channel on startup
