@@ -673,10 +673,9 @@ function buildMineGrid(userId,game){
   return rows;
 }
 
-function buildDealEmbed({clientId,exchangerId,method,amountUSD,direction,coin,message,rating}){
-  const dirStr=direction&&coin&&method
-    ?(direction==="send"?`${method} \u2192 ${coin}`:`${coin} \u2192 ${method}`)
-    :null;
+function buildDealEmbed({clientId,exchangerId,method,amountUSD,direction,coin,message,rating,recvCoin}){
+  const _isC2CVouch=method==="crypto"&&coin&&recvCoin;
+  const dirStr=_isC2CVouch?`${coin} \u2192 ${recvCoin}`:(direction&&coin&&method?(direction==="send"?`${method} \u2192 ${coin}`:`${coin} \u2192 ${method}`):null);
   const embed=new EmbedBuilder()
     .setColor(0x7C4DFF)
     .setAuthor({name:"Konvert Exchange  \u00b7  Exchange Verified",iconURL:IMG.LOGO})
@@ -722,7 +721,7 @@ async function postVouch(guild,data){
   try{await ch.send({embeds:[buildDealEmbed(data)]});}catch(e){console.error("postVouch error:",e.message);}
 }
 
-async function createTicket(interaction,method,direction,amountUSD,coin,walletInfo,notes){
+async function createTicket(interaction,method,direction,amountUSD,coin,walletInfo,notes,recvCoin){
   const guild=interaction.guild,user=interaction.user,m=getMethod(method);
   const tickets=load("tickets");
   // Count open tickets where the channel still actually exists (no ghost tickets)
@@ -752,7 +751,8 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   let ch;
   try{ch=await guild.channels.create({name:`${m.value}-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,4)}`,type:ChannelType.GuildText,parent:CONFIG.TICKET_CATEGORY||null,permissionOverwrites:perms});}
   catch(err){await interaction.editReply({content:`Failed to create ticket: ${err.message}`,embeds:[],components:[]});return null;}
-  const ticketEmbed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(`${m.label} Exchange`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
+  const _c2cTitle=method==="crypto"&&recvCoin?`${coin} \u2192 ${recvCoin}`:null;
+  const ticketEmbed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(_c2cTitle||`${m.label} Exchange`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
     .setDescription(`**Welcome, <@${user.id}>**\n\nYour ticket is open. A **${m.label}** handler has been notified.\n\u200b`)
     .addFields({name:"__Sending__",value:sendLabel,inline:true},{name:"__Fee__",value:_isGiftCard?"To be decided — staff will confirm in ticket":`${rate}% — ${fmtUSD(feeUSD)}${_isVip?" \u26A1 VIP":""}${_hasTag?" \uD83C\uDFF7\uFE0F KONV discount applied":""}`,inline:true},{name:"\uD83D\uDCCC Next Step",value:"Staff will confirm wallet and payment details with you here.",inline:false});
   // Referral indicator
@@ -780,7 +780,7 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   if(CONFIG.STAFF_ROLE&&CONFIG.STAFF_ROLE!==mRoleId)pings.push(`<@&${CONFIG.STAFF_ROLE}>`);
   if(pings.length)await ch.send(`${pings.join(" ")} -- New **${m.label}** ticket!`);
   const t=Object.keys(_mem.tickets||{}).length>0?{..._mem.tickets}:load("tickets");
-  t[ch.id]={userId:user.id,userTag:user.tag,method,direction,coin,amountUSD,feeUSD,walletInfo,notes:notes||"",status:"open",createdAt:Date.now()};
+  t[ch.id]={userId:user.id,userTag:user.tag,method,direction,coin,recvCoin:recvCoin||null,amountUSD,feeUSD,walletInfo,notes:notes||"",status:"open",createdAt:Date.now()};
   _mem.tickets=t;save("tickets",t);
   log(guild,`TICKET: #${ch.name} | ${user.tag} | ${m.label} | ${fmtUSD(amountUSD)} | ${coin}`);
   return ch;
@@ -866,7 +866,7 @@ async function completeTrade(interaction,ticket,tickets){
   const _postOnce=async(reviewMsg)=>{
     if(_vouchPosted)return;
     _vouchPosted=true;
-    await postVouch(interaction.guild,{clientId:ticket.userId,exchangerId:ticket.completedBy,method:m?.label||ticket.method,amountUSD:ticket.amountUSD,direction:ticket.direction,coin:ticket.coin,message:reviewMsg||null,rating:5,referredBy:_referredByForVouch});
+    await postVouch(interaction.guild,{clientId:ticket.userId,exchangerId:ticket.completedBy,method:m?.label||ticket.method,amountUSD:ticket.amountUSD,direction:ticket.direction,coin:ticket.coin,recvCoin:ticket.recvCoin||null,message:reviewMsg||null,rating:5,referredBy:_referredByForVouch});
     updateStatChannel(interaction.guild).catch(()=>{});
     await doCloseTicket(interaction.channel,interaction.guild,interaction.user,"Trade completed");
     interaction.channel.delete().catch(()=>{});
@@ -2229,7 +2229,7 @@ This is active immediately and persists until revoked or the bot restarts.
         return interaction.reply({content:`\uD83C\uDF89 You are in! **${count}** ${count===1?"person":"people"} entered. Good luck!`,ephemeral:true});
       }
 
-      if(interaction.customId==="btn_confirm_ticket"){if(!interaction.deferred&&!interaction.replied)await interaction.deferUpdate().catch(()=>{});const pending=state.pending[interaction.user.id];if(!pending)return interaction.editReply({content:"Session expired. Please start again.",embeds:[],components:[]});delete state.pending[interaction.user.id];const ch=await createTicket(interaction,pending.method,pending.direction,pending.rawAmt,pending.coin,pending.walletInf,pending.notes);if(ch)return interaction.editReply({content:`Ticket opened \u2192 <#${ch.id}>`,embeds:[],components:[]});return;}
+      if(interaction.customId==="btn_confirm_ticket"){if(!interaction.deferred&&!interaction.replied)await interaction.deferUpdate().catch(()=>{});const pending=state.pending[interaction.user.id];if(!pending)return interaction.editReply({content:"Session expired. Please start again.",embeds:[],components:[]});delete state.pending[interaction.user.id];const ch=await createTicket(interaction,pending.method,pending.direction,pending.rawAmt,pending.coin,pending.walletInf,pending.notes,pending.recvCoin||null);if(ch)return interaction.editReply({content:`Ticket opened \u2192 <#${ch.id}>`,embeds:[],components:[]});return;}
       if(interaction.customId==="btn_cancel_ticket"){delete state.pending[interaction.user.id];return interaction.update({content:"Cancelled. Click Exchange Now to start again.",embeds:[],components:[]});}
 
       if(interaction.customId==="btn_support_ticket"){
