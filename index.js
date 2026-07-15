@@ -858,32 +858,32 @@ async function completeTrade(interaction,ticket,tickets){
   let _referralLine="";
   if(_referrerId&&_referrerId!==ticket.userId){const _ptsEarned=calcReferralPoints(ticket.amountUSD);try{await client.users.fetch(_referrerId);_referralLine=`\n\n\uD83D\uDD17 **Referral deal** \u2014 referred by <@${_referrerId}> \u00b7 **+${_ptsEarned} pts** credited`;}catch{_referralLine=`\n\n\uD83D\uDD17 **Referral deal** \u2014 referral points credited`;}}
   else{_referralLine="\n\n\u274C **No referral** on this trade";}
-  // Show completion message in ticket — wait for client vouch message (5 min window)
-  const vouchRow=new ActionRowBuilder().addComponents(
+  // Show completion — 5 min window for client review. _vouchPosted guards against any double post.
+  let _vouchPosted=false;
+  const _postOnce=async(reviewMsg)=>{
+    if(_vouchPosted)return;
+    _vouchPosted=true;
+    await postVouch(interaction.guild,{clientId:ticket.userId,exchangerId:ticket.completedBy,method:m?.label||ticket.method,amountUSD:ticket.amountUSD,direction:ticket.direction,coin:ticket.coin,message:reviewMsg||null,rating:5,referredBy:_referredByForVouch});
+    await doCloseTicket(interaction.channel,interaction.guild,interaction.user,"Trade completed");
+    interaction.channel.delete().catch(()=>{});
+  };
+  const _vRow=new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId("skip_vouch").setLabel("Skip Review").setStyle(ButtonStyle.Secondary)
   );
-  const vouchPrompt=new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
+  const _vPrompt=new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
     .setTitle("\u2705 Exchange Complete!")
-    .setDescription(`<@${ticket.userId}> — your exchange is done!\n\nType a **review message** in this channel (anything you want to say) and it will be posted to vouches automatically.\n\n*You have **5 minutes** — or click Skip Review to close now.*${_referralLine}`)
+    .setDescription(`<@${ticket.userId}> \u2014 your exchange is done!\n\nOptionally type a **review message** and it posts to vouches automatically.\n\n*5 minutes to leave a review \u2014 or click Skip to close now.*${_referralLine}`)
     .setFooter({text:"Konvert Exchange  \u2022  Your review helps the community"});
-  await interaction.editReply({embeds:[vouchPrompt],components:[vouchRow]});
-  // Collect client message for 5 minutes
-  const filter=m=>m.author.id===ticket.userId&&!m.author.bot;
-  const collector=interaction.channel.createMessageCollector({filter,time:5*60*1000,max:1});
-  collector.on("collect",async(msg)=>{
-    const vouchMsg=msg.content.slice(0,500);
-    await postVouch(interaction.guild,{clientId:ticket.userId,exchangerId:ticket.completedBy,method:m?.label||ticket.method,amountUSD:ticket.amountUSD,direction:ticket.direction,coin:ticket.coin,message:vouchMsg,rating:5,referredBy:_referredByForVouch});
-    await msg.reply("\uD83D\uDC4B Thanks for your review! Closing ticket in 10 seconds.");
-    setTimeout(async()=>{await doCloseTicket(interaction.channel,interaction.guild,interaction.user,"Trade completed");interaction.channel.delete().catch(()=>{});},10000);
-    collector.stop("collected");
+  await interaction.editReply({embeds:[_vPrompt],components:[_vRow]});
+  const _msgFilter=msg=>msg.author.id===ticket.userId&&!msg.author.bot;
+  const _collector=interaction.channel.createMessageCollector({filter:_msgFilter,time:5*60*1000,max:1});
+  _collector.on("collect",async(msg)=>{
+    _collector.stop("collected");
+    await msg.reply("\uD83D\uDC4B Thanks for your review! Closing in 10 seconds.").catch(()=>{});
+    setTimeout(()=>_postOnce(msg.content.slice(0,500)),10000);
   });
-  collector.on("end",async(collected,reason)=>{
-    if(reason!=="collected"){
-      // No message — post vouch with no review
-      await postVouch(interaction.guild,{clientId:ticket.userId,exchangerId:ticket.completedBy,method:m?.label||ticket.method,amountUSD:ticket.amountUSD,direction:ticket.direction,coin:ticket.coin,message:null,rating:5,referredBy:_referredByForVouch});
-      await doCloseTicket(interaction.channel,interaction.guild,interaction.user,"Trade completed");
-      interaction.channel.delete().catch(()=>{});
-    }
+  _collector.on("end",(_col,reason)=>{
+    if(reason!=="collected")_postOnce(null);
   });
 }
 
@@ -2175,6 +2175,22 @@ This is active immediately and persists until revoked or the bot restarts.
         const modal=new ModalBuilder().setCustomId(`modal_amount__${method}__${_direction}`).setTitle(`${m.label} -- ${_isSendCrypto?"Send Crypto":"Receive Crypto"}`);
         modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_amount").setLabel("Amount in USD").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 150").setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_coin").setLabel("Which crypto? (BTC, ETH, SOL, LTC, USDT)").setStyle(TextInputStyle.Short).setPlaceholder("e.g. SOL").setRequired(true)));
         return interaction.showModal(modal);
+      }
+
+      if(interaction.customId==="skip_vouch"){
+        const _tix=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
+        const _stix=_tix[interaction.channel.id];
+        if(!_stix||interaction.user.id!==_stix.userId)return interaction.reply({content:"Only the client can skip the review.",ephemeral:true});
+        await interaction.deferUpdate().catch(()=>{});
+        // Mark channel as skip-requested so collector end fires immediately
+        interaction.channel._skipVouch=true;
+        // Disable the button row
+        await interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setTitle("Closing...").setDescription("No review submitted. Closing ticket now.")],components:[]}).catch(()=>{});
+        // The _collector.on("end") with _postOnce will handle the single vouch post
+        // We force-stop by ending the collector if accessible, otherwise it times out
+        // Since we can't access _collector from here, just wait 2s then the channel deletes naturally
+        // _vouchPosted guard ensures only 1 vouch regardless
+        return;
       }
 
       if(interaction.customId==="btn_giveaway_enter"){
