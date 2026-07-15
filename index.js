@@ -2437,24 +2437,37 @@ async function checkAlerts(){
 }
 
 const GENERAL_CHANNEL_ID="1454793385750560894";
+// Stat channel — queue with retry to handle Discord 2/10min rate limit
 const STAT_CHANNEL_ID="1491619261821485056";
-async function updateStatChannel(guild){
+let _statPending=false;
+let _statRetryTimer=null;
+async function _doStatUpdate(){
   try{
-    console.log("[statChannel] attempting update...");
-    const ch=await client.channels.fetch(STAT_CHANNEL_ID).catch(e=>{console.log("[statChannel] fetch err:",e.message);return null;});
-    if(!ch){console.log("[statChannel] channel not found:",STAT_CHANNEL_ID);return;}
+    const ch=await client.channels.fetch(STAT_CHANNEL_ID).catch(()=>null);
+    if(!ch){console.log("[statChannel] not found");return;}
     const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
     const totalVol=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0).reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
     const formatted=totalVol>=1000000?`$${(totalVol/1000000).toFixed(2)}M`:totalVol>=1000?`$${Math.round(totalVol/1000)}K`:`$${Math.round(totalVol).toLocaleString("en-US")}`;
     const newName=`Total Exchanged: ${formatted}`;
-    console.log("[statChannel] current name:",ch.name,"new name:",newName);
-    if(ch.name===newName){console.log("[statChannel] already up to date");return;}
+    if(ch.name===newName){console.log("[statChannel] up to date:",newName);_statPending=false;return;}
     await ch.setName(newName);
-    console.log("[statChannel] success:",newName);
-  }catch(e){console.log("[statChannel] ERROR:",e.message,e.code||"");}
+    console.log("[statChannel] updated:",newName);
+    _statPending=false;
+    if(_statRetryTimer){clearTimeout(_statRetryTimer);_statRetryTimer=null;}
+  }catch(e){
+    console.log("[statChannel] err:",e.message,"retrying in 5min");
+    // Rate limited — retry in 5 minutes
+    if(_statRetryTimer)clearTimeout(_statRetryTimer);
+    _statRetryTimer=setTimeout(()=>{_statRetryTimer=null;_doStatUpdate();},5*60*1000);
+  }
+}
+async function updateStatChannel(guild){
+  _statPending=true;
+  await _doStatUpdate();
 }
 function scheduleStatChannelUpdate(guild){
-  updateStatChannel(guild).catch((e)=>console.log("[statChannel outer]",e.message));
+  _statPending=true;
+  _doStatUpdate().catch(()=>{});
 }
 
 async function postDailyCryptoFact(guild){
