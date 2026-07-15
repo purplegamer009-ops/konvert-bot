@@ -114,7 +114,11 @@ const CONFIG = {
 };
 
 const TIERS = [
-  { min:20000, label:"Opulent Client",  role:"1514890647436394496", emoji:"\uD83D\uDEE5\uFE0F" },
+  { min:100000, label:"Legendary Client", role:"1526741064076099704", emoji:"\uD83D\uDC51" },
+  { min:75000,  label:"Elite Client",     role:"1526740903803355307",  emoji:"\uD83D\uDC8E" },
+  { min:50000,  label:"Diamond Client",   role:"1526740774132256839",  emoji:"\uD83D\uDCC8" },
+  { min:35000,  label:"Prestige Client",  role:"1526740529943937124",  emoji:"\uD83C\uDF1F" },
+  { min:20000,  label:"Opulent Client",   role:"1514890647436394496", emoji:"\uD83D\uDEE5\uFE0F" },
   { min:10000, label:"Whale Client",    role:"1483159341899976905", emoji:"\uD83D\uDC0B" },
   { min:7000,  label:"Godly Client",   role:"1483159233049657550", emoji:"\u26A1"        },
   { min:5000,  label:"Ethereal Client",role:"1483159184651325622", emoji:"\u2728"        },
@@ -200,7 +204,7 @@ const METHODS=[
 ];
 const getMethod=v=>METHODS.find(m=>m.value===v)||null;
 
-const COINS=["BTC","ETH","SOL","LTC","USDT","USDC","XRP","BNB","ADA","DOGE","MATIC","AVAX","DOT","LINK","TRX","SHIB","UNI","ATOM","FTM","NEAR"];
+const COINS=["BTC","ETH","SOL","LTC","USDT","USDC","XRP","BNB","ADA","DOGE","MATIC","AVAX","DOT","LINK","TRX","SHIB","UNI","ATOM","FTM","NEAR","ARB","OP","MANA","SAND","APE","IMX","GALA","AXS","ENJ","CHZ","FLOW","ICP","HBAR","VET","EOS","ZEC","DASH","XMR","XLM","ALGO","EGLD","THETA","KLAY","ROSE","ONE","CELO","QTUM","ZIL","ICX","ONT","WAVES","BAT","GRT","MKR","AAVE","COMP","SNX","YFI","SUSHI","CRV","1INCH","BAL","BAND","KNC","ZRX","REN","NMR","ANKR","CELR","SKL","STORJ","ORN","OGN","LRC","PERP","DYDX","CAKE","TWT","ALPHA","AUTO","BAKE","BNX","C98","CHESS","MBOX","MDX","SFP","TKO","XVS","BIFI","ELF","FOR","FRONT","HARD","INJ","KAVA","LINA","MITH","NAV","NULS","PAXG","PEARL","QNT","RAY","RSR","RUNE","SRM","STX","TFUEL","VGX","WAXP","WRX","XTZ","ZEN"];
 const GECKO={BTC:"bitcoin",ETH:"ethereum",SOL:"solana",LTC:"litecoin",USDT:"tether",USDC:"usd-coin",XRP:"ripple",BNB:"binancecoin",ADA:"cardano",DOGE:"dogecoin",MATIC:"matic-network",AVAX:"avalanche-2",DOT:"polkadot",LINK:"chainlink",TRX:"tron",SHIB:"shiba-inu",UNI:"uniswap",ATOM:"cosmos",FTM:"fantom",NEAR:"near"};
 const COIN_LOGO={BTC:"https://assets.coingecko.com/coins/images/1/large/bitcoin.png",ETH:"https://assets.coingecko.com/coins/images/279/large/ethereum.png",SOL:"https://assets.coingecko.com/coins/images/4128/large/solana.png",LTC:"https://assets.coingecko.com/coins/images/2/large/litecoin.png",USDT:"https://assets.coingecko.com/coins/images/325/large/Tether.png",USDC:"https://assets.coingecko.com/coins/images/6319/large/usdc.png",XRP:"https://assets.coingecko.com/coins/images/44/large/xrp-symbol-white-128.png",BNB:"https://assets.coingecko.com/coins/images/825/large/binance-coin-logo.png",ADA:"https://assets.coingecko.com/coins/images/975/large/cardano.png",DOGE:"https://assets.coingecko.com/coins/images/5/large/dogecoin.png"};
 
@@ -402,7 +406,7 @@ function calcFeeWithTag(usd,dir,isVip,hasTag){const base=calcFee(usd,dir,isVip);
 const base=title=>new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(title).setTimestamp();
 function log(guild,msg){if(!CONFIG.LOG_CHANNEL||!guild)return;const ch=guild.channels.cache.get(CONFIG.LOG_CHANNEL);if(ch)ch.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setDescription("```"+msg+"```").setTimestamp()]}).catch(()=>{});}
 
-const BINANCE={BTC:"BTCUSDT",ETH:"ETHUSDT",SOL:"SOLUSDT",LTC:"LTCUSDT",XRP:"XRPUSDT",BNB:"BNBUSDT",ADA:"ADAUSDT",DOGE:"DOGEUSDT",MATIC:"MATICUSDT",AVAX:"AVAXUSDT",DOT:"DOTUSDT",LINK:"LINKUSDT",TRX:"TRXUSDT",UNI:"UNIUSDT",ATOM:"ATOMUSDT",NEAR:"NEARUSDT",SHIB:"SHIBUSDT"};
+const BINANCE={BTC:"BTCUSDT",ETH:"ETHUSDT",SOL:"SOLUSDT",LTC:"LTCUSDT",XRP:"XRPUSDT",BNB:"BNBUSDT",ADA:"ADAUSDT",DOGE:"DOGEUSDT",MATIC:"MATICUSDT",AVAX:"AVAXUSDT",DOT:"DOTUSDT",LINK:"LINKUSDT",TRX:"TRXUSDT",UNI:"UNIUSDT",ATOM:"ATOMUSDT",NEAR:"NEARUSDT",SHIB:"SHIBUSDT",ARB:"ARBUSDT",OP:"OPUSDT",MANA:"MANAUSDT",SAND:"SANDUSDT",APE:"APEUSDT",IMX:"IMXUSDT",GALA:"GALAUSDT",AXS:"AXSUSDT",ENJ:"ENJUSDT",CHZ:"CHZUSDT",FLOW:"FLOWUSDT",ICP:"ICPUSDT",HBAR:"HBARUSDT",VET:"VETUSDT",EOS:"EOSUSDT",ZEC:"ZECUSDT",DASH:"DASHUSDT",XMR:"XMRUSDT",XLM:"XLMUSDT",ALGO:"ALGOUSDT",EGLD:"EGLDUSDT",THETA:"THETAUSDT",KLAY:"KLAYUSDT",ROSE:"ROSEUSDT",ONE:"ONEUSDT",CELO:"CELOUSDT",QTUM:"QTUMUSDT",ZIL:"ZILUSDT",ICX:"ICXUSDT",ONT:"ONTUSDT",WAVES:"WAVESUSDT",BAT:"BATUSDT",GRT:"GRTUSDT",MKR:"MKRUSDT",AAVE:"AAVEUSDT",COMP:"COMPUSDT",SNX:"SNXUSDT",YFI:"YFIUSDT",SUSHI:"SUSHIUSDT",CRV:"CRVUSDT","1INCH":"1INCHUSDT",BAL:"BALUSDT",BAND:"BANDUSDT",KNC:"KNCUSDT",ZRX:"ZRXUSDT",REN:"RENUSDT",NMR:"NMRUSDT",ANKR:"ANKRUSDT",CELR:"CELRUSDT",SKL:"SKLUSDT",STORJ:"STORJUSDT",LRC:"LRCUSDT",PERP:"PERPUSDT",DYDX:"DYDXUSDT",CAKE:"CAKEUSDT",INJ:"INJUSDT",KAVA:"KAVAUSDT",STX:"STXUSDT",RUNE:"RUNEUSDT",RAY:"RAYUSDT",RSR:"RSRUSDT",SRM:"SRMUSDT",XTZ:"XTZUSDT",QNT:"QNTUSDT",PAXG:"PAXGUSDT",ZEN:"ZENUSDT",TFUEL:"TFUELUSDT",WRX:"WRXUSDT",WAXP:"WAXPUSDT",VGX:"VGXUSDT"};
 const STABLE=new Set(["USDT","USDC"]);
 const _priceCache={},_inFlight={};
 
@@ -575,6 +579,7 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("rank").setDescription("See your rank on the leaderboard").addUserOption(o=>o.setName("user").setDescription("User to check (leave blank for yourself)").setRequired(false)),
   new SlashCommandBuilder().setName("exchangerstats").setDescription("View your exchanger performance stats").addUserOption(o=>o.setName("user").setDescription("Exchanger to check").setRequired(false)),
   new SlashCommandBuilder().setName("claimtag").setDescription("Claim the KONV tag perk for 0.2% fee discount"),
+  new SlashCommandBuilder().setName("tierlist").setDescription("See all client tiers and their requirements"),
   new SlashCommandBuilder().setName("giveaway").setDescription("[Owner] Start a KONV-tag-only giveaway").addStringOption(o=>o.setName("prize").setDescription("Prize description").setRequired(true)).addIntegerOption(o=>o.setName("minutes").setDescription("Duration in minutes").setRequired(true)).addIntegerOption(o=>o.setName("winners").setDescription("Number of winners (default 1)").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("giveawayend").setDescription("[Owner] End active giveaway early").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("removetag").setDescription("[Owner] Remove KONV tag perk from a user").addUserOption(o=>o.setName("user").setDescription("User to remove (leave blank to remove yourself)").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
@@ -1018,7 +1023,7 @@ client.on(Events.MessageCreate,async message=>{
     const jwMap={btc:"BTC",eth:"ETH",sol:"SOL",ltc:"LTC",usdtbnb:"USDT-BNB"};
     const jwCoin=jwMap[jwKey];
     if(jwCoin&&state.personalWallets[jwCoin]){
-      await message.reply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange  \u2022  Wallet",iconURL:IMG.LOGO}).setTitle(`${jwCoin} Address`).setDescription(`**Tap to copy:**\n\`\`\`\n${state.personalWallets[jwCoin]}\n\`\`\``).setFooter({text:"Only send to addresses confirmed by staff in your ticket  \u2022  Konvert"}).setTimestamp()]}).catch(()=>{});
+      await message.channel.send({content:state.personalWallets[jwCoin]}).catch(()=>{});
     } else {
       await message.reply({content:`\u274C No **${jwCoin||jwKey.toUpperCase()}** address set yet.`}).catch(()=>{});
     }
@@ -1495,10 +1500,14 @@ Deleting in 10 seconds.`)
         const target=interaction.options.getUser("user");
         const tickets=Object.keys(_mem.tickets||{}).length>0?{..._mem.tickets}:load("tickets");
         let removed=0;
-        for(const [key,t] of Object.entries(tickets)){if(t.userId===target.id&&t.method==="adjustment"){delete tickets[key];removed++;}}
+        for(const [key,t] of Object.entries(tickets)){if(t.userId===target.id){delete tickets[key];removed++;}}
         _mem.tickets=tickets;save("tickets",tickets);
-        const newVol=getUserVolume(target.id);await applyTierRole(interaction.guild,target.id,newVol);
-        return interaction.reply({content:`Stats reset for **${target.tag||target.username}**. Removed **${removed}** adjustment entr${removed!==1?"ies":"y"}. Volume is now **${fmtUSD(newVol)}** from real trades only.`,ephemeral:true});
+        dbSet("konvert_tickets",tickets).catch(()=>{});
+        delete state.volumeAdj[target.id];
+        const ref=getReferrals();delete ref.points[target.id];saveReferrals(ref);
+        try{const member=await interaction.guild.members.fetch(target.id).catch(()=>null);if(member){for(const t of TIERS){if(t.role&&member.roles.cache.has(t.role))await member.roles.remove(t.role).catch(()=>{});}}}catch{}
+        await applyTierRole(interaction.guild,target.id,0);
+        return interaction.reply({content:`\u2705 All stats wiped for **${target.tag||target.username}**. Removed **${removed}** entries, cleared adjustments, reset tier to New Client.`,ephemeral:true});
       }
 
       if(cmd==="clearleaderboard"){
@@ -1555,6 +1564,7 @@ Deleting in 10 seconds.`)
         delete ref.inviteCodes[target.id];saveReferrals(ref);
         try{const member=await interaction.guild.members.fetch(target.id).catch(()=>null);if(member){for(const t of TIERS){if(t.role&&member.roles.cache.has(t.role))await member.roles.remove(t.role).catch(()=>{});}}}catch{}
         try{await target.send({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Account Reset").setDescription("Your exchange history and stats have been reset by staff.\n\nIf you believe this is a mistake, please open a support ticket.").setFooter({text:"Konvert Exchange"}).setTimestamp()]});}catch{}
+        delete state.volumeAdj[target.id];
         log(interaction.guild,`WIPESTATS: ${interaction.user.tag} wiped ALL data for ${target.tag||target.username} \u2014 ${removed} entries removed`);
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert  \u00b7  Admin",iconURL:IMG.LOGO}).setTitle("User Wiped").setThumbnail(target.displayAvatarURL({size:128})).setDescription(`All data for <@${target.id}> has been permanently removed.\n\u200b`).addFields({name:"Entries Removed",value:`**${removed}**`,inline:true},{name:"Referral Points",value:"**Cleared**",inline:true},{name:"Tier Roles",value:"**Removed**",inline:true}).setFooter({text:`Wiped by ${interaction.user.tag}  \u00b7  Konvert Exchange`}).setTimestamp()]});
       }
@@ -1636,6 +1646,11 @@ Deleting in 10 seconds.`)
         const sendStr=direction==="send"?`**${fmtUSD(amount)}** via **${m.label}**`:`**${coinRaw}** worth **${fmtUSD(amount)}**`;
         const receiveStr=coinLine||(direction==="send"?`~${fmtUSD(receive)} worth of ${coinRaw}`:`${fmtUSD(receive)} via ${m.label}`);
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  Trade Estimate",iconURL:IMG.LOGO}).setTitle(`${m.label}  \u2194  ${coinRaw}  \u2014  Estimate`).setThumbnail(COIN_LOGO[coinRaw]||IMG.LOGO).setDescription(`Live quote for your proposed trade. Open a ticket to proceed.\n\u200b`).addFields({name:"\uD83D\uDCE4  You Send",value:sendStr,inline:true},{name:"\uD83D\uDCE5  You Receive",value:receiveStr,inline:true},{name:"\u200b",value:"\u200b",inline:true},{name:"\uD83D\uDCB8  Fee",value:`**${rate}%**${vip?" \u26A1 VIP":""} \u2014 ${fmtUSD(fee)}`,inline:true},{name:`\uD83D\uDCC8  ${coinRaw} Price`,value:coinPrice?`**${fmtUSD(coinPrice)}**`:"Unavailable",inline:true},{name:`${tier.emoji}  Your Tier`,value:`**${tier.label}**`,inline:true}).setImage(IMG.BANNER).setFooter({text:"Estimate only  \u00b7  Final rate confirmed in your ticket  \u00b7  Konvert Exchange"}).setTimestamp()]});
+      }
+
+      if(cmd==="tierlist"){
+        const lines=TIERS.map(t=>`${t.emoji} **${t.label}** \u2014 **$${t.min.toLocaleString()}+**${t.min>=7000?" \u26A1 VIP rate":""}${t.role&&!t.role.startsWith("ROLE_")?" \u2014 <@&"+t.role+">":""}`).join("\n");
+        return interaction.reply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange \u00b7 Client Tiers",iconURL:IMG.LOGO}).setTitle("Client Tier Ranks").setDescription("Earn your tier by exchanging volume on Konvert. Tiers are auto-assigned after every trade. All tiers from \u26A1 Godly Client and above receive a **0.75% VIP fee discount**.\n\u200b").addFields({name:"All Tiers",value:lines,inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange \u2022 Tiers auto-assigned after every trade"}).setTimestamp()],ephemeral:false});
       }
 
       if(cmd==="claimtag"){
