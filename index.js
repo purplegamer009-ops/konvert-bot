@@ -755,8 +755,6 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   const ticketEmbed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(`${m.label} Exchange`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
     .setDescription(`**Welcome, <@${user.id}>**\n\nYour ticket is open. A **${m.label}** handler has been notified.\n\u200b`)
     .addFields({name:"__Sending__",value:`**${sendLabel}**`,inline:true},{name:_hasTag?"__Fee__ \uD83C\uDFF7\uFE0F":"__Fee__",value:_isGiftCard?"**To be decided** — staff will confirm in ticket":`**${rate}%**  --  ${fmtUSD(feeUSD)}${_isVip?" \u26A1 VIP rate":""}${_hasTag?" \uD83C\uDFF7\uFE0F KONV -0.2%":""}`,inline:true},{name:"\uD83D\uDCCC Next Step",value:"Staff will confirm wallet and payment details with you here.",inline:false});
-  const _WARN_MSGS=["\u26A0\uFE0F **Impersonator alert:** Owners **@3uce** and **@jswaps** will NEVER DM you first. Random DM? Block and report.","\uD83D\uDEAB **Stay safe:** All communication in this ticket ONLY. Anyone DMing you as Konvert staff is an impersonator.","\uD83D\uDD12 **Security:** Never send crypto to addresses outside this ticket. Our team only contacts you here."];
-  if(Math.random()<0.5)ticketEmbed.addFields({name:"\u26A0\uFE0F Security Reminder",value:_WARN_MSGS[Math.floor(Math.random()*_WARN_MSGS.length)],inline:false});
   // Referral indicator
   const _tRefData=getReferrals();
   const _tReferrer=_tRefData.referred[user.id];
@@ -920,6 +918,17 @@ client.on(Events.MessageCreate,async message=>{
   if(message.channel.type!==undefined){
     const tickets=Object.keys(_mem.tickets||{}).length?_mem.tickets:load("tickets");
     const ticket=tickets[message.channel.id];
+    // Security reminder after 10-15 messages in ticket
+    if(ticket&&ticket.status==="open"){
+      const _warnAfter=Math.floor(Math.random()*6)+10; // 10-15
+      if(!state._ticketMsgCount)state._ticketMsgCount={};
+      const _chId=message.channel.id;
+      state._ticketMsgCount[_chId]=(state._ticketMsgCount[_chId]||0)+1;
+      if(state._ticketMsgCount[_chId]===_warnAfter){
+        const _wMsgs=["\u26A0\uFE0F **Impersonator alert:** Owners **@3uce** and **@jswaps** will NEVER DM you first. Got a random DM claiming to be us? Block and report immediately.","\uD83D\uDEAB **Security reminder:** All communication happens in this ticket ONLY. Anyone DMing you claiming to be Konvert staff is an impersonator.","\uD83D\uDD12 **Stay safe:** Never send crypto to wallet addresses outside this ticket. Our team only contacts you here."];
+        await message.channel.send({content:`\u26A0\uFE0F **Security Reminder**\n${_wMsgs[Math.floor(Math.random()*_wMsgs.length)]}`}).catch(()=>{});
+      }
+    }
     if(ticket&&ticket.status==="open"&&ticket.userId===message.author.id){
       const typed=message.content.trim().toLowerCase();
       const activeCodes=Object.entries(state.promos||{}).filter(([,p])=>p.active).map(([c])=>c);
@@ -1435,7 +1444,7 @@ Deleting in 10 seconds.`)
 
       if(cmd==="snapshot"){
         await interaction.deferReply({ephemeral:true});
-        const guild=interaction.guild,all=Object.values(load("tickets")),done=all.filter(t=>t.status==="vouched"&&t.amountUSD&&t.method!=="adjustment"),open=all.filter(t=>t.status==="open");const _snapNow=new Date(),_snapESTMid=new Date(_snapNow);_snapESTMid.setUTCHours(5,0,0,0);if(_snapESTMid>_snapNow)_snapESTMid.setUTCDate(_snapESTMid.getUTCDate()-1);const today=done.filter(t=>t.completedAt&&t.completedAt>=_snapESTMid.getTime()),week=done.filter(t=>t.completedAt&&Date.now()-t.completedAt<7*86400000),totalVol=done.reduce((s,t)=>s+(t.amountUSD||0),0);
+        const guild=interaction.guild,all=Object.values(load("tickets")),done=all.filter(t=>["vouched","completed"].includes(t.status)&&t.amountUSD&&t.method!=="adjustment"),open=all.filter(t=>t.status==="open"&&t.method!=="adjustment");const _snapNow=new Date(),_snapESTMid=new Date(_snapNow);_snapESTMid.setUTCHours(5,0,0,0);if(_snapESTMid>_snapNow)_snapESTMid.setUTCDate(_snapESTMid.getUTCDate()-1);const today=done.filter(t=>t.completedAt&&t.completedAt>=_snapESTMid.getTime()),week=done.filter(t=>t.completedAt&&Date.now()-t.completedAt<7*86400000),totalVol=done.reduce((s,t)=>s+(t.amountUSD||0),0);
         const methods={},coins={},byEx={};done.forEach(t=>{if(t.method)methods[t.method]=(methods[t.method]||0)+1;if(t.coin)coins[t.coin]=(coins[t.coin]||0)+1;if(t.completedBy)byEx[t.completedBy]=(byEx[t.completedBy]||0)+1;});
         const topMethod=Object.entries(methods).sort((a,b)=>b[1]-a[1])[0],topCoin=Object.entries(coins).sort((a,b)=>b[1]-a[1])[0],topEx=Object.entries(byEx).sort((a,b)=>b[1]-a[1])[0];
         await guild.members.fetch();
@@ -1789,7 +1798,7 @@ Deleting in 10 seconds.`)
         await guild.members.fetch();
         const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
         const done=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0);
-        const open=allT.filter(t=>t.status==="open");
+        const open=allT.filter(t=>t.status==="open"&&t.method!=="adjustment");
         const totalVol=done.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
         const today=done.filter(t=>t.completedAt&&Date.now()-t.completedAt<86400000);
         const week=done.filter(t=>t.completedAt&&Date.now()-t.completedAt<7*86400000);
@@ -2429,9 +2438,11 @@ async function updateStatChannel(guild){
     const ch=guild.channels.cache.get(STAT_CHANNEL_ID)||await guild.channels.fetch(STAT_CHANNEL_ID).catch(()=>null);
     if(!ch)return;
     const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
-    const totalVol=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0).reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
-    const formatted=totalVol>=1000000?`$${(totalVol/1000000).toFixed(2)}M`:(totalVol>=1000?`$${Math.round(totalVol/1000)}K`:`$${Math.round(totalVol).toLocaleString("en-US")}`);
-    await ch.setName(`Total Exchanged: ${formatted}`).catch(()=>{});
+    const _statDone=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0);
+    const totalVol=_statDone.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
+    const _statOpen=allT.filter(t=>t.status==="open"&&t.method!=="adjustment").length;
+    const formatted=totalVol>=1000000?`$${(totalVol/1000000).toFixed(1)}M`:totalVol>=1000?`$${(totalVol/1000).toFixed(1)}K`:`$${Math.round(totalVol)}`;
+    await ch.setName(`\uD83D\uDCB0 Exchanged: ${formatted} (${_statDone.length} trades)`).catch(()=>{});
     console.log(`[statChannel] updated to ${formatted}`);
   }catch(e){console.log("[statChannel]",e.message);}
 }
@@ -2491,7 +2502,7 @@ async function postDailyDigest(guild){
     const today=done.filter(t=>t.completedAt&&t.completedAt>=todayStart);
     const todayVol=today.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
     const todayFees=today.reduce((s,t)=>s+(parseFloat(t.feeUSD)||0),0);
-    const open=allT.filter(t=>t.status==="open").length;
+    const open=allT.filter(t=>t.status==="open"&&t.method!=="adjustment").length;
     const disputes=allT.filter(t=>t.status==="dispute").length;
 
     // Top exchanger today
