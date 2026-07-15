@@ -2438,27 +2438,19 @@ async function checkAlerts(){
 
 const GENERAL_CHANNEL_ID="1454793385750560894";
 const STAT_CHANNEL_ID="1491619261821485056";
-let _statUpdateTimer=null;
-function scheduleStatChannelUpdate(guild){
-  if(_statUpdateTimer)clearTimeout(_statUpdateTimer);
-  _statUpdateTimer=setTimeout(()=>{
-    _statUpdateTimer=null;
-    updateStatChannel(guild).catch(()=>{});
-  },3000); // 3s debounce — batches rapid updates, avoids Discord rate limit
-}
-
 async function updateStatChannel(guild){
   try{
     const ch=guild.channels.cache.get(STAT_CHANNEL_ID)||await guild.channels.fetch(STAT_CHANNEL_ID).catch(()=>null);
     if(!ch)return;
     const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
-    const _statDone=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0);
-    const totalVol=_statDone.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
-    const _statOpen=allT.filter(t=>t.status==="open"&&t.method!=="adjustment").length;
-    const formatted=totalVol>=1000000?`$${Math.round(totalVol/1000000)}M`:totalVol>=1000?`$${Math.round(totalVol/1000)}K`:`$${Math.round(totalVol)}`;
+    const totalVol=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0).reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
+    const formatted=totalVol>=1000000?`$${(totalVol/1000000).toFixed(2)}M`:totalVol>=1000?`$${Math.round(totalVol/1000)}K`:`$${Math.round(totalVol).toLocaleString("en-US")}`;
     await ch.setName(`Total Exchanged: ${formatted}`).catch(()=>{});
     console.log(`[statChannel] updated to ${formatted}`);
   }catch(e){console.log("[statChannel]",e.message);}
+}
+function scheduleStatChannelUpdate(guild){
+  updateStatChannel(guild).catch(()=>{});
 }
 
 async function postDailyCryptoFact(guild){
