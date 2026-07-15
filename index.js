@@ -827,7 +827,7 @@ async function completeTrade(interaction,ticket,tickets){
   ticket.status="vouched";ticket.completedBy=ticket._overrideExchangerId||interaction.user.id;delete ticket._overrideExchangerId;ticket.completedAt=Date.now();ticket.amountUSD=parseFloat(ticket.amountUSD)||0;
   const ticketKey=interaction.channel.id;tickets[ticketKey]=ticket;
   _mem.tickets={...(_mem.tickets||{}),...tickets};save("tickets",_mem.tickets);
-  if(interaction.guild){updateStatChannel(interaction.guild).catch(()=>{});updateLiveLeaderboard(interaction.guild).catch(()=>{});}
+  if(interaction.guild){scheduleStatChannelUpdate(interaction.guild);updateLiveLeaderboard(interaction.guild).catch(()=>{});}
   console.log(`[completeTrade] userId=${ticket.userId} amount=${ticket.amountUSD} total=${Object.keys(_mem.tickets).length}`);
   const _refData=getReferrals();
   const _referredByForVouch=_refData.referred[ticket.userId]||null;
@@ -875,16 +875,16 @@ async function completeTrade(interaction,ticket,tickets){
   );
   const _vPrompt=new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
     .setTitle("\u2705 Exchange Complete!")
-    .setDescription(`<@${ticket.userId}> \u2014 your exchange is done!\n\nOptionally type a **review message** and it posts to vouches automatically.\n\n*5 minutes to leave a review \u2014 or click Skip to close now.*${_referralLine}`)
+    .setDescription(`<@${ticket.userId}> \u2014 your exchange is done!\n\nOptionally type a **review message** and it posts to vouches automatically.\n\n*90 seconds to leave a review \u2014 or click Skip to close now.*${_referralLine}`)
     .setFooter({text:"Konvert Exchange  \u2022  Your review helps the community"});
   await interaction.editReply({content:`<@${ticket.userId}>`,embeds:[_vPrompt],components:[_vRow]});
   const _ticketOwnerId=ticket.userId;
   const _msgFilter=msg=>msg.author.id===_ticketOwnerId&&!msg.author.bot;
-  const _collector=interaction.channel.createMessageCollector({filter:_msgFilter,time:5*60*1000,max:1});
+  const _collector=interaction.channel.createMessageCollector({filter:_msgFilter,time:90*1000,max:1});
   _collector.on("collect",async(msg)=>{
     _collector.stop("collected");
-    await msg.reply("\uD83D\uDC4B Thanks for your review! Closing in 10 seconds.").catch(()=>{});
-    setTimeout(()=>_postOnce(msg.content.slice(0,500)),10000);
+    await msg.reply("\uD83D\uDC4B Thanks! Posting vouch now.").catch(()=>{});
+    await _postOnce(msg.content.slice(0,500));
   });
   _collector.on("end",(_col,reason)=>{
     if(reason!=="collected")_postOnce(null);
@@ -2431,6 +2431,14 @@ async function checkAlerts(){
 
 const GENERAL_CHANNEL_ID="1454793385750560894";
 const STAT_CHANNEL_ID="1491619261821485056";
+let _statUpdateTimer=null;
+function scheduleStatChannelUpdate(guild){
+  if(_statUpdateTimer)clearTimeout(_statUpdateTimer);
+  _statUpdateTimer=setTimeout(()=>{
+    _statUpdateTimer=null;
+    updateStatChannel(guild).catch(()=>{});
+  },3000); // 3s debounce — batches rapid updates, avoids Discord rate limit
+}
 
 async function updateStatChannel(guild){
   try{
@@ -2692,7 +2700,7 @@ client.once(Events.ClientReady,async()=>{
     // Refresh live leaderboard on startup
     setTimeout(()=>updateLiveLeaderboard(guild).catch(()=>{}),20*1000);
     // Update stat channel on startup
-    setTimeout(()=>updateStatChannel(guild).catch(()=>{}),15*1000);
+    setTimeout(()=>scheduleStatChannelUpdate(guild),15*1000);
     scheduleWeeklyReferralSummary(guild);
     scheduleWeeklyClientRecap();
     scheduleDailyFact(guild);
