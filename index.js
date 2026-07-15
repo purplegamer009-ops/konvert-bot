@@ -2440,7 +2440,7 @@ async function updateStatChannel(guild){
     const _statDone=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0);
     const totalVol=_statDone.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
     const _statOpen=allT.filter(t=>t.status==="open"&&t.method!=="adjustment").length;
-    const formatted=totalVol>=1000000?`$${(totalVol/1000000).toFixed(1)}M`:totalVol>=1000?`$${(totalVol/1000).toFixed(1)}K`:`$${Math.round(totalVol)}`;
+    const formatted=totalVol>=1000000?`$${Math.round(totalVol/1000000)}M`:totalVol>=1000?`$${Math.round(totalVol/1000)}K`:`$${Math.round(totalVol)}`;
     await ch.setName(`Total Exchanged: ${formatted}`).catch(()=>{});
     console.log(`[statChannel] updated to ${formatted}`);
   }catch(e){console.log("[statChannel]",e.message);}
