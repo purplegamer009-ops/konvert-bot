@@ -754,7 +754,7 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   const _c2cTitle=method==="crypto"&&recvCoin?`${coin} \u2192 ${recvCoin}`:null;
   const ticketEmbed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(_c2cTitle||`${m.label} Exchange`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
     .setDescription(`**Welcome, <@${user.id}>**\n\nYour ticket is open. A **${m.label}** handler has been notified.\n\u200b`)
-    .addFields({name:"__Sending__",value:sendLabel,inline:true},{name:"__Fee__",value:_isGiftCard?"To be decided — staff will confirm in ticket":`${rate}% — ${fmtUSD(feeUSD)}${_isVip?" \u26A1 VIP":""}${_hasTag?" \uD83C\uDFF7\uFE0F KONV discount applied":""}`,inline:true},{name:"\uD83D\uDCCC Next Step",value:"Staff will confirm wallet and payment details with you here.",inline:false});
+    .addFields({name:"__Sending__",value:sendLabel,inline:true},{name:"__Fee__",value:_isGiftCard?"To be decided — staff will confirm in ticket":`${rate}% — ${fmtUSD(feeUSD)}${_isVip?" \u26A1 VIP":""}${_hasTag?" \uD83C\uDFF7\uFE0F KONV discount applied":""} · Min $5.00`,inline:true},{name:"\uD83D\uDCCC Next Step",value:"Staff will confirm wallet and payment details with you here.",inline:false});
   // Referral indicator
   const _tRefData=getReferrals();
   const _tReferrer=_tRefData.referred[user.id];
@@ -2350,6 +2350,7 @@ This is active immediately and persists until revoked or the bot restarts.
         const rawAmt=parseFloat(interaction.fields.getTextInputValue("inp_amount"));
         const walletInf="Staff will confirm wallet and payment details in your ticket",notes="";
         if(isNaN(rawAmt)||rawAmt<=0)return interaction.editReply("Please enter a valid amount greater than $0.");
+        if(rawAmt<5)return interaction.editReply("\u274C Minimum exchange amount is **$5.00**. Please enter a higher amount.");
         // any coin accepted — ticket opens regardless
         const fee=calcFee(rawAmt,direction),rate=feeRate(rawAmt,direction),recv=rawAmt-fee;
         const sendLabel=direction==="send"?`**${fmtUSD(rawAmt)}** via ${m.label}`:`**${coin}** worth **${fmtUSD(rawAmt)}**`;
@@ -2446,13 +2447,12 @@ async function updateStatChannel(guild){
   // Clear any pending retry
   if(_statTimer){clearTimeout(_statTimer);_statTimer=null;}
   try{
-    const ch=guild.channels.cache.get(STAT_CHANNEL_ID)||await guild.channels.fetch(STAT_CHANNEL_ID).catch(()=>null);
+    const ch=await guild.channels.fetch(STAT_CHANNEL_ID,{force:true}).catch(()=>null);
     if(!ch){console.log("[statChannel] channel not found");return;}
     const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
     const totalVol=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0).reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
     const formatted=totalVol>=1000000?`$${(totalVol/1000000).toFixed(2)}M`:(totalVol>=1000?`$${Math.round(totalVol/1000)}K`:`$${Math.round(totalVol).toLocaleString("en-US")}`);
     const newName=`Total Exchanged: ${formatted}`;
-    if(ch.name===newName){console.log("[statChannel] already correct:",newName);return;}
     await ch.setName(newName);
     console.log("[statChannel] updated to:",newName);
   }catch(e){
