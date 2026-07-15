@@ -2440,14 +2440,17 @@ const GENERAL_CHANNEL_ID="1454793385750560894";
 const STAT_CHANNEL_ID="1491619261821485056";
 async function updateStatChannel(guild){
   try{
-    const ch=guild.channels.cache.get(STAT_CHANNEL_ID)||await guild.channels.fetch(STAT_CHANNEL_ID).catch(()=>null);
+    console.log("[statChannel] attempting update...");
+    const ch=await client.channels.fetch(STAT_CHANNEL_ID).catch(e=>{console.log("[statChannel] fetch err:",e.message);return null;});
     if(!ch){console.log("[statChannel] channel not found:",STAT_CHANNEL_ID);return;}
     const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
     const totalVol=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0).reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
     const formatted=totalVol>=1000000?`$${(totalVol/1000000).toFixed(2)}M`:totalVol>=1000?`$${Math.round(totalVol/1000)}K`:`$${Math.round(totalVol).toLocaleString("en-US")}`;
     const newName=`Total Exchanged: ${formatted}`;
-    const result=await ch.setName(newName);
-    console.log("[statChannel] renamed to:",result.name);
+    console.log("[statChannel] current name:",ch.name,"new name:",newName);
+    if(ch.name===newName){console.log("[statChannel] already up to date");return;}
+    await ch.setName(newName);
+    console.log("[statChannel] success:",newName);
   }catch(e){console.log("[statChannel] ERROR:",e.message,e.code||"");}
 }
 function scheduleStatChannelUpdate(guild){
