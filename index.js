@@ -867,6 +867,7 @@ async function completeTrade(interaction,ticket,tickets){
     if(_vouchPosted)return;
     _vouchPosted=true;
     await postVouch(interaction.guild,{clientId:ticket.userId,exchangerId:ticket.completedBy,method:m?.label||ticket.method,amountUSD:ticket.amountUSD,direction:ticket.direction,coin:ticket.coin,message:reviewMsg||null,rating:5,referredBy:_referredByForVouch});
+    scheduleStatChannelUpdate(interaction.guild);
     await doCloseTicket(interaction.channel,interaction.guild,interaction.user,"Trade completed");
     interaction.channel.delete().catch(()=>{});
   };
@@ -1296,6 +1297,7 @@ client.on(Events.InteractionCreate,async interaction=>{
         const vt=load("tickets");
         vt["manual_"+Date.now()]={userId:clientUser.id,userTag:clientUser.tag,method,direction:null,coin:null,amountUSD:amount,feeUSD:calcFee(amount,"send"),walletInfo:"manual",notes:"Manual vouch via /vouch",status:"vouched",completedBy:exchUser.id,completedAt:Date.now(),createdAt:Date.now()};
         _mem.tickets=vt;save("tickets",vt);
+        scheduleStatChannelUpdate(interaction.guild);
         const _refD=getReferrals();
         const _refByManual=_refD.referred[clientUser.id]||null;
         await postVouch(interaction.guild,{clientId:clientUser.id,exchangerId:exchUser.id,method,amountUSD:amount,direction:null,coin:null,message,rating,referredBy:_refByManual});
@@ -1507,6 +1509,7 @@ Deleting in 10 seconds.`)
         const key=`adj_${target.id}_${Date.now()}`;
         tickets[key]={userId:target.id,userTag:target.tag||target.username,method:"adjustment",direction:null,coin:null,amountUSD:amount,feeUSD:0,walletInfo:"staff",notes:reason,status:"vouched",completedBy:interaction.user.id,completedAt:Date.now(),createdAt:Date.now()};
         _mem.tickets=tickets;save("tickets",tickets);
+        scheduleStatChannelUpdate(interaction.guild);
         const newVol=getUserVolume(target.id);await applyTierRole(interaction.guild,target.id,newVol);
         const tier=getTier(newVol);
         log(interaction.guild,`ADJUSTSTATS: ${interaction.user.tag} adjusted ${target.tag||target.username} by ${amount>0?"+":""}${fmtUSD(amount)} | New total: ${fmtUSD(newVol)} | Reason: ${reason}`);
@@ -1520,6 +1523,7 @@ Deleting in 10 seconds.`)
         for(const [key,t] of Object.entries(tickets)){if(t.userId===target.id){delete tickets[key];removed++;}}
         _mem.tickets=tickets;save("tickets",tickets);
         dbSet("konvert_tickets",tickets).catch(()=>{});
+        scheduleStatChannelUpdate(interaction.guild);
         delete state.volumeAdj[target.id];
         const ref=getReferrals();delete ref.points[target.id];saveReferrals(ref);
         try{const member=await interaction.guild.members.fetch(target.id).catch(()=>null);if(member){for(const t of TIERS){if(t.role&&member.roles.cache.has(t.role))await member.roles.remove(t.role).catch(()=>{});}}}catch{}
@@ -1542,6 +1546,7 @@ Deleting in 10 seconds.`)
             }
           }
         }catch(e){console.log("[clearLB]",e.message);}
+        scheduleStatChannelUpdate(interaction.guild);
         return interaction.editReply(`✅ Cleared ${_before} entries. All tier roles removed.`);
       }
 
@@ -1582,6 +1587,7 @@ Deleting in 10 seconds.`)
         try{const member=await interaction.guild.members.fetch(target.id).catch(()=>null);if(member){for(const t of TIERS){if(t.role&&member.roles.cache.has(t.role))await member.roles.remove(t.role).catch(()=>{});}}}catch{}
         try{await target.send({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Account Reset").setDescription("Your exchange history and stats have been reset by staff.\n\nIf you believe this is a mistake, please open a support ticket.").setFooter({text:"Konvert Exchange"}).setTimestamp()]});}catch{}
         delete state.volumeAdj[target.id];
+        scheduleStatChannelUpdate(interaction.guild);
         log(interaction.guild,`WIPESTATS: ${interaction.user.tag} wiped ALL data for ${target.tag||target.username} \u2014 ${removed} entries removed`);
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert  \u00b7  Admin",iconURL:IMG.LOGO}).setTitle("User Wiped").setThumbnail(target.displayAvatarURL({size:128})).setDescription(`All data for <@${target.id}> has been permanently removed.\n\u200b`).addFields({name:"Entries Removed",value:`**${removed}**`,inline:true},{name:"Referral Points",value:"**Cleared**",inline:true},{name:"Tier Roles",value:"**Removed**",inline:true}).setFooter({text:`Wiped by ${interaction.user.tag}  \u00b7  Konvert Exchange`}).setTimestamp()]});
       }
