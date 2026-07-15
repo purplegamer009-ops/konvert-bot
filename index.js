@@ -878,6 +878,8 @@ async function completeTrade(interaction,ticket,tickets){
     .setDescription(`<@${ticket.userId}> \u2014 your exchange is done!\n\nOptionally type a **review message** and it posts to vouches automatically.\n\n*90 seconds to leave a review \u2014 or click Skip to close now.*${_referralLine}`)
     .setFooter({text:"Konvert Exchange  \u2022  Your review helps the community"});
   await interaction.editReply({content:`<@${ticket.userId}>`,embeds:[_vPrompt],components:[_vRow]});
+  // Store _postOnce on channel so skip button can call it directly
+  if(interaction.channel)interaction.channel._completePostOnce=_postOnce;
   const _ticketOwnerId=ticket.userId;
   const _msgFilter=msg=>msg.author.id===_ticketOwnerId&&!msg.author.bot;
   const _collector=interaction.channel.createMessageCollector({filter:_msgFilter,time:90*1000,max:1});
@@ -2197,14 +2199,13 @@ This is active immediately and persists until revoked or the bot restarts.
         const _stix=_tix[interaction.channel.id];
         if(!_stix||interaction.user.id!==_stix.userId)return interaction.reply({content:"Only the client can skip the review.",ephemeral:true});
         await interaction.deferUpdate().catch(()=>{});
-        // Mark channel as skip-requested so collector end fires immediately
-        interaction.channel._skipVouch=true;
-        // Disable the button row
         await interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setTitle("Closing...").setDescription("No review submitted. Closing ticket now.")],components:[]}).catch(()=>{});
-        // The _collector.on("end") with _postOnce will handle the single vouch post
-        // We force-stop by ending the collector if accessible, otherwise it times out
-        // Since we can't access _collector from here, just wait 2s then the channel deletes naturally
-        // _vouchPosted guard ensures only 1 vouch regardless
+        // Call _postOnce directly — it's stored on the channel by completeTrade
+        const _fn=interaction.channel._completePostOnce;
+        if(typeof _fn==="function"){
+          interaction.channel._completePostOnce=null;
+          await _fn(null);
+        }
         return;
       }
 
