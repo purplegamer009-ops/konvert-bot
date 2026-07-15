@@ -925,8 +925,7 @@ client.on(Events.MessageCreate,async message=>{
       const _chId=message.channel.id;
       state._ticketMsgCount[_chId]=(state._ticketMsgCount[_chId]||0)+1;
       if(state._ticketMsgCount[_chId]===_warnAfter){
-        const _wMsgs=["\u26A0\uFE0F **Impersonator alert:** Owners **@3uce** and **@jswaps** will NEVER DM you first. Got a random DM claiming to be us? Block and report immediately.","\uD83D\uDEAB **Security reminder:** All communication happens in this ticket ONLY. Anyone DMing you claiming to be Konvert staff is an impersonator.","\uD83D\uDD12 **Stay safe:** Never send crypto to wallet addresses outside this ticket. Our team only contacts you here."];
-        await message.channel.send({content:`\u26A0\uFE0F **Security Reminder**\n${_wMsgs[Math.floor(Math.random()*_wMsgs.length)]}`}).catch(()=>{});
+        await message.channel.send({content:`\u26A0\uFE0F **@3uce will NOT DM you first. @jswaps will NOT DM you first.** If you received a random DM from anyone claiming to be Konvert staff or an owner \u2014 it is an impersonator. Block and report them immediately. All communication happens inside this ticket only.`}).catch(()=>{});
       }
     }
     if(ticket&&ticket.status==="open"&&ticket.userId===message.author.id){
@@ -2442,7 +2441,7 @@ async function updateStatChannel(guild){
     const totalVol=_statDone.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
     const _statOpen=allT.filter(t=>t.status==="open"&&t.method!=="adjustment").length;
     const formatted=totalVol>=1000000?`$${(totalVol/1000000).toFixed(1)}M`:totalVol>=1000?`$${(totalVol/1000).toFixed(1)}K`:`$${Math.round(totalVol)}`;
-    await ch.setName(`\uD83D\uDCB0 Exchanged: ${formatted} (${_statDone.length} trades)`).catch(()=>{});
+    await ch.setName(`Total Exchanged: ${formatted}`).catch(()=>{});
     console.log(`[statChannel] updated to ${formatted}`);
   }catch(e){console.log("[statChannel]",e.message);}
 }
