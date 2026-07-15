@@ -403,7 +403,7 @@ function calcFee(usd,dir,isVip=false){const red=state.feeMode==="reduced";const 
 function feeRate(usd,dir,isVip=false){const red=state.feeMode==="reduced";const base=dir==="receive"?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(red?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(usd<150?10:usd<350?9:usd<600?8:usd<800?7:6));return isVip?Math.max(base-0.75,1):base;}
 function isVipVolume(vol){return vol>=7000;}
 const KONV_TAG_ROLE="1526282822468370566";
-function isKonvTag(userId,member){if(member){const pg=member.user.primaryGuild;const hasPG=pg&&pg.identityEnabled&&pg.identityGuildId===CONFIG.GUILD_ID;return member.roles.cache.has(KONV_TAG_ROLE)||hasPG;}return state.konvTagUsers&&state.konvTagUsers.has(userId);}
+function isKonvTag(userId,member){try{if(member){const pg=member.user&&member.user.primaryGuild;const hasPG=!!(pg&&pg.identityEnabled&&pg.identityGuildId===CONFIG.GUILD_ID);return !!(member.roles&&member.roles.cache&&member.roles.cache.has(KONV_TAG_ROLE))||hasPG;}}catch{}return !!(state.konvTagUsers&&state.konvTagUsers.has(userId));}
 function calcFeeWithTag(usd,dir,isVip,hasTag){const base=calcFee(usd,dir,isVip);if(hasTag)return Math.max(base-(usd*0.002),CONFIG.MIN_FEE);return base;}
 const base=title=>new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(title).setTimestamp();
 function log(guild,msg){if(!CONFIG.LOG_CHANNEL||!guild)return;const ch=guild.channels.cache.get(CONFIG.LOG_CHANNEL);if(ch)ch.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setDescription("```"+msg+"```").setTimestamp()]}).catch(()=>{});}
@@ -677,8 +677,6 @@ function buildDealEmbed({clientId,exchangerId,method,amountUSD,direction,coin,me
   const dirStr=direction&&coin&&method
     ?(direction==="send"?`${method} \u2192 ${coin}`:`${coin} \u2192 ${method}`)
     :null;
-  const _WARN_MSGS=["\u26A0\uFE0F **Impersonator alert:** Owners **@3uce** and **@jswaps** will NEVER DM you first. Random DM claiming to be us? It's a scammer \u2014 block and report.","\uD83D\uDEAB **Stay safe:** All communication happens in this ticket ONLY. Anyone DMing you claiming to be Konvert staff is an impersonator.","\uD83D\uDD12 **Security notice:** Do not respond to DMs from anyone claiming to be Konvert. Our team only communicates inside tickets."];
-  const _SHOW_WARN=Math.random()<0.5;
   const embed=new EmbedBuilder()
     .setColor(0x7C4DFF)
     .setAuthor({name:"Konvert Exchange  \u00b7  Exchange Verified",iconURL:IMG.LOGO})
@@ -735,7 +733,8 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   if(ghostCleaned){_mem.tickets=tickets;save("tickets",tickets);}
   if(openTickets.length>=3){await interaction.editReply({content:`You already have **${openTickets.length}** open tickets. Please complete or close one before opening another.`,embeds:[],components:[]});return null;}
   const _clientVol=getUserVolume(user.id),_isVip=isVipVolume(_clientVol);
-  const _hasTag=isKonvTag(user.id);
+  const _tagMember=guild&&guild.members&&guild.members.cache?guild.members.cache.get(user.id):null;
+  const _hasTag=isKonvTag(user.id,_tagMember);
   const _isC2C=method==="crypto";
   const _isGiftCard=method==="giftcard";
   const feeUSD=_isC2C?Math.max(amountUSD*0.02,3):_isGiftCard?0:calcFeeWithTag(amountUSD,direction,_isVip,_hasTag);
@@ -756,7 +755,8 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   const ticketEmbed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(`${m.label} Exchange`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
     .setDescription(`**Welcome, <@${user.id}>**\n\nYour ticket is open. A **${m.label}** handler has been notified.\n\u200b`)
     .addFields({name:"__Sending__",value:`**${sendLabel}**`,inline:true},{name:_hasTag?"__Fee__ \uD83C\uDFF7\uFE0F":"__Fee__",value:_isGiftCard?"**To be decided** — staff will confirm in ticket":`**${rate}%**  --  ${fmtUSD(feeUSD)}${_isVip?" \u26A1 VIP rate":""}${_hasTag?" \uD83C\uDFF7\uFE0F KONV -0.2%":""}`,inline:true},{name:"\uD83D\uDCCC Next Step",value:"Staff will confirm wallet and payment details with you here.",inline:false});
-  if(_SHOW_WARN)embed.addFields({name:"\u26A0\uFE0F Security Reminder",value:_WARN_MSGS[Math.floor(Math.random()*_WARN_MSGS.length)],inline:false});
+  const _WARN_MSGS=["\u26A0\uFE0F **Impersonator alert:** Owners **@3uce** and **@jswaps** will NEVER DM you first. Random DM? Block and report.","\uD83D\uDEAB **Stay safe:** All communication in this ticket ONLY. Anyone DMing you as Konvert staff is an impersonator.","\uD83D\uDD12 **Security:** Never send crypto to addresses outside this ticket. Our team only contacts you here."];
+  if(Math.random()<0.5)ticketEmbed.addFields({name:"\u26A0\uFE0F Security Reminder",value:_WARN_MSGS[Math.floor(Math.random()*_WARN_MSGS.length)],inline:false});
   // Referral indicator
   const _tRefData=getReferrals();
   const _tReferrer=_tRefData.referred[user.id];
@@ -1086,13 +1086,14 @@ client.ws.on("GUILD_MEMBER_UPDATE",async(data)=>{
 // Auto assign/remove KONV role when user changes their primary guild (clan tag)
 client.on(Events.UserUpdate,async(oldUser,newUser)=>{
   try{
+    if(!newUser||!newUser.id)return;
     const guild=client.guilds.cache.get(CONFIG.GUILD_ID);
     if(!guild)return;
     const member=await guild.members.fetch({user:newUser.id,force:false}).catch(()=>null);
     if(!member)return;
-    const pg=newUser.primaryGuild;
+    const pg=newUser.primaryGuild||null;
     const hasKonv=!!(pg&&pg.identityEnabled&&pg.identityGuildId===CONFIG.GUILD_ID);
-    const hasRole=member.roles.cache.has(KONV_TAG_ROLE);
+    const hasRole=!!(member.roles&&member.roles.cache&&member.roles.cache.has(KONV_TAG_ROLE));
     if(hasKonv&&!hasRole){
       await member.roles.add(KONV_TAG_ROLE).catch(()=>{});
       state.konvTagUsers.add(newUser.id);
@@ -1665,7 +1666,7 @@ Deleting in 10 seconds.`)
         const member=await interaction.guild.members.fetch({user:userId,force:true}).catch(()=>null);
         if(!member)return interaction.editReply({content:"\u274C Could not fetch your profile. Try again.",ephemeral:true});
         const hasRole=member.roles.cache.has(KONV_TAG_ROLE);
-        const pg=member.user.primaryGuild;
+        const pg=(member.user&&member.user.primaryGuild)||null;
         const hasPG=pg&&pg.identityEnabled&&pg.identityGuildId===CONFIG.GUILD_ID;
         if(!hasRole&&!hasPG)return interaction.editReply({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("\u274C KONV Tag Not Detected").setDescription("Set **Konvert** as your active clan in Discord profile settings, then run this command again.\n\u200b").setFooter({text:"Konvert Exchange  \u2022  Tag must be active"}).setTimestamp()],ephemeral:true});
         state.konvTagUsers.add(userId);
@@ -2204,7 +2205,7 @@ This is active immediately and persists until revoked or the bot restarts.
         const userId=interaction.user.id;
         const member=await interaction.guild.members.fetch({user:userId,force:false}).catch(()=>null);
         const hasRole=member&&member.roles.cache.has(KONV_TAG_ROLE);
-        const pg=member&&member.user.primaryGuild;
+        const pg=(member&&member.user&&member.user.primaryGuild)||null;
         const hasKonv=hasRole||(pg&&pg.identityEnabled&&pg.identityGuildId===CONFIG.GUILD_ID);
         if(!hasKonv)return interaction.reply({content:"\u274C You need the **KONV** clan tag to enter. Set Konvert as your active clan in Discord settings, then run `/claimtag`.",ephemeral:true});
         if(state.activeGiveaway.entrants.has(userId))return interaction.reply({content:"\u2705 You are already entered! Good luck \uD83C\uDF89",ephemeral:true});
@@ -2677,7 +2678,7 @@ client.once(Events.ClientReady,async()=>{
     // Run once on startup after a short delay (let everything load first)
     setTimeout(()=>syncAllTierRoles(guild).catch(()=>{}),30*1000);
     // Sync KONV tag role holders into memory on startup
-    setTimeout(async()=>{try{const allM=await guild.members.fetch();let ct=0;for(const m of allM.values()){const pg=m.user.primaryGuild;const hasPG=pg&&pg.identityEnabled&&pg.identityGuildId===CONFIG.GUILD_ID;if(m.roles.cache.has(KONV_TAG_ROLE)||hasPG){state.konvTagUsers.add(m.id);ct++;}}console.log(`[konvTag] Synced ${ct} holders`);}catch(e){console.error("[konvTag sync]",e.message);}},35*1000);
+    setTimeout(async()=>{try{const allM=await guild.members.fetch();let ct=0;for(const m of allM.values()){const pg=(m.user&&m.user.primaryGuild)||null;const hasPG=!!(pg&&pg.identityEnabled&&pg.identityGuildId===CONFIG.GUILD_ID);if(m.roles.cache.has(KONV_TAG_ROLE)||hasPG){state.konvTagUsers.add(m.id);ct++;}}console.log(`[konvTag] Synced ${ct} holders`);}catch(e){console.error("[konvTag sync]",e.message);}},35*1000);
     // Refresh live leaderboard on startup
     setTimeout(()=>updateLiveLeaderboard(guild).catch(()=>{}),20*1000);
     // Update stat channel on startup
