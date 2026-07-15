@@ -754,7 +754,7 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   const _c2cTitle=method==="crypto"&&recvCoin?`${coin} \u2192 ${recvCoin}`:null;
   const ticketEmbed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(_c2cTitle||`${m.label} Exchange`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
     .setDescription(`**Welcome, <@${user.id}>**\n\nYour ticket is open. A **${m.label}** handler has been notified.\n\u200b`)
-    .addFields({name:"__Sending__",value:sendLabel,inline:true},{name:"__Fee__",value:_isGiftCard?"To be decided — staff will confirm in ticket":`${rate}% — ${fmtUSD(feeUSD)}${_isVip?" \u26A1 VIP":""}${_hasTag?" \uD83C\uDFF7\uFE0F KONV discount applied":""} · Min $5.00`,inline:true},{name:"\uD83D\uDCCC Next Step",value:"Staff will confirm wallet and payment details with you here.",inline:false});
+    .addFields({name:"__Sending__",value:sendLabel,inline:true},{name:"__Fee__",value:_isGiftCard?"To be decided — staff will confirm in ticket":`${rate}% — ${fmtUSD(feeUSD)}${_isVip?" \u26A1 VIP":""}${_hasTag?" \uD83C\uDFF7\uFE0F KONV discount applied":""}`,inline:true},{name:"\uD83D\uDCCC Next Step",value:"Staff will confirm wallet and payment details with you here.",inline:false});
   // Referral indicator
   const _tRefData=getReferrals();
   const _tReferrer=_tRefData.referred[user.id];
@@ -2444,21 +2444,20 @@ const GENERAL_CHANNEL_ID="1454793385750560894";
 const STAT_CHANNEL_ID="1491619261821485056";
 let _statTimer=null;
 async function updateStatChannel(guild){
-  // Clear any pending retry
   if(_statTimer){clearTimeout(_statTimer);_statTimer=null;}
   try{
-    const ch=await guild.channels.fetch(STAT_CHANNEL_ID,{force:true}).catch(()=>null);
-    if(!ch){console.log("[statChannel] channel not found");return;}
     const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
     const totalVol=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0).reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
     const formatted=totalVol>=1000000?`$${(totalVol/1000000).toFixed(2)}M`:(totalVol>=1000?`$${Math.round(totalVol/1000)}K`:`$${Math.round(totalVol).toLocaleString("en-US")}`);
     const newName=`Total Exchanged: ${formatted}`;
-    await ch.setName(newName);
+    // Use REST directly — bypasses discord.js cache and rate limit handling
+    const {REST}=require("@discordjs/rest");
+    const rest=new REST({version:"10"}).setToken(CONFIG.TOKEN);
+    await rest.patch(`/channels/${STAT_CHANNEL_ID}`,{body:{name:newName}});
     console.log("[statChannel] updated to:",newName);
   }catch(e){
-    // If rate limited, retry after the exact time Discord specifies (or 10 min)
-    const retryMs=(e.retryAfter?e.retryAfter*1000:null)||(e.rawError?.retry_after?e.rawError.retry_after*1000:null)||600000;
-    console.log(`[statChannel] rate limited, retry in ${Math.round(retryMs/1000)}s`);
+    const retryMs=(e.rawError?.retry_after||e.retryAfter||600)*1000;
+    console.log(`[statChannel] err: ${e.message} retry in ${Math.round(retryMs/1000)}s`);
     _statTimer=setTimeout(()=>{_statTimer=null;updateStatChannel(guild).catch(()=>{});},retryMs);
   }
 }
