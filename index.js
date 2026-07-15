@@ -921,13 +921,16 @@ client.on(Events.MessageCreate,async message=>{
   if(message.channel.type!==undefined){
     const tickets=Object.keys(_mem.tickets||{}).length?_mem.tickets:load("tickets");
     const ticket=tickets[message.channel.id];
-    // Security reminder after 10-15 messages in ticket
+    // Security reminder — once per ticket, after 10-15 messages
     if(ticket&&ticket.status==="open"){
-      const _warnAfter=Math.floor(Math.random()*6)+10; // 10-15
       if(!state._ticketMsgCount)state._ticketMsgCount={};
+      if(!state._ticketWarnSent)state._ticketWarnSent={};
       const _chId=message.channel.id;
+      // Set a fixed threshold for this channel the first time we see it
+      if(!state._ticketMsgCount[_chId+"_thresh"])state._ticketMsgCount[_chId+"_thresh"]=Math.floor(Math.random()*6)+10;
       state._ticketMsgCount[_chId]=(state._ticketMsgCount[_chId]||0)+1;
-      if(state._ticketMsgCount[_chId]===_warnAfter){
+      if(!state._ticketWarnSent[_chId]&&state._ticketMsgCount[_chId]>=state._ticketMsgCount[_chId+"_thresh"]){
+        state._ticketWarnSent[_chId]=true;
         await message.channel.send({content:`\u26A0\uFE0F **@3uce will NOT DM you first. @jswaps will NOT DM you first.** If you received a random DM from anyone claiming to be Konvert staff or an owner \u2014 it is an impersonator. Block and report them immediately. All communication happens inside this ticket only.`}).catch(()=>{});
       }
     }
@@ -2126,7 +2129,7 @@ This is active immediately and persists until revoked or the bot restarts.
     if(interaction.isStringSelectMenu()){
       if(interaction.customId==="select_method"){
         const method=interaction.values[0],_m=getMethod(method);
-        if(method==="crypto"){const coinOpts=COINS.map(c=>new StringSelectMenuOptionBuilder().setLabel(c).setValue(c).setDescription(`Exchange ${c}`));return interaction.update({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Crypto to Crypto").setDescription("Select the coin you are **sending** and the coin you want to **receive** below.\n\u200b").setFooter({text:"Step 2 of 3  \u2022  Konvert"})],components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("c2c_send").setPlaceholder("Select coin you are SENDING...").addOptions(coinOpts)),new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("c2c_recv").setPlaceholder("Select coin you want to RECEIVE...").addOptions(coinOpts))]});}
+        if(method==="crypto"){const c2cCoins=["BTC","ETH","SOL","LTC","USDT","USDC","XRP","BNB","ADA","DOGE","MATIC","AVAX","DOT","LINK","TRX","SHIB","UNI","ATOM","NEAR","ARB","OP","CAKE","INJ","RUNE","KAVA"];const coinOpts=c2cCoins.map(c=>new StringSelectMenuOptionBuilder().setLabel(c).setValue(c).setDescription(`Exchange ${c}`));return interaction.update({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Crypto to Crypto").setDescription("Select the coin you are **sending** and the coin you want to **receive** below.\n\u200b").setFooter({text:"Step 2 of 3  \u2022  Konvert"})],components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("c2c_send").setPlaceholder("Select coin you are SENDING...").addOptions(coinOpts)),new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("c2c_recv").setPlaceholder("Select coin you want to RECEIVE...").addOptions(coinOpts))]});}
         return interaction.update({embeds:[step2Embed(method)],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`dir_send__${method}`).setLabel(`Send Crypto \u2192 Get ${_m.label}`).setStyle(ButtonStyle.Primary),new ButtonBuilder().setCustomId(`dir_receive__${method}`).setLabel(`Send ${_m.label} \u2192 Get Crypto`).setStyle(ButtonStyle.Success))]});
       }
       if(interaction.customId==="c2c_send"||interaction.customId==="c2c_recv"){
@@ -2135,7 +2138,7 @@ This is active immediately and persists until revoked or the bot restarts.
         if(interaction.customId==="c2c_send")state.c2cSelections[userId].send=interaction.values[0];
         if(interaction.customId==="c2c_recv")state.c2cSelections[userId].recv=interaction.values[0];
         const sel=state.c2cSelections[userId],both=sel.send&&sel.recv;
-        const coinOpts=COINS.map(c=>new StringSelectMenuOptionBuilder().setLabel(c).setValue(c).setDescription(`Exchange ${c}`));
+        const _c2cCoins=["BTC","ETH","SOL","LTC","USDT","USDC","XRP","BNB","ADA","DOGE","MATIC","AVAX","DOT","LINK","TRX","SHIB","UNI","ATOM","NEAR","ARB","OP","CAKE","INJ","RUNE","KAVA"];const coinOpts=_c2cCoins.map(c=>new StringSelectMenuOptionBuilder().setLabel(c).setValue(c).setDescription(`Exchange ${c}`));
         const components=[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("c2c_send").setPlaceholder(sel.send?`Sending: ${sel.send}`:"Select coin you are SENDING...").addOptions(coinOpts)),new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("c2c_recv").setPlaceholder(sel.recv?`Receiving: ${sel.recv}`:"Select coin you want to RECEIVE...").addOptions(coinOpts))];
         if(both)components.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_c2c_confirm").setLabel(`Confirm: ${sel.send} \u2192 ${sel.recv}`).setStyle(ButtonStyle.Success)));
         return interaction.update({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Crypto to Crypto").setDescription(`**Sending:** ${sel.send||"--"}\n**Receiving:** ${sel.recv||"--"}\n\n${both?"Both coins selected. Click **Confirm** to continue.\n\u200b":"Select both coins then a confirm button will appear.\n\u200b"}`).setFooter({text:"Step 2 of 3  \u2022  Konvert"})],components});
@@ -2438,16 +2441,26 @@ async function checkAlerts(){
 
 const GENERAL_CHANNEL_ID="1454793385750560894";
 const STAT_CHANNEL_ID="1491619261821485056";
+let _statTimer=null;
 async function updateStatChannel(guild){
+  // Clear any pending retry
+  if(_statTimer){clearTimeout(_statTimer);_statTimer=null;}
   try{
     const ch=guild.channels.cache.get(STAT_CHANNEL_ID)||await guild.channels.fetch(STAT_CHANNEL_ID).catch(()=>null);
-    if(!ch)return;
+    if(!ch){console.log("[statChannel] channel not found");return;}
     const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
     const totalVol=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0).reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
     const formatted=totalVol>=1000000?`$${(totalVol/1000000).toFixed(2)}M`:(totalVol>=1000?`$${Math.round(totalVol/1000)}K`:`$${Math.round(totalVol).toLocaleString("en-US")}`);
-    await ch.setName(`Total Exchanged: ${formatted}`).catch(()=>{});
-    console.log(`[statChannel] updated to ${formatted}`);
-  }catch(e){console.log("[statChannel]",e.message);}
+    const newName=`Total Exchanged: ${formatted}`;
+    if(ch.name===newName){console.log("[statChannel] already correct:",newName);return;}
+    await ch.setName(newName);
+    console.log("[statChannel] updated to:",newName);
+  }catch(e){
+    // If rate limited, retry after the exact time Discord specifies (or 10 min)
+    const retryMs=(e.retryAfter?e.retryAfter*1000:null)||(e.rawError?.retry_after?e.rawError.retry_after*1000:null)||600000;
+    console.log(`[statChannel] rate limited, retry in ${Math.round(retryMs/1000)}s`);
+    _statTimer=setTimeout(()=>{_statTimer=null;updateStatChannel(guild).catch(()=>{});},retryMs);
+  }
 }
 function scheduleStatChannelUpdate(guild){
   updateStatChannel(guild).catch(()=>{});
