@@ -205,6 +205,8 @@ const METHODS=[
 const getMethod=v=>METHODS.find(m=>m.value===v)||null;
 
 const COINS=["BTC","ETH","SOL","LTC","USDT","USDC","XRP","BNB","ADA","DOGE","MATIC","AVAX","DOT","LINK","TRX","SHIB","UNI","ATOM","FTM","NEAR","ARB","OP","MANA","SAND","APE","IMX","GALA","AXS","ENJ","CHZ","FLOW","ICP","HBAR","VET","EOS","ZEC","DASH","XMR","XLM","ALGO","EGLD","THETA","KLAY","ROSE","ONE","CELO","QTUM","ZIL","ICX","ONT","WAVES","BAT","GRT","MKR","AAVE","COMP","SNX","YFI","SUSHI","CRV","1INCH","BAL","BAND","KNC","ZRX","REN","NMR","ANKR","CELR","SKL","STORJ","ORN","OGN","LRC","PERP","DYDX","CAKE","TWT","ALPHA","AUTO","BAKE","BNX","C98","CHESS","MBOX","MDX","SFP","TKO","XVS","BIFI","ELF","FOR","FRONT","HARD","INJ","KAVA","LINA","MITH","NAV","NULS","PAXG","PEARL","QNT","RAY","RSR","RUNE","SRM","STX","TFUEL","VGX","WAXP","WRX","XTZ","ZEN"];
+const COIN_NAMES={bitcoin:"BTC",ethereum:"ETH",solana:"SOL",litecoin:"LTC",tether:"USDT","usd coin":"USDC","usdc":"USDC",ripple:"XRP","binance coin":"BNB",cardano:"ADA",dogecoin:"DOGE",polygon:"MATIC",avalanche:"AVAX",polkadot:"DOT",chainlink:"LINK",tron:"TRX","shiba inu":"SHIB",uniswap:"UNI",cosmos:"ATOM",fantom:"FTM","near protocol":"NEAR",near:"NEAR",arbitrum:"ARB",optimism:"OP",decentraland:"MANA",sandbox:"SAND",apecoin:"APE","immutable x":"IMX",gala:"GALA","axie infinity":"AXS",enjin:"ENJ",chiliz:"CHZ",flow:"FLOW","internet computer":"ICP",hedera:"HBAR",vechain:"VET",stellar:"XLM",algorand:"ALGO",elrond:"EGLD",theta:"THETA",klaytn:"KLAY",rose:"ROSE",harmony:"ONE",celo:"CELO",qtum:"QTUM",zilliqa:"ZIL",icon:"ICX",ontology:"ONT",waves:"WAVES","basic attention token":"BAT",bat:"BAT","the graph":"GRT",maker:"MKR",aave:"AAVE",compound:"COMP",synthetix:"SNX","yearn finance":"YFI",sushiswap:"SUSHI",sushi:"SUSHI",curve:"CRV","1inch":"1INCH",balancer:"BAL",band:"BAND",kyber:"KNC","0x":"ZRX",ren:"REN",numerai:"NMR",ankr:"ANKR",celer:"CELR",skale:"SKL",storj:"STORJ",loopring:"LRC",perpetual:"PERP",dydx:"DYDX",pancakeswap:"CAKE",cake:"CAKE",injective:"INJ",kava:"KAVA",stacks:"STX",thorchain:"RUNE",rune:"RUNE",tezos:"XTZ",quant:"QNT","pax gold":"PAXG","horizen":"ZEN","theta fuel":"TFUEL",wazirx:"WRX",wax:"WAXP",eos:"EOS",zcash:"ZEC",dash:"DASH",monero:"XMR"};
+function resolveCoin(input){const s=(input||"").trim().toLowerCase();const byName=COIN_NAMES[s];if(byName)return byName;const up=(input||"").trim().toUpperCase();if(COINS.includes(up))return up;return up;}
 const GECKO={BTC:"bitcoin",ETH:"ethereum",SOL:"solana",LTC:"litecoin",USDT:"tether",USDC:"usd-coin",XRP:"ripple",BNB:"binancecoin",ADA:"cardano",DOGE:"dogecoin",MATIC:"matic-network",AVAX:"avalanche-2",DOT:"polkadot",LINK:"chainlink",TRX:"tron",SHIB:"shiba-inu",UNI:"uniswap",ATOM:"cosmos",FTM:"fantom",NEAR:"near"};
 const COIN_LOGO={BTC:"https://assets.coingecko.com/coins/images/1/large/bitcoin.png",ETH:"https://assets.coingecko.com/coins/images/279/large/ethereum.png",SOL:"https://assets.coingecko.com/coins/images/4128/large/solana.png",LTC:"https://assets.coingecko.com/coins/images/2/large/litecoin.png",USDT:"https://assets.coingecko.com/coins/images/325/large/Tether.png",USDC:"https://assets.coingecko.com/coins/images/6319/large/usdc.png",XRP:"https://assets.coingecko.com/coins/images/44/large/xrp-symbol-white-128.png",BNB:"https://assets.coingecko.com/coins/images/825/large/binance-coin-logo.png",ADA:"https://assets.coingecko.com/coins/images/975/large/cardano.png",DOGE:"https://assets.coingecko.com/coins/images/5/large/dogecoin.png"};
 
@@ -675,6 +677,8 @@ function buildDealEmbed({clientId,exchangerId,method,amountUSD,direction,coin,me
   const dirStr=direction&&coin&&method
     ?(direction==="send"?`${method} \u2192 ${coin}`:`${coin} \u2192 ${method}`)
     :null;
+  const _WARN_MSGS=["\u26A0\uFE0F **Impersonator alert:** Owners **@3uce** and **@jswaps** will NEVER DM you first. Random DM claiming to be us? It's a scammer \u2014 block and report.","\uD83D\uDEAB **Stay safe:** All communication happens in this ticket ONLY. Anyone DMing you claiming to be Konvert staff is an impersonator.","\uD83D\uDD12 **Security notice:** Do not respond to DMs from anyone claiming to be Konvert. Our team only communicates inside tickets."];
+  const _SHOW_WARN=Math.random()<0.5;
   const embed=new EmbedBuilder()
     .setColor(0x7C4DFF)
     .setAuthor({name:"Konvert Exchange  \u00b7  Exchange Verified",iconURL:IMG.LOGO})
@@ -752,6 +756,7 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   const ticketEmbed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(`${m.label} Exchange`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
     .setDescription(`**Welcome, <@${user.id}>**\n\nYour ticket is open. A **${m.label}** handler has been notified.\n\u200b`)
     .addFields({name:"__Sending__",value:`**${sendLabel}**`,inline:true},{name:_hasTag?"__Fee__ \uD83C\uDFF7\uFE0F":"__Fee__",value:_isGiftCard?"**To be decided** — staff will confirm in ticket":`**${rate}%**  --  ${fmtUSD(feeUSD)}${_isVip?" \u26A1 VIP rate":""}${_hasTag?" \uD83C\uDFF7\uFE0F KONV -0.2%":""}`,inline:true},{name:"\uD83D\uDCCC Next Step",value:"Staff will confirm wallet and payment details with you here.",inline:false});
+  if(_SHOW_WARN)embed.addFields({name:"\u26A0\uFE0F Security Reminder",value:_WARN_MSGS[Math.floor(Math.random()*_WARN_MSGS.length)],inline:false});
   // Referral indicator
   const _tRefData=getReferrals();
   const _tReferrer=_tRefData.referred[user.id];
@@ -874,8 +879,9 @@ async function completeTrade(interaction,ticket,tickets){
     .setTitle("\u2705 Exchange Complete!")
     .setDescription(`<@${ticket.userId}> \u2014 your exchange is done!\n\nOptionally type a **review message** and it posts to vouches automatically.\n\n*5 minutes to leave a review \u2014 or click Skip to close now.*${_referralLine}`)
     .setFooter({text:"Konvert Exchange  \u2022  Your review helps the community"});
-  await interaction.editReply({embeds:[_vPrompt],components:[_vRow]});
-  const _msgFilter=msg=>msg.author.id===ticket.userId&&!msg.author.bot;
+  await interaction.editReply({content:`<@${ticket.userId}>`,embeds:[_vPrompt],components:[_vRow]});
+  const _ticketOwnerId=ticket.userId;
+  const _msgFilter=msg=>msg.author.id===_ticketOwnerId&&!msg.author.bot;
   const _collector=interaction.channel.createMessageCollector({filter:_msgFilter,time:5*60*1000,max:1});
   _collector.on("collect",async(msg)=>{
     _collector.stop("collected");
@@ -1649,7 +1655,7 @@ Deleting in 10 seconds.`)
       }
 
       if(cmd==="tierlist"){
-        const lines=TIERS.map(t=>`${t.emoji} **${t.label}** \u2014 **$${t.min.toLocaleString()}+**${t.min>=7000?" \u26A1 VIP rate":""}${t.role&&!t.role.startsWith("ROLE_")?" \u2014 <@&"+t.role+">":""}`).join("\n");
+        const lines=TIERS.map(t=>`${t.emoji} **${t.label}** \u2014 $${t.min.toLocaleString()}+${t.min>=7000?" \u26A1 VIP":""}`).join("\n");
         return interaction.reply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange \u00b7 Client Tiers",iconURL:IMG.LOGO}).setTitle("Client Tier Ranks").setDescription("Earn your tier by exchanging volume on Konvert. Tiers are auto-assigned after every trade. All tiers from \u26A1 Godly Client and above receive a **0.75% VIP fee discount**.\n\u200b").addFields({name:"All Tiers",value:lines,inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange \u2022 Tiers auto-assigned after every trade"}).setTimestamp()],ephemeral:false});
       }
 
@@ -2320,10 +2326,12 @@ This is active immediately and persists until revoked or the bot restarts.
       if(interaction.customId.startsWith("modal_amount__")){
         await interaction.deferReply({ephemeral:true});
         const parts=interaction.customId.split("__"),method=parts[1],direction=parts[2],m=getMethod(method);
-        const rawAmt=parseFloat(interaction.fields.getTextInputValue("inp_amount")),coin=interaction.fields.getTextInputValue("inp_coin").toUpperCase().trim();
+        const _rawCoin=interaction.fields.getTextInputValue("inp_coin").trim();
+        const coin=resolveCoin(_rawCoin);
+        const rawAmt=parseFloat(interaction.fields.getTextInputValue("inp_amount"));
         const walletInf="Staff will confirm wallet and payment details in your ticket",notes="";
         if(isNaN(rawAmt)||rawAmt<=0)return interaction.editReply("Please enter a valid amount greater than $0.");
-        if(!COINS.includes(coin))return interaction.editReply(`**${coin}** is not a supported coin. Supported: ${COINS.join(", ")}`);
+        // any coin accepted — ticket opens regardless
         const fee=calcFee(rawAmt,direction),rate=feeRate(rawAmt,direction),recv=rawAmt-fee;
         const sendLabel=direction==="send"?`**${fmtUSD(rawAmt)}** via ${m.label}`:`**${coin}** worth **${fmtUSD(rawAmt)}**`;
         let recvLabel=direction==="send"?(recv<5?"To be discussed":`~${fmtUSD(recv)} worth of ${coin}`):(`${fmtUSD(recv)} via ${m.label}`);
@@ -2533,6 +2541,54 @@ async function postDailyDigest(guild){
   }catch(e){console.error("[dailyDigest]",e.message);}
 }
 
+async function postWeeklyClientRecap(){
+  try{
+    const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
+    const now=new Date(),weekAgo=Date.now()-7*86400000;
+    const done=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0);
+    const weekTrades=done.filter(t=>t.completedAt&&t.completedAt>=weekAgo);
+    const clientIds=[...new Set(weekTrades.map(t=>t.userId))];
+    const estDate=new Date(now.getTime()-5*3600000);
+    const weekStr=estDate.toLocaleDateString("en-CA",{month:"long",day:"numeric",year:"numeric"});
+    let sent=0;
+    for(const uid of clientIds){
+      try{
+        const myWeek=weekTrades.filter(t=>t.userId===uid);
+        const myVol=myWeek.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
+        const myFees=myWeek.reduce((s,t)=>s+(parseFloat(t.feeUSD)||0),0);
+        const allTime=done.filter(t=>t.userId===uid);
+        const allVol=allTime.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
+        const tier=getTier(allVol);
+        const user=await client.users.fetch(uid).catch(()=>null);
+        if(!user)continue;
+        const embed=new EmbedBuilder().setColor(0x7C4DFF)
+          .setAuthor({name:"Konvert Exchange \u00b7 Weekly Recap",iconURL:IMG.LOGO})
+          .setTitle("\uD83D\uDCCA Your Weekly Summary")
+          .setDescription(`Week ending **${weekStr}** (EST)\n\u200b`)
+          .addFields(
+            {name:"This Week",value:`**${myWeek.length}** exchange${myWeek.length!==1?"s":""}`,inline:true},
+            {name:"Volume This Week",value:`**${fmtUSD(myVol)}**`,inline:true},
+            {name:"Fees This Week",value:`**${fmtUSD(myFees)}**`,inline:true},
+            {name:"All-Time Volume",value:`**${fmtUSD(allVol)}**`,inline:true},
+            {name:"All-Time Trades",value:`**${allTime.length}**`,inline:true},
+            {name:"Your Tier",value:`${tier.emoji} **${tier.label}**`,inline:true},
+          )
+          .setImage(IMG.BANNER)
+          .setFooter({text:"Konvert Exchange \u2022 Weekly Recap"});
+        await user.send({embeds:[embed]}).catch(()=>{});
+        sent++;
+      }catch{}
+    }
+    console.log(`[weeklyRecap] sent to ${sent} clients`);
+  }catch(e){console.error("[weeklyRecap]",e.message);}
+}
+function scheduleWeeklyClientRecap(){
+  function msUntilSundayEST(){const now=new Date();const estNow=new Date(now.getTime()-5*3600000);const day=estNow.getDay(),d=day===0?7:(7-day),next=new Date(estNow);next.setDate(estNow.getDate()+d);next.setHours(20,0,0,0);return next.getTime()-estNow.getTime();}
+  const delay=msUntilSundayEST();
+  console.log(`[weeklyRecap] first recap in ${Math.round(delay/3600000)}h`);
+  setTimeout(()=>{postWeeklyClientRecap().catch(()=>{});setInterval(()=>postWeeklyClientRecap().catch(()=>{}),7*24*60*60*1000);},delay);
+}
+
 function scheduleDailyDigest(guild){
   function msUntil11pmEST(){const now=new Date();const estOffset=-5*60;const estNow=new Date(now.getTime()+estOffset*60000);const next=new Date(estNow);next.setHours(23,0,0,0);if(next<=estNow)next.setDate(next.getDate()+1);return next.getTime()-estNow.getTime();}
   const delay=msUntil11pmEST();
@@ -2627,6 +2683,7 @@ client.once(Events.ClientReady,async()=>{
     // Update stat channel on startup
     setTimeout(()=>updateStatChannel(guild).catch(()=>{}),15*1000);
     scheduleWeeklyReferralSummary(guild);
+    scheduleWeeklyClientRecap();
     scheduleDailyFact(guild);
     scheduleDailyDigest(guild);
   }
