@@ -742,7 +742,7 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   const receiveU=_isGiftCard?amountUSD:amountUSD-feeUSD;
   let coinAmt=null;
   try{const _cp=await Promise.race([getPrice(coin),new Promise(r=>setTimeout(()=>r(null),2000))]);if(_cp)coinAmt=(receiveU/_cp).toFixed(6);}catch{}
-  const sendLabel=direction==="send"?`${fmtUSD(amountUSD)} via ${m.label}`:`**${coin}** worth ${fmtUSD(amountUSD)}`;
+  const sendLabel=direction==="send"?`${fmtUSD(amountUSD)} via ${m.label}`:`${coin} worth ${fmtUSD(amountUSD)}`;
   const receiveLabel=direction==="send"?(coinAmt?`${coinAmt} ${coin}`:`${fmtUSD(receiveU)} worth of ${coin}`):receiveU<5?"To be discussed":`${fmtUSD(receiveU)} via ${m.label}`;
   const perms=[{id:guild.roles.everyone,deny:[PermissionFlagsBits.ViewChannel]},{id:user.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]}];
   if(CONFIG.STAFF_ROLE&&guild.roles.cache.has(CONFIG.STAFF_ROLE))perms.push({id:CONFIG.STAFF_ROLE,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]});
@@ -754,7 +754,7 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   catch(err){await interaction.editReply({content:`Failed to create ticket: ${err.message}`,embeds:[],components:[]});return null;}
   const ticketEmbed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(`${m.label} Exchange`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
     .setDescription(`**Welcome, <@${user.id}>**\n\nYour ticket is open. A **${m.label}** handler has been notified.\n\u200b`)
-    .addFields({name:"__Sending__",value:`**${sendLabel}**`,inline:true},{name:_hasTag?"__Fee__ \uD83C\uDFF7\uFE0F":"__Fee__",value:_isGiftCard?"**To be decided** — staff will confirm in ticket":`**${rate}%**  --  ${fmtUSD(feeUSD)}${_isVip?" \u26A1 VIP rate":""}${_hasTag?" \uD83C\uDFF7\uFE0F KONV -0.2%":""}`,inline:true},{name:"\uD83D\uDCCC Next Step",value:"Staff will confirm wallet and payment details with you here.",inline:false});
+    .addFields({name:"__Sending__",value:sendLabel,inline:true},{name:"__Fee__",value:_isGiftCard?"To be decided — staff will confirm in ticket":`${rate}% — ${fmtUSD(feeUSD)}${_isVip?" \u26A1":" "}${_hasTag?"\uD83C\uDFF7\uFE0F":""}`,inline:true},{name:"\uD83D\uDCCC Next Step",value:"Staff will confirm wallet and payment details with you here.",inline:false});
   // Referral indicator
   const _tRefData=getReferrals();
   const _tReferrer=_tRefData.referred[user.id];
@@ -2721,6 +2721,8 @@ client.once(Events.ClientReady,async()=>{
     scheduleWeeklyClientRecap();
     scheduleDailyFact(guild);
     scheduleDailyDigest(guild);
+    // Refresh stat channel every 10 minutes automatically
+    setInterval(()=>scheduleStatChannelUpdate(guild),10*60*1000);
   }
 });
 
