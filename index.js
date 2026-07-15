@@ -754,7 +754,7 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   catch(err){await interaction.editReply({content:`Failed to create ticket: ${err.message}`,embeds:[],components:[]});return null;}
   const ticketEmbed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(`${m.label} Exchange`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
     .setDescription(`**Welcome, <@${user.id}>**\n\nYour ticket is open. A **${m.label}** handler has been notified.\n\u200b`)
-    .addFields({name:"__Sending__",value:sendLabel,inline:true},{name:"__Fee__",value:_isGiftCard?"To be decided — staff will confirm in ticket":`${rate}% — ${fmtUSD(feeUSD)}${_isVip?" \u26A1":" "}${_hasTag?"\uD83C\uDFF7\uFE0F":""}`,inline:true},{name:"\uD83D\uDCCC Next Step",value:"Staff will confirm wallet and payment details with you here.",inline:false});
+    .addFields({name:"__Sending__",value:sendLabel,inline:true},{name:"__Fee__",value:_isGiftCard?"To be decided — staff will confirm in ticket":`${rate}% — ${fmtUSD(feeUSD)}${_isVip?" \u26A1 VIP":""}${_hasTag?" \uD83C\uDFF7\uFE0F KONV discount applied":""}`,inline:true},{name:"\uD83D\uDCCC Next Step",value:"Staff will confirm wallet and payment details with you here.",inline:false});
   // Referral indicator
   const _tRefData=getReferrals();
   const _tReferrer=_tRefData.referred[user.id];
@@ -827,7 +827,7 @@ async function completeTrade(interaction,ticket,tickets){
   ticket.status="vouched";ticket.completedBy=ticket._overrideExchangerId||interaction.user.id;delete ticket._overrideExchangerId;ticket.completedAt=Date.now();ticket.amountUSD=parseFloat(ticket.amountUSD)||0;
   const ticketKey=interaction.channel.id;tickets[ticketKey]=ticket;
   _mem.tickets={...(_mem.tickets||{}),...tickets};save("tickets",_mem.tickets);
-  if(interaction.guild){scheduleStatChannelUpdate(interaction.guild);updateLiveLeaderboard(interaction.guild).catch(()=>{});}
+  if(interaction.guild){updateStatChannel(interaction.guild).catch(()=>{});updateLiveLeaderboard(interaction.guild).catch(()=>{});}
   console.log(`[completeTrade] userId=${ticket.userId} amount=${ticket.amountUSD} total=${Object.keys(_mem.tickets).length}`);
   const _refData=getReferrals();
   const _referredByForVouch=_refData.referred[ticket.userId]||null;
@@ -867,7 +867,7 @@ async function completeTrade(interaction,ticket,tickets){
     if(_vouchPosted)return;
     _vouchPosted=true;
     await postVouch(interaction.guild,{clientId:ticket.userId,exchangerId:ticket.completedBy,method:m?.label||ticket.method,amountUSD:ticket.amountUSD,direction:ticket.direction,coin:ticket.coin,message:reviewMsg||null,rating:5,referredBy:_referredByForVouch});
-    scheduleStatChannelUpdate(interaction.guild);
+    updateStatChannel(interaction.guild).catch(()=>{});
     await doCloseTicket(interaction.channel,interaction.guild,interaction.user,"Trade completed");
     interaction.channel.delete().catch(()=>{});
   };
@@ -1297,7 +1297,7 @@ client.on(Events.InteractionCreate,async interaction=>{
         const vt=load("tickets");
         vt["manual_"+Date.now()]={userId:clientUser.id,userTag:clientUser.tag,method,direction:null,coin:null,amountUSD:amount,feeUSD:calcFee(amount,"send"),walletInfo:"manual",notes:"Manual vouch via /vouch",status:"vouched",completedBy:exchUser.id,completedAt:Date.now(),createdAt:Date.now()};
         _mem.tickets=vt;save("tickets",vt);
-        scheduleStatChannelUpdate(interaction.guild);
+        updateStatChannel(interaction.guild).catch(()=>{});
         const _refD=getReferrals();
         const _refByManual=_refD.referred[clientUser.id]||null;
         await postVouch(interaction.guild,{clientId:clientUser.id,exchangerId:exchUser.id,method,amountUSD:amount,direction:null,coin:null,message,rating,referredBy:_refByManual});
@@ -1509,7 +1509,7 @@ Deleting in 10 seconds.`)
         const key=`adj_${target.id}_${Date.now()}`;
         tickets[key]={userId:target.id,userTag:target.tag||target.username,method:"adjustment",direction:null,coin:null,amountUSD:amount,feeUSD:0,walletInfo:"staff",notes:reason,status:"vouched",completedBy:interaction.user.id,completedAt:Date.now(),createdAt:Date.now()};
         _mem.tickets=tickets;save("tickets",tickets);
-        scheduleStatChannelUpdate(interaction.guild);
+        updateStatChannel(interaction.guild).catch(()=>{});
         const newVol=getUserVolume(target.id);await applyTierRole(interaction.guild,target.id,newVol);
         const tier=getTier(newVol);
         log(interaction.guild,`ADJUSTSTATS: ${interaction.user.tag} adjusted ${target.tag||target.username} by ${amount>0?"+":""}${fmtUSD(amount)} | New total: ${fmtUSD(newVol)} | Reason: ${reason}`);
@@ -1523,7 +1523,7 @@ Deleting in 10 seconds.`)
         for(const [key,t] of Object.entries(tickets)){if(t.userId===target.id){delete tickets[key];removed++;}}
         _mem.tickets=tickets;save("tickets",tickets);
         dbSet("konvert_tickets",tickets).catch(()=>{});
-        scheduleStatChannelUpdate(interaction.guild);
+        updateStatChannel(interaction.guild).catch(()=>{});
         delete state.volumeAdj[target.id];
         const ref=getReferrals();delete ref.points[target.id];saveReferrals(ref);
         try{const member=await interaction.guild.members.fetch(target.id).catch(()=>null);if(member){for(const t of TIERS){if(t.role&&member.roles.cache.has(t.role))await member.roles.remove(t.role).catch(()=>{});}}}catch{}
@@ -1546,7 +1546,7 @@ Deleting in 10 seconds.`)
             }
           }
         }catch(e){console.log("[clearLB]",e.message);}
-        scheduleStatChannelUpdate(interaction.guild);
+        updateStatChannel(interaction.guild).catch(()=>{});
         return interaction.editReply(`✅ Cleared ${_before} entries. All tier roles removed.`);
       }
 
@@ -1587,7 +1587,7 @@ Deleting in 10 seconds.`)
         try{const member=await interaction.guild.members.fetch(target.id).catch(()=>null);if(member){for(const t of TIERS){if(t.role&&member.roles.cache.has(t.role))await member.roles.remove(t.role).catch(()=>{});}}}catch{}
         try{await target.send({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Account Reset").setDescription("Your exchange history and stats have been reset by staff.\n\nIf you believe this is a mistake, please open a support ticket.").setFooter({text:"Konvert Exchange"}).setTimestamp()]});}catch{}
         delete state.volumeAdj[target.id];
-        scheduleStatChannelUpdate(interaction.guild);
+        updateStatChannel(interaction.guild).catch(()=>{});
         log(interaction.guild,`WIPESTATS: ${interaction.user.tag} wiped ALL data for ${target.tag||target.username} \u2014 ${removed} entries removed`);
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert  \u00b7  Admin",iconURL:IMG.LOGO}).setTitle("User Wiped").setThumbnail(target.displayAvatarURL({size:128})).setDescription(`All data for <@${target.id}> has been permanently removed.\n\u200b`).addFields({name:"Entries Removed",value:`**${removed}**`,inline:true},{name:"Referral Points",value:"**Cleared**",inline:true},{name:"Tier Roles",value:"**Removed**",inline:true}).setFooter({text:`Wiped by ${interaction.user.tag}  \u00b7  Konvert Exchange`}).setTimestamp()]});
       }
@@ -2437,37 +2437,20 @@ async function checkAlerts(){
 }
 
 const GENERAL_CHANNEL_ID="1454793385750560894";
-// Stat channel — queue with retry to handle Discord 2/10min rate limit
 const STAT_CHANNEL_ID="1491619261821485056";
-let _statPending=false;
-let _statRetryTimer=null;
-async function _doStatUpdate(){
+async function updateStatChannel(guild){
   try{
-    const ch=await client.channels.fetch(STAT_CHANNEL_ID).catch(()=>null);
-    if(!ch){console.log("[statChannel] not found");return;}
+    const ch=guild.channels.cache.get(STAT_CHANNEL_ID)||await guild.channels.fetch(STAT_CHANNEL_ID).catch(()=>null);
+    if(!ch)return;
     const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
     const totalVol=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0).reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
-    const formatted=totalVol>=1000000?`$${(totalVol/1000000).toFixed(2)}M`:totalVol>=1000?`$${Math.round(totalVol/1000)}K`:`$${Math.round(totalVol).toLocaleString("en-US")}`;
-    const newName=`Total Exchanged: ${formatted}`;
-    if(ch.name===newName){console.log("[statChannel] up to date:",newName);_statPending=false;return;}
-    await ch.setName(newName);
-    console.log("[statChannel] updated:",newName);
-    _statPending=false;
-    if(_statRetryTimer){clearTimeout(_statRetryTimer);_statRetryTimer=null;}
-  }catch(e){
-    console.log("[statChannel] err:",e.message,"retrying in 5min");
-    // Rate limited — retry in 5 minutes
-    if(_statRetryTimer)clearTimeout(_statRetryTimer);
-    _statRetryTimer=setTimeout(()=>{_statRetryTimer=null;_doStatUpdate();},5*60*1000);
-  }
-}
-async function updateStatChannel(guild){
-  _statPending=true;
-  await _doStatUpdate();
+    const formatted=totalVol>=1000000?`$${(totalVol/1000000).toFixed(2)}M`:(totalVol>=1000?`$${Math.round(totalVol/1000)}K`:`$${Math.round(totalVol).toLocaleString("en-US")}`);
+    await ch.setName(`Total Exchanged: ${formatted}`).catch(()=>{});
+    console.log(`[statChannel] updated to ${formatted}`);
+  }catch(e){console.log("[statChannel]",e.message);}
 }
 function scheduleStatChannelUpdate(guild){
-  _statPending=true;
-  _doStatUpdate().catch(()=>{});
+  updateStatChannel(guild).catch(()=>{});
 }
 
 async function postDailyCryptoFact(guild){
@@ -2716,13 +2699,13 @@ client.once(Events.ClientReady,async()=>{
     // Refresh live leaderboard on startup
     setTimeout(()=>updateLiveLeaderboard(guild).catch(()=>{}),20*1000);
     // Update stat channel on startup
-    setTimeout(()=>scheduleStatChannelUpdate(guild),15*1000);
+    setTimeout(()=>updateStatChannel(guild).catch(()=>{}),15*1000);
     scheduleWeeklyReferralSummary(guild);
     scheduleWeeklyClientRecap();
     scheduleDailyFact(guild);
     scheduleDailyDigest(guild);
     // Refresh stat channel every 10 minutes automatically
-    setInterval(()=>scheduleStatChannelUpdate(guild),10*60*1000);
+    setInterval(()=>updateStatChannel(guild).catch(()=>{}),10*60*1000);
   }
 });
 
