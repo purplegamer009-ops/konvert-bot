@@ -583,6 +583,7 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("tierlist").setDescription("See all client tiers and their requirements"),
   new SlashCommandBuilder().setName("giveaway").setDescription("[Owner] Start a KONV-tag-only giveaway").addStringOption(o=>o.setName("prize").setDescription("Prize description").setRequired(true)).addIntegerOption(o=>o.setName("minutes").setDescription("Duration in minutes").setRequired(true)).addIntegerOption(o=>o.setName("winners").setDescription("Number of winners (default 1)").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("giveawayend").setDescription("[Owner] End active giveaway early").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("giveawaystats").setDescription("[Owner] Check current giveaway entry count and entrants").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("giveawayreroll").setDescription("[Owner] Reroll winners from the last giveaway").addIntegerOption(o=>o.setName("winners").setDescription("How many winners to reroll (default 1)").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("removetag").setDescription("[Owner] Remove KONV tag perk from a user").addUserOption(o=>o.setName("user").setDescription("User to remove (leave blank to remove yourself)").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("jbtc").setDescription("[Owner] Set your BTC wallet address").addStringOption(o=>o.setName("address").setDescription("BTC address").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
@@ -1740,6 +1741,15 @@ Deleting in 10 seconds.`)
         await interaction.editReply({content:`\u2705 Giveaway started! Ends <t:${endsTs}:R>`,ephemeral:true});
         setTimeout(async()=>{if(!state.activeGiveaway||state.activeGiveaway.messageId!==gm.id)return;clearInterval(_gInterval);await endGiveaway(interaction.guild,interaction.channel);},minutes*60000);
         return;
+      }
+
+      if(cmd==="giveawaystats"){
+        if(!state.activeGiveaway)return interaction.reply({content:"No active giveaway running.",ephemeral:true});
+        const {prize,endsAt,numWinners,entrants}=state.activeGiveaway;
+        const arr=[...entrants];
+        const endsTs=Math.floor(endsAt/1000);
+        const entrantList=arr.length?arr.map((id,i)=>`${i+1}. <@${id}>`).join("\n"):"No entries yet.";
+        return interaction.reply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  Giveaway Stats",iconURL:IMG.LOGO}).setTitle("Active Giveaway").addFields({name:"Prize",value:prize,inline:true},{name:"Winners",value:`${numWinners}`,inline:true},{name:"Entries",value:`${arr.length}`,inline:true},{name:"Ends",value:`<t:${endsTs}:R>`,inline:true},{name:"Entrants",value:entrantList.slice(0,1000),inline:false}).setFooter({text:"Konvert Exchange  \u2022  Owner only"}).setTimestamp()],ephemeral:true});
       }
 
       if(cmd==="giveawayreroll"){
