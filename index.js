@@ -580,7 +580,6 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("listpromos").setDescription("[Owner] View all active promo codes").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("rank").setDescription("See your rank on the leaderboard").addUserOption(o=>o.setName("user").setDescription("User to check (leave blank for yourself)").setRequired(false)),
   new SlashCommandBuilder().setName("exchangerstats").setDescription("View your exchanger performance stats").addUserOption(o=>o.setName("user").setDescription("Exchanger to check").setRequired(false)),
-  new SlashCommandBuilder().setName("claimtag").setDescription("Claim the KONV tag perk for 0.2% fee discount"),
   new SlashCommandBuilder().setName("tierlist").setDescription("See all client tiers and their requirements"),
   new SlashCommandBuilder().setName("giveaway").setDescription("[Owner] Start a KONV-tag-only giveaway").addStringOption(o=>o.setName("prize").setDescription("Prize description").setRequired(true)).addIntegerOption(o=>o.setName("minutes").setDescription("Duration in minutes").setRequired(true)).addIntegerOption(o=>o.setName("winners").setDescription("Number of winners (default 1)").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("giveawayend").setDescription("[Owner] End active giveaway early").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
@@ -1679,20 +1678,6 @@ Deleting in 10 seconds.`)
         return interaction.reply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange \u00b7 Client Tiers",iconURL:IMG.LOGO}).setTitle("Client Tier Ranks").setDescription("Earn your tier by exchanging volume on Konvert. Tiers are auto-assigned after every trade. All tiers from \u26A1 Godly Client and above receive a **0.75% VIP fee discount**.\n\u200b").addFields({name:"All Tiers",value:lines,inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange \u2022 Tiers auto-assigned after every trade"}).setTimestamp()],ephemeral:false});
       }
 
-      if(cmd==="claimtag"){
-        await interaction.deferReply({ephemeral:true});
-        const userId=interaction.user.id;
-        const member=await interaction.guild.members.fetch({user:userId,force:true}).catch(()=>null);
-        if(!member)return interaction.editReply({content:"\u274C Could not fetch your profile. Try again.",ephemeral:true});
-        const hasRole=member.roles.cache.has(KONV_TAG_ROLE);
-        const pg=(member.user&&member.user.primaryGuild)||null;
-        const hasPG=pg&&pg.identityEnabled&&pg.identityGuildId===CONFIG.GUILD_ID;
-        if(!hasRole&&!hasPG)return interaction.editReply({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("\u274C KONV Tag Not Detected").setDescription("Set **Konvert** as your active clan in Discord profile settings, then run this command again.\n\u200b").setFooter({text:"Konvert Exchange  \u2022  Tag must be active"}).setTimestamp()],ephemeral:true});
-        state.konvTagUsers.add(userId);
-        if(!hasRole)await member.roles.add(KONV_TAG_ROLE).catch(()=>{});
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  KONV Tag",iconURL:IMG.LOGO}).setTitle("\u2705  KONV Tag Perk Activated!").setDescription("KONV tag verified — **0.2% off** every exchange automatically.\n\u200b").addFields({name:"Perk",value:"**0.2% fee discount** on every trade",inline:true},{name:"Status",value:"\uD83C\uDFF7\uFE0F Active",inline:true}).setFooter({text:"Konvert Exchange  \u2022  Perk auto-removes when you remove the tag"}).setTimestamp()],ephemeral:true});
-      }
-
       if(cmd==="removetag"){
         await interaction.deferReply({ephemeral:true});
         const target=interaction.options.getUser("user")||interaction.user;
@@ -2239,8 +2224,28 @@ This is active immediately and persists until revoked or the bot restarts.
         const hasRole=member&&member.roles.cache.has(KONV_TAG_ROLE);
         const pg=(member&&member.user&&member.user.primaryGuild)||null;
         const hasKonv=hasRole||(pg&&pg.identityEnabled&&pg.identityGuildId===CONFIG.GUILD_ID);
-        if(!hasKonv)return interaction.reply({content:"\u274C You need the **KONV** clan tag to enter. Set Konvert as your active clan in Discord settings, then run `/claimtag`.",ephemeral:true});
-        if(state.activeGiveaway.entrants.has(userId))return interaction.reply({content:"\u2705 You are already entered! Good luck \uD83C\uDF89",ephemeral:true});
+        if(!hasKonv)return interaction.reply({content:"You need the KONV clan tag to enter. Set Konvert as your active clan in your Discord profile settings — it is detected automatically.",ephemeral:true});
+        if(state.activeGiveaway.entrants.has(userId))return interaction.reply({content:"You are already entered. Good luck.",ephemeral:true});
+        // Anti-abuse: if giveaway ends within 6h, check how long they have had the role
+        const _sixHoursMs=6*60*60*1000;
+        const _timeLeft=state.activeGiveaway.endsAt-Date.now();
+        if(_timeLeft<_sixHoursMs){
+          // Check when they got the KONV role
+          const _freshMember=await interaction.guild.members.fetch({user:userId,force:true}).catch(()=>null);
+          if(_freshMember){
+            const _roleJoinedAt=_freshMember.roles.cache.get(KONV_TAG_ROLE)?.createdTimestamp||0;
+            const _memberJoinedRoleAt=_freshMember.joinedTimestamp||0;
+            // If role was assigned within the last 6 hours, block them
+            if(Date.now()-(_freshMember.roles.cache.get(KONV_TAG_ROLE)?.id?_memberJoinedRoleAt:0)<_sixHoursMs){
+              // Check role assignment time via audit log if possible, fallback to member join
+              const _auditLogs=await interaction.guild.fetchAuditLogs({type:25,limit:10}).catch(()=>null);
+              const _roleEntry=_auditLogs?.entries.find(e=>e.target?.id===userId&&e.changes?.some(c=>c.key==="$add"&&c.new?.some(r=>r.id===KONV_TAG_ROLE)));
+              if(_roleEntry&&Date.now()-_roleEntry.createdTimestamp<_sixHoursMs){
+                return interaction.reply({content:"Trying to claim the tag and join last minute will not work and will be caught by our anti-abuse system.",ephemeral:true});
+              }
+            }
+          }
+        }
         state.activeGiveaway.entrants.add(userId);
         const count=state.activeGiveaway.entrants.size;
         // Update the giveaway embed with new entry count
