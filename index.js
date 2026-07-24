@@ -1040,7 +1040,7 @@ client.on(Events.MessageCreate,async message=>{
   const jwMatch=message.content.trim().match(/^\$j([A-Za-z]{2,10})$/i);
   if(jwMatch){
     const jwKey=jwMatch[1].toLowerCase();
-    const jwMap={btc:"BTC",eth:"ETH",sol:"SOL",ltc:"LTC",usdtbnb:"USDT-BNB"};
+    const jwMap={btc:"BTC",eth:"ETH",sol:"SOL",ltc:"LTC",usdtbnb:"USDT-BNB",usdteth:"USDT-ETH",usdt:"USDT-BNB"};
     const jwCoin=jwMap[jwKey];
     if(jwCoin&&state.personalWallets[jwCoin]){
       await message.channel.send({content:state.personalWallets[jwCoin]}).catch(()=>{});
@@ -1732,12 +1732,26 @@ Deleting in 10 seconds.`)
         const nw=interaction.options.getInteger("winners")||1;
         const endsAt=Date.now()+(minutes*60000);
         const endsTs=Math.floor(endsAt/1000);
-        const _buildGiveawayEmbed=(entries)=>new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange \u00b7 Giveaway",iconURL:IMG.LOGO}).setTitle("\uD83C\uDF89 KONV Tag Giveaway!").setDescription(`**${prize}**\n\u200b`).addFields({name:"How to Enter",value:"Must have the **KONV** clan tag. Click the button below.",inline:false},{name:"\uD83C\uDFC6 Winners",value:`**${nw}**`,inline:true},{name:"\u23F1 Ends",value:`<t:${endsTs}:R>`,inline:true},{name:"\uD83D\uDC65 Entries",value:`**${entries}** entered so far`,inline:true}).setImage(IMG.BANNER).setFooter({text:"KONV tag required \u2022 Konvert Exchange"}).setTimestamp();
+        const _buildGiveawayEmbed=(entries)=>{
+          const msLeft=endsAt-Date.now();
+          const minsLeft=Math.max(0,Math.floor(msLeft/60000));
+          const timeStr=minsLeft>=120?`${Math.floor(minsLeft/1440)}d ${Math.floor((minsLeft%1440)/60)}h left`:minsLeft>=60?`${Math.floor(minsLeft/60)}h ${minsLeft%60}m left`:`${minsLeft}m left`;
+          return new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange \u00b7 Giveaway",iconURL:IMG.LOGO}).setTitle("\uD83C\uDF89 KONV Tag Giveaway!").setDescription(`**${prize}**\n\u200b`).addFields({name:"How to Enter",value:"Must have the **KONV** clan tag. Click below.",inline:false},{name:"\uD83C\uDFC6 Winners",value:`**${nw}**`,inline:true},{name:"\u23F1 Time Left",value:timeStr,inline:true},{name:"\uD83D\uDC65 Entries",value:`**${entries}** ${entries===1?"person":"people"} entered`,inline:true}).setImage(IMG.BANNER).setFooter({text:"KONV tag required \u2022 Konvert Exchange"}).setTimestamp();
+        };
         const gr=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_giveaway_enter").setLabel("\uD83C\uDF89 Enter Giveaway").setStyle(ButtonStyle.Success));
         const gm=await interaction.channel.send({embeds:[_buildGiveawayEmbed(0)],components:[gr]});
         state.activeGiveaway={messageId:gm.id,channelId:interaction.channel.id,prize,endsAt,numWinners:nw,entrants:new Set(),buildEmbed:_buildGiveawayEmbed};
+        // Update embed every 60 seconds with live time + entry count
+        const _gInterval=setInterval(async()=>{
+          if(!state.activeGiveaway||state.activeGiveaway.messageId!==gm.id){clearInterval(_gInterval);return;}
+          try{
+            const _gc=interaction.guild.channels.cache.get(interaction.channel.id);
+            const _gm=_gc?await _gc.messages.fetch(gm.id).catch(()=>null):null;
+            if(_gm)await _gm.edit({embeds:[_buildGiveawayEmbed(state.activeGiveaway.entrants.size)]}).catch(()=>{});
+          }catch{}
+        },60000);
         await interaction.editReply({content:`\u2705 Giveaway started! Ends <t:${endsTs}:R>`,ephemeral:true});
-        setTimeout(async()=>{if(!state.activeGiveaway||state.activeGiveaway.messageId!==gm.id)return;await endGiveaway(interaction.guild,interaction.channel);},minutes*60000);
+        setTimeout(async()=>{if(!state.activeGiveaway||state.activeGiveaway.messageId!==gm.id)return;clearInterval(_gInterval);await endGiveaway(interaction.guild,interaction.channel);},minutes*60000);
         return;
       }
 
