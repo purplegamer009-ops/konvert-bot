@@ -583,6 +583,7 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("tierlist").setDescription("See all client tiers and their requirements"),
   new SlashCommandBuilder().setName("giveaway").setDescription("[Owner] Start a KONV-tag-only giveaway").addStringOption(o=>o.setName("prize").setDescription("Prize description").setRequired(true)).addIntegerOption(o=>o.setName("minutes").setDescription("Duration in minutes").setRequired(true)).addIntegerOption(o=>o.setName("winners").setDescription("Number of winners (default 1)").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("giveawayend").setDescription("[Owner] End active giveaway early").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("giveawayreroll").setDescription("[Owner] Reroll winners from the last giveaway").addIntegerOption(o=>o.setName("winners").setDescription("How many winners to reroll (default 1)").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("removetag").setDescription("[Owner] Remove KONV tag perk from a user").addUserOption(o=>o.setName("user").setDescription("User to remove (leave blank to remove yourself)").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("jbtc").setDescription("[Owner] Set your BTC wallet address").addStringOption(o=>o.setName("address").setDescription("BTC address").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("jeth").setDescription("[Owner] Set your ETH wallet address").addStringOption(o=>o.setName("address").setDescription("ETH address").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
@@ -700,6 +701,7 @@ async function endGiveaway(guild,channel){
   if(!state.activeGiveaway)return;
   const {messageId,channelId,prize,numWinners,entrants}=state.activeGiveaway;
   state.activeGiveaway=null;
+  state.lastGiveaway={prize,entrants:[...entrants],numWinners,channelId};
   const arr=[...entrants];
   if(!arr.length){
     await channel.send({embeds:[new EmbedBuilder().setColor(0xef4444).setTitle("\uD83C\uDF89 Giveaway Over").setDescription(`Prize: **${prize}**\n\nNo one entered.`).setTimestamp()]}).catch(()=>{});
@@ -1738,6 +1740,24 @@ Deleting in 10 seconds.`)
         await interaction.editReply({content:`\u2705 Giveaway started! Ends <t:${endsTs}:R>`,ephemeral:true});
         setTimeout(async()=>{if(!state.activeGiveaway||state.activeGiveaway.messageId!==gm.id)return;clearInterval(_gInterval);await endGiveaway(interaction.guild,interaction.channel);},minutes*60000);
         return;
+      }
+
+      if(cmd==="giveawayreroll"){
+        if(!state.lastGiveaway)return interaction.reply({content:"No recent giveaway to reroll.",ephemeral:true});
+        await interaction.deferReply({ephemeral:true});
+        const {prize,entrants:pool,channelId:gChId}=state.lastGiveaway;
+        if(!pool||!pool.length)return interaction.editReply({content:"No entrants in the last giveaway.",ephemeral:true});
+        const nReroll=Math.min(interaction.options.getInteger("winners")||1,pool.length);
+        const winners=[];
+        const remaining=[...pool];
+        while(winners.length<nReroll){
+          const idx=Math.floor(Math.random()*remaining.length);
+          winners.push(remaining.splice(idx,1)[0]);
+        }
+        const wMentions=winners.map(id=>`<@${id}>`).join(", ");
+        const gCh=interaction.guild.channels.cache.get(gChId)||interaction.channel;
+        await gCh.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  Giveaway Reroll",iconURL:IMG.LOGO}).setTitle("Giveaway Rerolled").setDescription(`**Prize:** ${prize}\n\n**New Winner${winners.length>1?"s":""}:** ${wMentions}\n\nCongratulations! Staff will reach out shortly.`).setFooter({text:"Konvert Exchange  \u2022  Giveaway Reroll"}).setTimestamp()]}).catch(()=>{});
+        return interaction.editReply({content:`\u2705 Rerolled — ${wMentions}`,ephemeral:true});
       }
 
       if(cmd==="giveawayend"){
