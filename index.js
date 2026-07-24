@@ -200,7 +200,7 @@ const METHODS=[
   {value:"skrill",label:"Skrill"},{value:"revolut",label:"Revolut"},{value:"upi",label:"UPI"},
   {value:"chime",label:"Chime"},{value:"bank",label:"Bank Transfer"},{value:"iban",label:"IBAN / SWIFT"},
   {value:"giftcard",label:"Gift Card"},{value:"wire",label:"Wire Transfer"},
-  {value:"googlepay",label:"Google Pay"},{value:"crypto",label:"Crypto to Crypto"},
+  {value:"googlepay",label:"Google Pay"},
 ];
 const getMethod=v=>METHODS.find(m=>m.value===v)||null;
 
@@ -441,7 +441,7 @@ async function fetchFullPrice(coin){
 }
 
 const client=new Client({intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent,GatewayIntentBits.GuildMembers,GatewayIntentBits.GuildInvites],partials:[Partials.Channel]});
-const state={pending:{},mineGames:{},cooldowns:{},alerts:[],passes:{},c2cSelections:{},feedChannel:null,feedEnabled:false,volumeAdj:{},feeMode:"standard",referralDMsEnabled:true,liveLbMessageId:null,liveLbChannelId:null,promos:{},konvTagUsers:new Set(),personalWallets:{},activeGiveaway:null};
+const state={pending:{},mineGames:{},cooldowns:{},alerts:[],passes:{},c2cSelections:{},feedChannel:null,feedEnabled:false,volumeAdj:{},feeMode:"standard",referralDMsEnabled:true,liveLbMessageId:null,liveLbChannelId:null,promos:{},konvTagUsers:new Set(),personalWallets:{"SOL":"BKvzCkm4VuKHSwJp9r2ETC1gUxmLxXiFzAxtDrD3a4GP","ETH":"0x2988997a099AdD54c0662B960c0516dB4cBA37e7","USDT-BNB":"0x2988997a099AdD54c0662B960c0516dB4cBA37e7","USDT-ETH":"0x2988997a099AdD54c0662B960c0516dB4cBA37e7","BTC":"bc1quegp7cr4ulek6aq2aher8mgflfm8r7smpzmk3l","LTC":"Lcdmd7GoVYiHgFit1NajGftM8pwXmr4YNk"},activeGiveaway:null};
 
 function buildLeaderboardVolumes(){
   const DONE_STATUS=["vouched","completed"];
@@ -613,7 +613,7 @@ function mainEmbed(){
       {name:"\uD83D\uDCB8  Fee",value:"5% - 10%  \u00b7  Tiered by amount\nMin fee $5 on any deal",inline:true},
       {name:"\u26A1  Speed",value:"**Usually < 10 min**\nOften faster",inline:true},
       {name:"\uD83E\uDD1D  Support",value:"**24/7 Agents**\nAlways available",inline:true},
-      {name:"\uD83D\uDCB3  Methods",value:"PayPal \u00b7 Cash App \u00b7 Zelle \u00b7 Interac \u00b7 Venmo \u00b7 Apple Pay \u00b7 Bank \u00b7 Crypto to Crypto \u00b7 and more",inline:false},
+      {name:"\uD83D\uDCB3  Methods",value:"PayPal \u00b7 Cash App \u00b7 Zelle \u00b7 Interac \u00b7 Venmo \u00b7 Apple Pay \u00b7 Bank \u00b7 and more",inline:false},
       {name:"\uD83E\uDE99  Crypto",value:"BTC \u00b7 ETH \u00b7 SOL \u00b7 LTC \u00b7 USDT \u00b7 USDC \u00b7 XRP \u00b7 BNB \u00b7 and all major coins",inline:false},
     ).setImage(IMG.BANNER).setFooter({text:"Konvert  \u2022  Click Exchange Now to begin"});
 }
@@ -1732,10 +1732,10 @@ Deleting in 10 seconds.`)
         const nw=interaction.options.getInteger("winners")||1;
         const endsAt=Date.now()+(minutes*60000);
         const endsTs=Math.floor(endsAt/1000);
-        const ge=new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange \u00b7 Giveaway",iconURL:IMG.LOGO}).setTitle("\uD83C\uDF89 KONV Tag Giveaway!").setDescription(`**${prize}**\n\u200b`).addFields({name:"How to Enter",value:"Must have the **KONV** clan tag. Click below.",inline:false},{name:"Winners",value:`**${nw}**`,inline:true},{name:"Ends",value:`<t:${endsTs}:R>`,inline:true}).setImage(IMG.BANNER).setFooter({text:"KONV tag required \u2022 Konvert Exchange"}).setTimestamp();
+        const _buildGiveawayEmbed=(entries)=>new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange \u00b7 Giveaway",iconURL:IMG.LOGO}).setTitle("\uD83C\uDF89 KONV Tag Giveaway!").setDescription(`**${prize}**\n\u200b`).addFields({name:"How to Enter",value:"Must have the **KONV** clan tag. Click the button below.",inline:false},{name:"\uD83C\uDFC6 Winners",value:`**${nw}**`,inline:true},{name:"\u23F1 Ends",value:`<t:${endsTs}:R>`,inline:true},{name:"\uD83D\uDC65 Entries",value:`**${entries}** entered so far`,inline:true}).setImage(IMG.BANNER).setFooter({text:"KONV tag required \u2022 Konvert Exchange"}).setTimestamp();
         const gr=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_giveaway_enter").setLabel("\uD83C\uDF89 Enter Giveaway").setStyle(ButtonStyle.Success));
-        const gm=await interaction.channel.send({embeds:[ge],components:[gr]});
-        state.activeGiveaway={messageId:gm.id,channelId:interaction.channel.id,prize,endsAt,numWinners:nw,entrants:new Set()};
+        const gm=await interaction.channel.send({embeds:[_buildGiveawayEmbed(0)],components:[gr]});
+        state.activeGiveaway={messageId:gm.id,channelId:interaction.channel.id,prize,endsAt,numWinners:nw,entrants:new Set(),buildEmbed:_buildGiveawayEmbed};
         await interaction.editReply({content:`\u2705 Giveaway started! Ends <t:${endsTs}:R>`,ephemeral:true});
         setTimeout(async()=>{if(!state.activeGiveaway||state.activeGiveaway.messageId!==gm.id)return;await endGiveaway(interaction.guild,interaction.channel);},minutes*60000);
         return;
@@ -2229,7 +2229,15 @@ This is active immediately and persists until revoked or the bot restarts.
         if(state.activeGiveaway.entrants.has(userId))return interaction.reply({content:"\u2705 You are already entered! Good luck \uD83C\uDF89",ephemeral:true});
         state.activeGiveaway.entrants.add(userId);
         const count=state.activeGiveaway.entrants.size;
-        return interaction.reply({content:`\uD83C\uDF89 You are in! **${count}** ${count===1?"person":"people"} entered. Good luck!`,ephemeral:true});
+        // Update the giveaway embed with new entry count
+        try{
+          const gCh=interaction.guild.channels.cache.get(state.activeGiveaway.channelId);
+          if(gCh&&state.activeGiveaway.buildEmbed){
+            const gMsg=await gCh.messages.fetch(state.activeGiveaway.messageId).catch(()=>null);
+            if(gMsg)await gMsg.edit({embeds:[state.activeGiveaway.buildEmbed(count)]}).catch(()=>{});
+          }
+        }catch{}
+        return interaction.reply({content:`\uD83C\uDF89 You are in! **${count}** ${count===1?"person has":"people have"} entered. Good luck!`,ephemeral:true});
       }
 
       if(interaction.customId==="btn_confirm_ticket"){if(!interaction.deferred&&!interaction.replied)await interaction.deferUpdate().catch(()=>{});const pending=state.pending[interaction.user.id];if(!pending)return interaction.editReply({content:"Session expired. Please start again.",embeds:[],components:[]});delete state.pending[interaction.user.id];const ch=await createTicket(interaction,pending.method,pending.direction,pending.rawAmt,pending.coin,pending.walletInf,pending.notes,pending.recvCoin||null);if(ch)return interaction.editReply({content:`Ticket opened \u2192 <#${ch.id}>`,embeds:[],components:[]});return;}
