@@ -1076,9 +1076,16 @@ client.on(Events.MessageCreate,async message=>{
   const vol=d.usd_24h_vol?`$${(d.usd_24h_vol/1e9).toFixed(2)}B`:"--";
   const fee=calcFee(Math.max(d.usd,1),"send"),rate=feeRate(Math.max(d.usd,1),"send");
   const color=isUp?0x7C4DFF:0x7C4DFF;
-  await message.reply({embeds:[new EmbedBuilder().setColor(color).setAuthor({name:"Konvert Exchange  \u2022  Live Price",iconURL:IMG.LOGO}).setTitle(`${isUp?"\u25B2":"\u25BC"}  ${coin}  \u2014  $${fmt(d.usd)}`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO).setDescription(`**${isUp?"+":""}${ch2.toFixed(2)}%** in the last 24 hours\n\u200b`)
-    .addFields({name:"USD",value:`**$${fmt(d.usd)}**`,inline:true},{name:"CAD",value:`**CA$${fmt(d.cad)}**`,inline:true},{name:"EUR",value:`**\u20AC${fmt(d.eur)}**`,inline:true},{name:"Market Cap",value:mcap,inline:true},{name:"24h Volume",value:vol,inline:true},{name:"Konvert Fee",value:`**${rate}%** \u2014 ${fmtUSD(fee)}`,inline:true})
-    .setImage(IMG.BANNER).setFooter({text:`Konvert Exchange  \u2022  Type /price ${coin} for more details`}).setTimestamp()]}).catch(()=>{});
+  const ch2sign=isUp?"+":"";
+  const ch2dir=isUp?"\u25B2":"\u25BC";
+  const high24m=d.usd_24h_high?`$${fmt(d.usd_24h_high)}`:"--";
+  const low24m=d.usd_24h_low?`$${fmt(d.usd_24h_low)}`:"--";
+  await message.reply({embeds:[new EmbedBuilder().setColor(isUp?0x7C4DFF:0xef4444).setTitle(`${coin}`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO).addFields(
+    {name:"Price",value:`$${fmt(d.usd)} USD`,inline:false},
+    {name:"24H Change",value:`${ch2sign}$${fmt(Math.abs(ch2/100*(d.usd||1)))} ${ch2dir} (${ch2sign}${ch2.toFixed(2)}%)`,inline:false},
+    {name:"24H High",value:high24m,inline:true},
+    {name:"24H Low",value:low24m,inline:true},
+  ).setFooter({text:`Konvert Exchange  \u2022  Type /price ${coin} for more details`}).setTimestamp()]}).catch(()=>{});
  }catch(e){console.error("[MessageCreate error]",e.message);}
 });
 
@@ -1196,11 +1203,18 @@ client.on(Events.InteractionCreate,async interaction=>{
         const d=await fetchFullPrice(coin);
         if(!d)return interaction.editReply("\u274C Could not fetch price right now. Try again in a moment.");
         const ch=parseFloat(d.usd_24h_change||0),isUp=ch>=0;
-        const fmt2=n=>n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
-        const mcap=d.usd_market_cap?`$${(d.usd_market_cap/1e9).toFixed(2)}B`:"--",vol=d.usd_24h_vol?`$${(d.usd_24h_vol/1e9).toFixed(2)}B`:"--";
-        const fee=calcFee(Math.max(d.usd,1),"send"),rate=feeRate(Math.max(d.usd,1),"send");
-        const color2=isUp?0x7C4DFF:0x7C4DFF;
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(color2).setAuthor({name:"Konvert Exchange  \u2022  Live Price",iconURL:IMG.LOGO}).setTitle(`${isUp?"\u25B2":"\u25BC"}  ${coin}  \u2014  $${fmt2(d.usd)}`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO).setDescription(`**${isUp?"+":""}${ch.toFixed(2)}%** in the last 24 hours\n\u200b`).addFields({name:"USD",value:`**$${fmt2(d.usd)}**`,inline:true},{name:"CAD",value:`**CA$${fmt2(d.cad)}**`,inline:true},{name:"EUR",value:`**\u20AC${fmt2(d.eur)}**`,inline:true},{name:"Market Cap",value:mcap,inline:true},{name:"24h Volume",value:vol,inline:true},{name:"Konvert Fee",value:`**${rate}%** \u2014 ${fmtUSD(fee)}`,inline:true}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  \u2022  Open a ticket to start trading"}).setTimestamp()]});
+        const fmt2=n=>n>=1?n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):n>=0.01?n.toFixed(4):n.toFixed(8);
+        const chSign=isUp?"+":"";
+        const chDir=isUp?"\u25B2":"\u25BC";
+        const high24=d.usd_24h_high?`$${fmt2(d.usd_24h_high)}`:"--";
+        const low24=d.usd_24h_low?`$${fmt2(d.usd_24h_low)}`:"--";
+        const coinName=Object.keys(GECKO).find(k=>GECKO[k]===Object.keys(GECKO).find(g=>g===coin)?coin:null)||coin;
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(isUp?0x7C4DFF:0xef4444).setTitle(`${coin}`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO).addFields(
+          {name:"Price",value:`$${fmt2(d.usd)} USD`,inline:false},
+          {name:"24H Change",value:`${chSign}$${fmt2(Math.abs(ch/100*(d.usd||1)))} ${chDir} (${chSign}${ch.toFixed(2)}%)`,inline:false},
+          {name:"24H High",value:high24,inline:true},
+          {name:"24H Low",value:low24,inline:true},
+        ).setFooter({text:`Konvert Exchange  \u2022  Type /price ${coin} for more details`}).setTimestamp()]});
       }
 
       if(cmd==="convert"){
