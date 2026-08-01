@@ -936,6 +936,51 @@ client.on(Events.MessageCreate,async message=>{
   if(message.channel.type!==undefined){
     const tickets=Object.keys(_mem.tickets||{}).length?_mem.tickets:load("tickets");
     const ticket=tickets[message.channel.id];
+    // $close — auto close ticket
+    if(message.content.trim()==="$close"&&ticket&&ticket.status==="open"){
+      const _isExRoles2=Object.values(CONFIG.ROLES).filter(Boolean);
+      const _canClose=CONFIG.OWNER_IDS.includes(message.author.id)||(CONFIG.STAFF_ROLE&&message.member?.roles.cache.has(CONFIG.STAFF_ROLE))||(CONFIG.EXCHANGER_ROLE&&message.member?.roles.cache.has(CONFIG.EXCHANGER_ROLE))||_isExRoles2.some(r=>message.member?.roles.cache.has(r));
+      if(_canClose){
+        await message.channel.send("Closing ticket...").catch(()=>{});
+        await doCloseTicket(message.channel,message.guild,message.author,"Closed by staff");
+        setTimeout(()=>message.channel.delete().catch(()=>{}),5000);
+        return;
+      }
+    }
+    // $remind — remind client and start 12h auto-close countdown
+    if(message.content.trim()==="$remind"&&ticket&&ticket.status==="open"){
+      const _isExRoles3=Object.values(CONFIG.ROLES).filter(Boolean);
+      const _canRemind=CONFIG.OWNER_IDS.includes(message.author.id)||(CONFIG.STAFF_ROLE&&message.member?.roles.cache.has(CONFIG.STAFF_ROLE))||(CONFIG.EXCHANGER_ROLE&&message.member?.roles.cache.has(CONFIG.EXCHANGER_ROLE))||_isExRoles3.some(r=>message.member?.roles.cache.has(r));
+      if(_canRemind){
+        const _clientId=ticket.userId;
+        await message.channel.send({content:`<@${_clientId}> You have **12 hours** to respond to this ticket or it will be automatically closed.`}).catch(()=>{});
+        // Track last reply time for auto-close
+        if(!state._reminderTimers)state._reminderTimers={};
+        if(state._reminderTimers[message.channel.id])clearTimeout(state._reminderTimers[message.channel.id]);
+        const _chRef=message.channel;
+        const _gRef=message.guild;
+        // Collect any message from client within 12h
+        const _rFilter=m=>m.author.id===_clientId&&!m.author.bot;
+        const _rCollector=_chRef.createMessageCollector({filter:_rFilter,time:12*60*60*1000,max:1});
+        _rCollector.on("collect",()=>{
+          clearTimeout(state._reminderTimers[_chRef.id]);
+          delete state._reminderTimers[_chRef.id];
+          _rCollector.stop("replied");
+        });
+        _rCollector.on("end",async(_,reason)=>{
+          if(reason==="replied")return;
+          // No reply in 12h — auto close
+          try{
+            await _chRef.send("No response received in 12 hours. Closing ticket automatically.").catch(()=>{});
+            await doCloseTicket(_chRef,_gRef,{id:"auto",tag:"AutoClose"},"No response in 12 hours");
+            setTimeout(()=>_chRef.delete().catch(()=>{}),5000);
+          }catch{}
+          delete state._reminderTimers[_chRef.id];
+        });
+        state._reminderTimers[message.channel.id]=setTimeout(()=>{},1); // placeholder
+        return;
+      }
+    }
     // Security reminder — once per ticket, after 10-15 messages
     if(ticket&&ticket.status==="open"){
       if(!state._ticketMsgCount)state._ticketMsgCount={};
@@ -2401,7 +2446,11 @@ This is active immediately and persists until revoked or the bot restarts.
         return;
       }
       if(interaction.customId==="btn_close"){
-        if(!CONFIG.OWNER_IDS.includes(interaction.user.id)&&!(CONFIG.STAFF_ROLE&&interaction.member.roles.cache.has(CONFIG.STAFF_ROLE)))return interaction.reply({content:"Only owners or staff can close tickets.",ephemeral:true});
+        const _isOwnerClose=CONFIG.OWNER_IDS.includes(interaction.user.id);
+        const _isStaffClose=CONFIG.STAFF_ROLE?interaction.member.roles.cache.has(CONFIG.STAFF_ROLE):false;
+        const _allExRoles=Object.values(CONFIG.ROLES).filter(Boolean);
+        const _isExClose=CONFIG.EXCHANGER_ROLE?interaction.member.roles.cache.has(CONFIG.EXCHANGER_ROLE):_allExRoles.some(r=>interaction.member.roles.cache.has(r));
+        if(!_isOwnerClose&&!_isStaffClose&&!_isExClose)return interaction.reply({content:"Only exchangers or staff can close tickets.",ephemeral:true});
         await interaction.deferReply();await doCloseTicket(interaction.channel,interaction.guild,interaction.user,"Closed by staff");
         await interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Ticket Closed").setDescription("This ticket has been closed by staff.\nDeleting in 15 seconds.").setTimestamp()]});
         setTimeout(()=>interaction.channel.delete().catch(()=>{}),15000);return;
