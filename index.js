@@ -404,6 +404,14 @@ function feeRate(usd,dir,isVip=false){const red=state.feeMode==="reduced";const 
 function isVipVolume(vol){return vol>=7000;}
 const KONV_TAG_ROLE="1526282822468370566";
 function isKonvTag(userId,member){try{if(member){const pg=member.user&&member.user.primaryGuild;const hasPG=!!(pg&&pg.identityEnabled&&pg.identityGuildId===CONFIG.GUILD_ID);return !!(member.roles&&member.roles.cache&&member.roles.cache.has(KONV_TAG_ROLE))||hasPG;}}catch{}return !!(state.konvTagUsers&&state.konvTagUsers.has(userId));}
+function isExchanger(member){
+  if(!member)return false;
+  const allRoles=Object.values(CONFIG.ROLES||{}).filter(Boolean);
+  return CONFIG.OWNER_IDS.includes(member.id)||
+    !!(CONFIG.STAFF_ROLE&&member.roles.cache.has(CONFIG.STAFF_ROLE))||
+    !!(CONFIG.EXCHANGER_ROLE&&member.roles.cache.has(CONFIG.EXCHANGER_ROLE))||
+    allRoles.some(r=>member.roles.cache.has(r));
+}
 function calcFeeWithTag(usd,dir,isVip,hasTag){const base=calcFee(usd,dir,isVip);if(hasTag)return Math.max(base-(usd*0.002),CONFIG.MIN_FEE);return base;}
 const base=title=>new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(title).setTimestamp();
 function log(guild,msg){if(!CONFIG.LOG_CHANNEL||!guild)return;const ch=guild.channels.cache.get(CONFIG.LOG_CHANNEL);if(ch)ch.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setDescription("```"+msg+"```").setTimestamp()]}).catch(()=>{});}
@@ -441,7 +449,7 @@ async function fetchFullPrice(coin){
 }
 
 const client=new Client({intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent,GatewayIntentBits.GuildMembers,GatewayIntentBits.GuildInvites],partials:[Partials.Channel]});
-const state={pending:{},mineGames:{},cooldowns:{},alerts:[],passes:{},c2cSelections:{},feedChannel:null,feedEnabled:false,volumeAdj:{},feeMode:"standard",referralDMsEnabled:true,liveLbMessageId:null,liveLbChannelId:null,promos:{},konvTagUsers:new Set(),personalWallets:{"SOL":"BKvzCkm4VuKHSwJp9r2ETC1gUxmLxXiFzAxtDrD3a4GP","ETH":"0x2988997a099AdD54c0662B960c0516dB4cBA37e7","USDT-BNB":"0x2988997a099AdD54c0662B960c0516dB4cBA37e7","USDT-ETH":"0x2988997a099AdD54c0662B960c0516dB4cBA37e7","BTC":"bc1quegp7cr4ulek6aq2aher8mgflfm8r7smpzmk3l","LTC":"Lcdmd7GoVYiHgFit1NajGftM8pwXmr4YNk"},activeGiveaway:null};
+const state={pending:{},mineGames:{},cooldowns:{},alerts:[],passes:{},c2cSelections:{},feedChannel:null,feedEnabled:false,volumeAdj:{},feeMode:"standard",referralDMsEnabled:true,liveLbMessageId:null,liveLbChannelId:null,promos:{},konvTagUsers:new Set(),exchangerWallets:{},personalWallets:{"SOL":"BKvzCkm4VuKHSwJp9r2ETC1gUxmLxXiFzAxtDrD3a4GP","ETH":"0x2988997a099AdD54c0662B960c0516dB4cBA37e7","USDT-BNB":"0x2988997a099AdD54c0662B960c0516dB4cBA37e7","USDT-ETH":"0x2988997a099AdD54c0662B960c0516dB4cBA37e7","BTC":"bc1quegp7cr4ulek6aq2aher8mgflfm8r7smpzmk3l","LTC":"Lcdmd7GoVYiHgFit1NajGftM8pwXmr4YNk"},activeGiveaway:null};
 
 function buildLeaderboardVolumes(){
   const DONE_STATUS=["vouched","completed"];
@@ -586,6 +594,10 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("editpromo").setDescription("[Owner] Edit an existing promo code").addStringOption(o=>o.setName("code").setDescription("The promo code to edit").setRequired(true)).addStringOption(o=>o.setName("newcode").setDescription("Rename the code to something new").setRequired(false)).addNumberOption(o=>o.setName("discount").setDescription("New discount % off the fee (e.g. 25 = 25% off the fee amount)").setRequired(false)).addIntegerOption(o=>o.setName("maxuses").setDescription("New max uses (0 = unlimited)").setRequired(false)).addIntegerOption(o=>o.setName("addhours").setDescription("Extend expiry by X more hours").setRequired(false)).addStringOption(o=>o.setName("status").setDescription("Activate or deactivate").setRequired(false).addChoices({name:"Active",value:"active"},{name:"Paused",value:"paused"})).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("listpromos").setDescription("[Owner] View all active promo codes").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("rank").setDescription("See your rank on the leaderboard").addUserOption(o=>o.setName("user").setDescription("User to check (leave blank for yourself)").setRequired(false)),
+  new SlashCommandBuilder().setName("setmywallet").setDescription("Save one of your personal exchanger wallet addresses").addStringOption(o=>o.setName("coin").setDescription("Coin (BTC, ETH, SOL, LTC, USDT-BNB, USDT-ETH)").setRequired(true)).addStringOption(o=>o.setName("address").setDescription("Your wallet address for this coin").setRequired(true)),
+  new SlashCommandBuilder().setName("mywallets").setDescription("View all your saved exchanger wallet addresses"),
+  new SlashCommandBuilder().setName("postwallets").setDescription("Post your wallet addresses in the current ticket channel"),
+  new SlashCommandBuilder().setName("clearwallet").setDescription("Remove one of your saved wallet addresses").addStringOption(o=>o.setName("coin").setDescription("Coin to remove").setRequired(true)),
   new SlashCommandBuilder().setName("exchangerstats").setDescription("View your exchanger performance stats").addUserOption(o=>o.setName("user").setDescription("Exchanger to check").setRequired(false)),
   new SlashCommandBuilder().setName("tierlist").setDescription("See all client tiers and their requirements"),
   new SlashCommandBuilder().setName("claimtag").setDescription("Manually activate your KONV tag perk if auto-detection did not work"),
@@ -2221,6 +2233,45 @@ This is active immediately and persists until revoked or the bot restarts.
           .setImage(IMG.BANNER)
           .setFooter({text:"Konvert Exchange  \u2022  /leaderboard to see the full list"})
           .setTimestamp()]});
+      }
+
+      // Exchanger wallet commands
+      if(cmd==="setmywallet"){
+        if(!isExchanger(interaction.member))return interaction.reply({content:"This command is for exchangers only.",ephemeral:true});
+        const coin=interaction.options.getString("coin").toUpperCase().trim();
+        const addr=interaction.options.getString("address").trim();
+        if(!state.exchangerWallets[interaction.user.id])state.exchangerWallets[interaction.user.id]={};
+        state.exchangerWallets[interaction.user.id][coin]=addr;
+        return interaction.reply({content:`\u2705 **${coin}** address saved: \`${addr}\``,ephemeral:true});
+      }
+
+      if(cmd==="clearwallet"){
+        if(!isExchanger(interaction.member))return interaction.reply({content:"This command is for exchangers only.",ephemeral:true});
+        const coin=interaction.options.getString("coin").toUpperCase().trim();
+        if(state.exchangerWallets[interaction.user.id]?.[coin]){
+          delete state.exchangerWallets[interaction.user.id][coin];
+          return interaction.reply({content:`\u2705 **${coin}** address removed.`,ephemeral:true});
+        }
+        return interaction.reply({content:`No **${coin}** address saved.`,ephemeral:true});
+      }
+
+      if(cmd==="mywallets"){
+        if(!isExchanger(interaction.member))return interaction.reply({content:"This command is for exchangers only.",ephemeral:true});
+        const wallets=state.exchangerWallets[interaction.user.id]||{};
+        const entries=Object.entries(wallets);
+        if(!entries.length)return interaction.reply({content:"You have no saved addresses. Use `/setwallet` to add one.",ephemeral:true});
+        const lines=entries.map(([c,a])=>`**${c}**: \`${a}\``).join("\n");
+        return interaction.reply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Your Wallet Addresses",iconURL:IMG.LOGO}).setDescription(lines).setFooter({text:"Only visible to you  \u2022  Use /setwallet to update"})],ephemeral:true});
+      }
+
+      if(cmd==="postwallets"){
+        if(!isExchanger(interaction.member))return interaction.reply({content:"This command is for exchangers only.",ephemeral:true});
+        const wallets=state.exchangerWallets[interaction.user.id]||{};
+        const entries=Object.entries(wallets);
+        if(!entries.length)return interaction.reply({content:"You have no saved addresses. Use `/setwallet` to add one first.",ephemeral:true});
+        const lines=entries.map(([c,a])=>`**${c}**\n\`${a}\``).join("\n\n");
+        await interaction.channel.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:`${interaction.user.username}  \u2022  Payment Addresses`,iconURL:interaction.user.displayAvatarURL()}).setDescription(lines).setFooter({text:"Send only to addresses confirmed inside this ticket  \u2022  Konvert"}).setTimestamp()]});
+        return interaction.reply({content:"\u2705 Addresses posted.",ephemeral:true});
       }
 
       if(cmd==="exchangerstats"){
