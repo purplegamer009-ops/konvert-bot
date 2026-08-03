@@ -87,13 +87,17 @@ oauth2Client.setCredentials({ refresh_token: process.env.YOUTUBE_REFRESH_TOKEN }
 const youtube = google.youtube({ version: "v3", auth: oauth2Client });
 
 const IMG = {
-  LOGO:"https://i.imgur.com/nrm5TW5.png", BANNER:"https://i.imgur.com/tl4n8sx.png",
-  RATES:"https://i.imgur.com/0zbG9Fc.png", FEE:"https://i.imgur.com/ITeo8rQ.png",
-  RULES:"https://i.imgur.com/CaBjEFU.png", TICKET:"https://i.imgur.com/GasrfTC.png",
-  WELCOME:"https://i.imgur.com/hSYrFai.png", DEAL:"https://i.imgur.com/GuBspYH.png",
+  LOGO:process.env.BOT_LOGO||"https://i.imgur.com/dXKH5Fv.png",
+  BANNER:process.env.BOT_BANNER||"https://i.imgur.com/EdIbiik.png",
+  RATES:process.env.BOT_LOGO||"https://i.imgur.com/dXKH5Fv.png",
+  FEE:process.env.BOT_LOGO||"https://i.imgur.com/dXKH5Fv.png",
+  RULES:process.env.BOT_LOGO||"https://i.imgur.com/dXKH5Fv.png",
+  TICKET:process.env.BOT_BANNER||"https://i.imgur.com/EdIbiik.png",
+  WELCOME:process.env.BOT_BANNER||"https://i.imgur.com/EdIbiik.png",
+  DEAL:process.env.BOT_BANNER||"https://i.imgur.com/EdIbiik.png",
 };
 
-const PTS_IMG="https://i.imgur.com/6eAi4jc.png";
+const PTS_IMG=process.env.BOT_LOGO||"https://i.imgur.com/dXKH5Fv.png";
 const SUPPORT_CH="1477230600959299605";
 
 const CONFIG = {
@@ -629,15 +633,15 @@ async function registerCommands(){
 }
 
 function mainEmbed(){
-  return new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Konvert Exchange")
-    .setDescription("**Fast. Safe. Simple.**\nExchange any crypto with any major payment method.\nOpen a ticket instantly -- a verified handler will assist you.\n\u200b")
+  return new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
+    .setDescription("Simple · Smooth · Seamless\n\u200b")
     .addFields(
-      {name:"\uD83D\uDCB8  Fee",value:"5% - 10%  \u00b7  Tiered by amount\nMin fee $5 on any deal",inline:true},
-      {name:"\u26A1  Speed",value:"**Usually < 10 min**\nOften faster",inline:true},
-      {name:"\uD83E\uDD1D  Support",value:"**24/7 Agents**\nAlways available",inline:true},
-      {name:"\uD83D\uDCB3  Methods",value:"PayPal \u00b7 Cash App \u00b7 Zelle \u00b7 Interac \u00b7 Venmo \u00b7 Apple Pay \u00b7 Bank \u00b7 and more",inline:false},
-      {name:"\uD83E\uDE99  Crypto",value:"BTC \u00b7 ETH \u00b7 SOL \u00b7 LTC \u00b7 USDT \u00b7 USDC \u00b7 XRP \u00b7 BNB \u00b7 and all major coins",inline:false},
-    ).setImage(IMG.BANNER).setFooter({text:"Konvert  \u2022  Click Exchange Now to begin"});
+      {name:"Fee",value:"5–10% · Min $5",inline:true},
+      {name:"Speed",value:"Under 10 min",inline:true},
+      {name:"Support",value:"24/7",inline:true},
+      {name:"Methods",value:"PayPal · Zelle · Interac · Cash App · Venmo · Apple Pay · Bank",inline:false},
+      {name:"Crypto",value:"BTC · ETH · SOL · LTC · USDT · USDC · XRP · BNB · and more",inline:false},
+    ).setThumbnail(IMG.LOGO).setFooter({text:"Konvert Exchange"});
 }
 function mainButtons(){
   return [new ActionRowBuilder().addComponents(
