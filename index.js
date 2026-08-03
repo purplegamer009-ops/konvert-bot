@@ -648,6 +648,14 @@ async function registerCommands(){
   try{
     await _regRest.put(Routes.applicationGuildCommands(CONFIG.CLIENT_ID,CONFIG.GUILD_ID),{body:COMMANDS});
     console.log(`Commands registered. (${COMMANDS.length} total)`);
+    // Clean up old bot global commands to prevent duplicates showing
+    try{
+      const _globalCmds=await _regRest.get(Routes.applicationCommands(CONFIG.CLIENT_ID));
+      if(_globalCmds&&_globalCmds.length>0){
+        for(const cmd of _globalCmds)await _regRest.delete(Routes.applicationCommand(CONFIG.CLIENT_ID,cmd.id)).catch(()=>{});
+        console.log(`[startup] Cleared ${_globalCmds.length} global commands`);
+      }
+    }catch{}
   }catch(e){
     console.error("[registerCommands] FAILED:",e.message);
     if(e.rawError)console.error("[registerCommands] Discord error:",JSON.stringify(e.rawError));
@@ -980,6 +988,38 @@ client.on(Events.MessageCreate,async message=>{
   if(message.channel.type!==undefined){
     const tickets=Object.keys(_mem.tickets||{}).length?_mem.tickets:load("tickets");
     const ticket=tickets[message.channel.id];
+    // $complete — mark exchange complete
+    if(message.content.trim()==="$complete"&&ticket&&ticket.status==="open"){
+      const _canComp=CONFIG.OWNER_IDS.includes(message.author.id)||(CONFIG.STAFF_ROLE&&message.member?.roles.cache.has(CONFIG.STAFF_ROLE))||Object.values(CONFIG.ROLES).filter(Boolean).some(r=>message.member?.roles.cache.has(r));
+      if(_canComp){
+        const _allT=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
+        ticket._overrideExchangerId=message.author.id;
+        // Create a fake interaction-like object for completeTrade
+        const _fakeInt={guild:message.guild,channel:message.channel,user:message.author,member:message.member,deferred:true,replied:false,editReply:async(d)=>message.channel.send(typeof d==="string"?{content:d}:d).catch(()=>{}),followUp:async(d)=>message.channel.send(typeof d==="string"?{content:d}:d).catch(()=>{})};
+        await completeTrade(_fakeInt,ticket,_allT);
+        return;
+      }
+    }
+    // $ban — blacklist a user (reply to their message or mention)
+    if(message.content.trim().startsWith("$ban ")&&CONFIG.OWNER_IDS.includes(message.author.id)){
+      const _banId=message.mentions.users.first()?.id||message.content.trim().split(" ")[1];
+      if(_banId){const bl=load("blacklist");bl[_banId]=true;save("blacklist",bl);await message.reply(`Banned <@${_banId}> from Konvert.`).catch(()=>{});}
+      return;
+    }
+    // $unban — remove from blacklist
+    if(message.content.trim().startsWith("$unban ")&&CONFIG.OWNER_IDS.includes(message.author.id)){
+      const _unId=message.mentions.users.first()?.id||message.content.trim().split(" ")[1];
+      if(_unId){const bl=load("blacklist");delete bl[_unId];save("blacklist",bl);await message.reply(`Unbanned <@${_unId}>.`).catch(()=>{});}
+      return;
+    }
+    // $purge [number] — delete last N messages (max 100)
+    if(message.content.trim().startsWith("$purge")&&(CONFIG.OWNER_IDS.includes(message.author.id)||(CONFIG.STAFF_ROLE&&message.member?.roles.cache.has(CONFIG.STAFF_ROLE)))){
+      const _n=Math.min(parseInt(message.content.trim().split(" ")[1]||"10")||10,100);
+      await message.channel.bulkDelete(_n+1,true).catch(()=>{});
+      const _pm=await message.channel.send(`Deleted ${_n} messages.`).catch(()=>null);
+      if(_pm)setTimeout(()=>_pm.delete().catch(()=>{}),3000);
+      return;
+    }
     // $close — auto close ticket
     if(message.content.trim()==="$close"&&ticket&&ticket.status==="open"){
       const _isExRoles2=Object.values(CONFIG.ROLES).filter(Boolean);
@@ -2515,20 +2555,19 @@ This is active immediately and persists until revoked or the bot restarts.
       }
 
       if(interaction.customId==="btn_done"){
-        await interaction.deferReply({flags:64}).catch(()=>{});
         const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
         const ticket=tickets[interaction.channel.id];
         const isOwner=CONFIG.OWNER_IDS.includes(interaction.user.id);
         const isStaff=CONFIG.STAFF_ROLE?interaction.member.roles.cache.has(CONFIG.STAFF_ROLE):false;
-        const mRoleId=ticket?.method?CONFIG.ROLES[ticket.method]:null;
-        const isHandler=mRoleId?interaction.member.roles.cache.has(mRoleId):false;
-        const isAnyExchanger=CONFIG.EXCHANGER_ROLE?interaction.member.roles.cache.has(CONFIG.EXCHANGER_ROLE):false;
         const allExchangerRoles=Object.values(CONFIG.ROLES).filter(Boolean);
-        const hasAnyExchangerRole=allExchangerRoles.some(r=>interaction.member.roles.cache.has(r));
-        if(!isOwner&&!isStaff&&!isHandler&&!isAnyExchanger&&!hasAnyExchangerRole)return interaction.reply({content:"Only exchangers can mark an exchange complete.",flags:64});
-        if(ticket?.status==="vouched"||ticket?.status==="closed")return interaction.reply({content:"This exchange has already been completed.",flags:64});
-        // Auto-complete — person who clicks IS the exchanger, no form needed
-        await interaction.deferReply();
+        const hasAnyRole=isOwner||isStaff||
+          (CONFIG.EXCHANGER_ROLE&&interaction.member.roles.cache.has(CONFIG.EXCHANGER_ROLE))||
+          allExchangerRoles.some(r=>interaction.member.roles.cache.has(r));
+        if(!hasAnyRole)return interaction.reply({content:"Only exchangers can mark an exchange complete.",flags:64});
+        if(!ticket)return interaction.reply({content:"Ticket not found.",flags:64});
+        if(ticket.status==="vouched"||ticket.status==="closed")return interaction.reply({content:"This exchange has already been completed.",flags:64});
+        await interaction.deferReply({flags:64});
+        ticket._overrideExchangerId=interaction.user.id;
         await completeTrade(interaction,ticket,tickets);
         return;
       }
