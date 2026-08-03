@@ -641,7 +641,7 @@ function mainEmbed(){
       {name:"Support",value:"24/7",inline:true},
       {name:"Methods",value:"PayPal · Zelle · Interac · Cash App · Venmo · Apple Pay · Bank",inline:false},
       {name:"Crypto",value:"BTC · ETH · SOL · LTC · USDT · USDC · XRP · BNB · and more",inline:false},
-    ).setThumbnail(IMG.LOGO).setFooter({text:"Konvert Exchange"});
+    ).setThumbnail(IMG.LOGO).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange"});
 }
 function mainButtons(){
   return [new ActionRowBuilder().addComponents(
@@ -790,7 +790,7 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   } else {
     ticketEmbed.addFields({name:"Referral",value:"No referral",inline:true});
   }
-  ticketEmbed.setImage(IMG.TICKET).setTimestamp().setFooter({text:"Konvert Exchange  \u2022  All communication stays in this ticket"});
+  ticketEmbed.setImage(IMG.BANNER).setTimestamp().setFooter({text:"Konvert Exchange  \u2022  All communication stays in this ticket"});
   const rulesEmbed=new EmbedBuilder().setColor(0x7C4DFF)
     .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
     .setTitle("Before You Proceed")
