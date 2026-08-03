@@ -406,6 +406,27 @@ const fmtUSD=n=>{if(n>=1)return`$${n.toLocaleString("en-US",{minimumFractionDigi
 function calcFee(usd,dir,isVip=false){const red=state.feeMode==="reduced";const base=dir==="receive"?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(red?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(usd<150?10:usd<350?9:usd<600?8:usd<800?7:6));const r=isVip?Math.max(base-0.75,1):base;return Math.max(usd*r/100,CONFIG.MIN_FEE);}
 function feeRate(usd,dir,isVip=false){const red=state.feeMode==="reduced";const base=dir==="receive"?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(red?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(usd<150?10:usd<350?9:usd<600?8:usd<800?7:6));return isVip?Math.max(base-0.75,1):base;}
 function isVipVolume(vol){return vol>=7000;}
+// Wrap any async command handler with a timeout — prevents "thinking" forever
+async function withTimeout(interaction,fn,ms=8000){
+  let done=false;
+  const timer=setTimeout(()=>{
+    if(!done&&!interaction.replied&&!interaction.deferred)return;
+    if(!done){
+      done=true;
+      interaction.editReply({content:"Request timed out. Please try again.",embeds:[],components:[]}).catch(()=>{});
+    }
+  },ms);
+  try{
+    await fn();
+    done=true;
+  }catch(e){
+    done=true;
+    console.error("[withTimeout]",e.message);
+    interaction.editReply({content:"Something went wrong. Please try again.",embeds:[],components:[]}).catch(()=>{});
+  }finally{
+    clearTimeout(timer);
+  }
+}
 const KONV_TAG_ROLE="1526282822468370566";
 function isKonvTag(userId,member){try{if(member){const pg=member.user&&member.user.primaryGuild;const hasPG=!!(pg&&pg.identityEnabled&&pg.identityGuildId===CONFIG.GUILD_ID);return !!(member.roles&&member.roles.cache&&member.roles.cache.has(KONV_TAG_ROLE))||hasPG;}}catch{}return !!(state.konvTagUsers&&state.konvTagUsers.has(userId));}
 function isExchanger(member){
@@ -1241,7 +1262,10 @@ client.on(Events.InteractionCreate,async interaction=>{
       if(cmd==="postsupport"){const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Support").setThumbnail(IMG.LOGO).setDescription(`This channel is for **support tickets only**.\n\nFor exchanges, head to <#${CONFIG.EXCHANGE_CHANNEL}>.\n\n**What to include:**\n\u00b7 What you need help with\n\u00b7 Any error messages or screenshots\n\u00b7 What you have already tried\n\u00b7 A full explanation of what happened\n\u200b`).setFooter({text:"Konvert  \u2022  Support"});await interaction.channel.send({embeds:[embed],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_support_ticket").setLabel("Open Support Ticket").setEmoji("\uD83C\uDF9F").setStyle(ButtonStyle.Primary))]});return interaction.reply({content:"Support embed posted.",ephemeral:true});}
       if(cmd==="postmm"){const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Middleman Information").setThumbnail(IMG.LOGO).setDescription(`**Konvert officially partners with Astro MM** to ensure all deals go smoothly.\n\n**How It Works:**\n**1.** Open a ticket in <#${CONFIG.EXCHANGE_CHANNEL}>\n**2.** Get a quote for your exchange\n**3.** If terms are agreed on, open an MM ticket on Astro MM\n**4.** Complete the exchange safely\n\u200b`).addFields({name:"Important",value:"**Do NOT go first** without using Astro MM, unless explicitly advised by an owner in your ticket.",inline:false},{name:"Astro MM",value:"Click the button below to join the Astro MM server.",inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert  \u2022  Official Escrow Partner: Astro MM"});await interaction.channel.send({embeds:[embed],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setLabel("Join Astro MM").setEmoji("\uD83E\uDD1D").setStyle(ButtonStyle.Link).setURL("https://discord.gg/astromm"))]});return interaction.reply({content:"MM embed posted.",ephemeral:true});}
 
-      if(cmd==="rates"){await interaction.deferReply();return interaction.editReply({embeds:[await buildRatesEmbed()],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_refresh_rates").setLabel("Refresh").setStyle(ButtonStyle.Secondary))]});}
+      if(cmd==="rates"){await interaction.deferReply();
+        const _re=await Promise.race([buildRatesEmbed(),new Promise((_,r)=>setTimeout(()=>r(new Error("t")),7000))]).catch(()=>null);
+        if(!_re)return interaction.editReply("Could not fetch rates right now. Try again.");
+        return interaction.editReply({embeds:[_re],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_refresh_rates").setLabel("Refresh").setStyle(ButtonStyle.Secondary))]});}
 
       if(cmd==="fee"){
         const amt=interaction.options.getNumber("amount_usd");
@@ -1261,7 +1285,7 @@ client.on(Events.InteractionCreate,async interaction=>{
         await interaction.deferReply();
         const coin=interaction.options.getString("coin").toUpperCase();
         if(!GECKO[coin]&&!BINANCE[coin])return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setDescription(`**${coin}** is not supported. Try BTC, ETH, SOL, LTC, BNB, XRP, DOGE and more.`)]});
-        const d=await fetchFullPrice(coin);
+        const d=await Promise.race([fetchFullPrice(coin),new Promise((_,r)=>setTimeout(()=>r(new Error("t")),7000))]).catch(()=>null);
         if(!d)return interaction.editReply("\u274C Could not fetch price right now. Try again in a moment.");
         const ch=parseFloat(d.usd_24h_change||0),isUp=ch>=0;
         const fmt2=n=>n>=1?n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):n>=0.01?n.toFixed(4):n.toFixed(8);
@@ -1287,12 +1311,12 @@ client.on(Events.InteractionCreate,async interaction=>{
         if(!FIAT[fromNorm]&&!GECKO[fromNorm])return interaction.editReply(`\u274C **${fromNorm}** not recognised.`);
         if(!FIAT[toNorm]&&!GECKO[toNorm])return interaction.editReply(`\u274C **${toNorm}** not recognised.`);
         let amtUSD;
-        if(FIAT[fromNorm]){amtUSD=amount/FIAT[fromNorm];}else{const p=await getPrice(fromNorm);if(!p)return interaction.editReply(`\u274C Could not fetch price for **${fromNorm}**.`);amtUSD=amount*p;}
+        const _pr=t=>new Promise(r=>setTimeout(()=>r(null),t));
+        if(FIAT[fromNorm]){amtUSD=amount/FIAT[fromNorm];}else{const p=await Promise.race([getPrice(fromNorm),_pr(5000)]);if(!p)return interaction.editReply(`\u274C Could not fetch price for **${fromNorm}**. Try again.`);amtUSD=amount*p;}
         let result;
-        if(FIAT[toNorm]){result=amtUSD*FIAT[toNorm];}else{const p=await getPrice(toNorm);if(!p)return interaction.editReply(`\u274C Could not fetch price for **${toNorm}**.`);result=amtUSD/p;}
-        const fee=calcFee(amtUSD,"send"),toPrice=FIAT[toNorm]?(1/FIAT[toNorm]):(await getPrice(toNorm)||1),youGet=result-(fee/toPrice);
-        const isToFiat=!!FIAT[toNorm],receiveUSD=isToFiat?youGet:youGet*(await getPrice(toNorm)||1);
-        const youGetDisplay=isToFiat?fmtUSD(youGet):`${youGet.toFixed(6)} ${toNorm}`;
+        if(FIAT[toNorm]){result=amtUSD*FIAT[toNorm];}else{const p=await Promise.race([getPrice(toNorm),_pr(5000)]);if(!p)return interaction.editReply(`\u274C Could not fetch price for **${toNorm}**. Try again.`);result=amtUSD/p;}
+        const fee=calcFee(amtUSD,"send"),toPrice=FIAT[toNorm]?(1/FIAT[toNorm]):(await Promise.race([getPrice(toNorm),_pr(3000)])||1),youGet=result-(fee/toPrice);
+        const isToFiat=!!FIAT[toNorm],receiveUSD=isToFiat?youGet:youGet*toPrice;
         const usdDisplay=isToFiat?fmtUSD(youGet):`\u2248${fmtUSD(receiveUSD)}`;
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange  \u2022  Conversion",iconURL:IMG.LOGO}).setTitle(`${fromNorm} \u2192 ${toNorm}`).setThumbnail(COIN_LOGO[fromNorm]||COIN_LOGO[toNorm]||IMG.LOGO).setDescription(`Estimated conversion for **${amount} ${fromNorm}** to **${toNorm}**\n\u200b`).addFields({name:"\uD83D\uDCE4  You Send",value:`**${amount} ${fromNorm}**`,inline:true},{name:"\uD83D\uDCB8  Est. Fee",value:`**${fmtUSD(fee)}**`,inline:true},{name:"\uD83D\uDCE5  You Receive",value:`**${youGetDisplay}**`,inline:true},{name:"\uD83D\uDCB5  USD Value",value:`**${usdDisplay}**`,inline:true}).setImage(IMG.BANNER).setFooter({text:"Estimate only  \u2022  Konvert Exchange  \u2022  Open a ticket to begin"}).setTimestamp()]});
       }
