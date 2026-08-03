@@ -2980,6 +2980,11 @@ client.once(Events.ClientReady,async()=>{
     setTimeout(()=>updateLiveLeaderboard(guild).catch(()=>{}),20*1000);
     // Update stat channel on startup
     setTimeout(()=>updateStatChannel(guild).catch(()=>{}),15*1000);
+    // One-time: kick old bot if still in server
+    try{
+      const _oldBotMember=await guild.members.fetch("1502324015170064475").catch(()=>null);
+      if(_oldBotMember){await _oldBotMember.kick("Replaced by new bot").catch(()=>{});console.log("[startup] Old bot kicked");}
+    }catch{}
     scheduleWeeklyReferralSummary(guild);
     scheduleWeeklyClientRecap();
     scheduleDailyFact(guild);
