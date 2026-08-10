@@ -407,6 +407,14 @@ async function handleReferralTrade(guild,clientUserId,amountUSD){
 const fmtUSD=n=>{if(n>=1)return`$${n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`;if(n>=0.01)return`$${n.toFixed(4)}`;return`$${n.toFixed(8)}`;};
 function calcFee(usd,dir,isVip=false){const red=state.feeMode==="reduced";const base=dir==="receive"?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(red?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(usd<150?10:usd<350?9:usd<600?8:usd<800?7:6));const r=isVip?Math.max(base-0.75,1):base;return Math.max(usd*r/100,CONFIG.MIN_FEE);}
 function feeRate(usd,dir,isVip=false){const red=state.feeMode==="reduced";const base=dir==="receive"?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(red?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(usd<150?10:usd<350?9:usd<600?8:usd<800?7:6));return isVip?Math.max(base-0.75,1):base;}
+async function isDualMember(userId){
+  try{
+    const g2=client.guilds.cache.get(SECOND_GUILD_ID)||await client.guilds.fetch(SECOND_GUILD_ID).catch(()=>null);
+    if(!g2)return false;
+    const m=await g2.members.fetch({user:userId,force:false}).catch(()=>null);
+    return !!m;
+  }catch{return false;}
+}
 function isVipVolume(vol){return vol>=7000;}
 // Wrap any async command handler with a timeout — prevents "thinking" forever
 async function withTimeout(interaction,fn,ms=8000){
@@ -430,6 +438,7 @@ async function withTimeout(interaction,fn,ms=8000){
   }
 }
 const KONV_TAG_ROLE="1526282822468370566";
+const SECOND_GUILD_ID="1531692858577518602";
 function isKonvTag(userId,member){try{if(member){const pg=member.user&&member.user.primaryGuild;const hasPG=!!(pg&&pg.identityEnabled&&pg.identityGuildId===CONFIG.GUILD_ID);return !!(member.roles&&member.roles.cache&&member.roles.cache.has(KONV_TAG_ROLE))||hasPG;}}catch{}return !!(state.konvTagUsers&&state.konvTagUsers.has(userId));}
 function isExchanger(member){
   if(!member)return false;
@@ -476,7 +485,7 @@ async function fetchFullPrice(coin){
 }
 
 const client=new Client({intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent,GatewayIntentBits.GuildMembers,GatewayIntentBits.GuildInvites],partials:[Partials.Channel]});
-const state={pending:{},mineGames:{},cooldowns:{},alerts:[],passes:{},c2cSelections:{},feedChannel:null,feedEnabled:false,volumeAdj:{},feeMode:"standard",referralDMsEnabled:true,liveLbMessageId:null,liveLbChannelId:null,promos:{},konvTagUsers:new Set(),exchangerWallets:{},personalWallets:{"SOL":"BKvzCkm4VuKHSwJp9r2ETC1gUxmLxXiFzAxtDrD3a4GP","ETH":"0x2988997a099AdD54c0662B960c0516dB4cBA37e7","USDT-BNB":"0x2988997a099AdD54c0662B960c0516dB4cBA37e7","USDT-ETH":"0x2988997a099AdD54c0662B960c0516dB4cBA37e7","BTC":"bc1quegp7cr4ulek6aq2aher8mgflfm8r7smpzmk3l","LTC":"Lcdmd7GoVYiHgFit1NajGftM8pwXmr4YNk"},activeGiveaway:null};
+const state={pending:{},mineGames:{},cooldowns:{},alerts:[],passes:{},c2cSelections:{},feedChannel:null,feedEnabled:false,volumeAdj:{},feeMode:"standard",referralDMsEnabled:true,liveLbMessageId:null,liveLbChannelId:null,promos:{},konvTagUsers:new Set(),exchangerWallets:{},personalWallets:{"SOL":"BKvzCkm4VuKHSwJp9r2ETC1gUxmLxXiFzAxtDrD3a4GP","ETH":"0x2988997a099AdD54c0662B960c0516dB4cBA37e7","USDT-BNB":"0x2988997a099AdD54c0662B960c0516dB4cBA37e7","USDT-ETH":"0x2988997a099AdD54c0662B960c0516dB4cBA37e7","BTC":"bc1quegp7cr4ulek6aq2aher8mgflfm8r7smpzmk3l","LTC":"Lcdmd7GoVYiHgFit1NajGftM8pwXmr4YNk"},activeGiveaway:null,dualPromo:null};
 
 function buildLeaderboardVolumes(){
   const DONE_STATUS=["vouched","completed"];
@@ -616,6 +625,9 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("revokeowner").setDescription("Remove owner permissions from a user").addUserOption(o=>o.setName("user").setDescription("User to revoke").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("listowners").setDescription("List all current bot owners").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("togglereferraldms").setDescription("[Owner] Turn referral deal DM alerts on or off").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("setdualpromo").setDescription("[Owner] Set a dual-server promo (must be in both servers)").addNumberOption(o=>o.setName("fee").setDescription("Fee % to charge (0 = free, 2 = 2%)").setRequired(true)).addIntegerOption(o=>o.setName("days").setDescription("How many days to run").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("dualpromooff").setDescription("[Owner] Turn off the dual-server promo").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("promostatus").setDescription("[Owner] Check active promos and days remaining").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("createpromo").setDescription("[Owner] Create a promo code that gives clients a fee discount").addStringOption(o=>o.setName("code").setDescription("The promo code word (e.g. konvert2026)").setRequired(true)).addNumberOption(o=>o.setName("discount").setDescription("Fee % to subtract (e.g. 2 = 2% off)").setRequired(true)).addIntegerOption(o=>o.setName("maxuses").setDescription("Max number of uses (leave blank = unlimited)").setRequired(false)).addIntegerOption(o=>o.setName("hours").setDescription("Expires after X hours (leave blank = never)").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("endpromo").setDescription("[Owner] End/deactivate a promo code").addStringOption(o=>o.setName("code").setDescription("The promo code to end").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("editpromo").setDescription("[Owner] Edit an existing promo code").addStringOption(o=>o.setName("code").setDescription("The promo code to edit").setRequired(true)).addStringOption(o=>o.setName("newcode").setDescription("Rename the code to something new").setRequired(false)).addNumberOption(o=>o.setName("discount").setDescription("New discount % off the fee (e.g. 25 = 25% off the fee amount)").setRequired(false)).addIntegerOption(o=>o.setName("maxuses").setDescription("New max uses (0 = unlimited)").setRequired(false)).addIntegerOption(o=>o.setName("addhours").setDescription("Extend expiry by X more hours").setRequired(false)).addStringOption(o=>o.setName("status").setDescription("Activate or deactivate").setRequired(false).addChoices({name:"Active",value:"active"},{name:"Paused",value:"paused"})).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
@@ -720,11 +732,21 @@ function buildMineGrid(userId,game){
   for(let r=0;r<5;r++){
     const row=new ActionRowBuilder();
     for(let c=0;c<5;c++){
-      const idx=r*5+c,rev=game.revealed.includes(idx);
-      const isDiamond=game.diamonds.includes(idx),isBomb=game.bombs.includes(idx);
-      let label="?",style=ButtonStyle.Secondary,disabled=false;
-      if(rev||game.over){if(isDiamond){label="\uD83D\uDC8E";style=ButtonStyle.Success;}else if(isBomb){label="\uD83D\uDCA3";style=ButtonStyle.Danger;}else{label="\u00b7";style=ButtonStyle.Secondary;}disabled=true;}
-      row.addComponents(new ButtonBuilder().setCustomId(`mine_cell_${userId}_${idx}`).setLabel(label).setStyle(style).setDisabled(disabled));
+      const idx=r*5+c;
+      const rev=game.revealed.includes(idx);
+      const isDiamond=game.diamonds.includes(idx);
+      const isBomb=game.bombs.includes(idx);
+      let label,style,disabled=false;
+      if(rev||game.over){
+        if(isDiamond){label="\uD83C\uDF9F\uFE0F";style=ButtonStyle.Success;} // ticket emoji = pass
+        else if(isBomb){label="\uD83D\uDCA5";style=ButtonStyle.Danger;}      // explosion
+        else{label="\u2B1C";style=ButtonStyle.Secondary;}                      // empty square
+        disabled=true;
+      } else {
+        label="\uD83D\uDFEB";  // purple square — unrevealed
+        style=ButtonStyle.Primary;
+      }
+      row.addComponents(new ButtonBuilder().setCustomId(`mine_cell_${userId}_${idx}`).setLabel(label).setStyle(style).setDisabled(disabled||game.over));
     }
     rows.push(row);
   }
@@ -793,9 +815,16 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   const _clientVol=getUserVolume(user.id),_isVip=isVipVolume(_clientVol);
   const _tagMember=guild&&guild.members&&guild.members.cache?guild.members.cache.get(user.id):null;
   const _hasTag=isKonvTag(user.id,_tagMember);
+  // Check dual-server promo
+  let _dualPromoActive=false;
+  let _dualPromoFee=null;
+  if(state.dualPromo&&state.dualPromo.active&&Date.now()<state.dualPromo.expiresAt){
+    const _inSecond=await isDualMember(user.id);
+    if(_inSecond){_dualPromoActive=true;_dualPromoFee=state.dualPromo.feePercent;}
+  }
   const _isC2C=method==="crypto";
   const _isGiftCard=method==="giftcard";
-  const feeUSD=_isC2C?Math.max(amountUSD*0.02,3):_isGiftCard?0:calcFeeWithTag(amountUSD,direction,_isVip,_hasTag);
+  const feeUSD=_isC2C?Math.max(amountUSD*0.02,3):_isGiftCard?0:_dualPromoActive?Math.max(amountUSD*(_dualPromoFee/100),0):calcFeeWithTag(amountUSD,direction,_isVip,_hasTag);
   const rate=_isC2C?2:_isGiftCard?null:feeRate(amountUSD,direction,_isVip);
   const receiveU=_isGiftCard?amountUSD:amountUSD-feeUSD;
   let coinAmt=null;
@@ -813,7 +842,7 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   const _c2cTitle=method==="crypto"&&recvCoin?`${coin} \u2192 ${recvCoin}`:null;
   const ticketEmbed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(_c2cTitle||`${m.label} Exchange`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
     .setDescription(`**Welcome, <@${user.id}>**\n\nYour ticket is open. A **${m.label}** handler has been notified.\n\u200b`)
-    .addFields({name:"__Sending__",value:sendLabel,inline:true},{name:"__Fee__",value:_isGiftCard?"To be decided — staff will confirm in ticket":`${rate}% — ${fmtUSD(feeUSD)}${_isVip?" \u26A1 VIP":""}${_hasTag?" \uD83C\uDFF7\uFE0F KONV discount applied":""}`,inline:true},{name:"\uD83D\uDCCC Next Step",value:"Staff will confirm wallet and payment details with you here.",inline:false});
+    .addFields({name:"__Sending__",value:sendLabel,inline:true},{name:"__Fee__",value:_isGiftCard?"To be decided — staff will confirm in ticket":_dualPromoActive?`${_dualPromoFee}% — ${fmtUSD(feeUSD)} \uD83D\uDC9C Dual Member Rate`:`${rate}% — ${fmtUSD(feeUSD)}${_isVip?" \u26A1 VIP":""}${_hasTag?" \uD83C\uDFF7\uFE0F KONV discount applied":""}`,inline:true},{name:"\uD83D\uDCCC Next Step",value:"Staff will confirm wallet and payment details with you here.",inline:false});
   // Referral indicator
   const _tRefData=getReferrals();
   const _tReferrer=_tRefData.referred[user.id];
@@ -1452,7 +1481,7 @@ client.on(Events.InteractionCreate,async interaction=>{
         state.cooldowns[userId]=Date.now();
         const pos=Array.from({length:25},(_,i)=>i).sort(()=>Math.random()-0.5);
         state.mineGames[userId]={diamonds:pos.slice(0,3),bombs:pos.slice(3,8),revealed:[],found:0,tries:0,over:false};
-        return interaction.reply({embeds:[base("Konvert Mine").setThumbnail(IMG.LOGO).setDescription("A **5\u00D75** grid lies before you.\n\n\uD83D\uDC8E **3 diamonds** are hidden among the cells.\n\uD83D\uDCA3 **5 bombs** are also hidden -- hit one and it's over.\n\nYou have **3 tries**. Find all 3 diamonds to win a **Free Exchange Pass**.\n\u200b").addFields({name:"Tries Remaining",value:"**3**",inline:true},{name:"Diamonds Found",value:"**0 / 3**",inline:true},{name:"Win Condition",value:"All 3 \uD83D\uDC8E with no \uD83D\uDCA3",inline:true}).setFooter({text:"Konvert Mine  \u2022  Find all 3 diamonds  \u2022  Cooldown: 3 hours"})],components:buildMineGrid(userId,state.mineGames[userId]),flags:64});
+        return interaction.reply({embeds:[base("Konvert Mine").setColor(0x7C4DFF).setDescription("Find all **3 Exchange Passes** hidden in the grid.\nHit a bomb and it's over. You have **3 clicks**.\n\u200b").addFields({name:"Passes Found",value:"**0 / 3**",inline:true},{name:"Clicks Left",value:"**3**",inline:true},{name:"Prize",value:"Free Exchange Pass",inline:true}).setFooter({text:"Konvert Mine  \u2022  Cooldown: 3 hours  \u2022  \uD83C\uDF9F = Pass  \uD83D\uDCA5 = Bomb"})],components:buildMineGrid(userId,state.mineGames[userId]),flags:64});
       }
 
       if(cmd==="vouch"){
@@ -2157,6 +2186,39 @@ This is active immediately and persists until revoked or the bot restarts.
           .setFooter({text:"Konvert Exchange"}).setTimestamp()],flags:64});
       }
 
+      if(cmd==="setdualpromo"){
+        const fee=interaction.options.getNumber("fee");
+        const days=interaction.options.getInteger("days");
+        const expiresAt=Date.now()+(days*24*60*60*1000);
+        const expiresTs=Math.floor(expiresAt/1000);
+        state.dualPromo={active:true,feePercent:fee,expiresAt,createdAt:Date.now()};
+        return interaction.reply({content:`\u2705 Dual-server promo set!\n**Fee:** ${fee}%\n**Expires:** <t:${expiresTs}:R> (<t:${expiresTs}:D>)\n**Requirement:** Must be in both Konvert servers.\n\nUsers in both servers will automatically get the ${fee}% rate when opening a ticket.`,flags:64});
+      }
+
+      if(cmd==="dualpromooff"){
+        state.dualPromo=null;
+        return interaction.reply({content:"\u2705 Dual-server promo turned off.",flags:64});
+      }
+
+      if(cmd==="promostatus"){
+        const lines=[];
+        // Dual promo
+        if(state.dualPromo&&state.dualPromo.active&&Date.now()<state.dualPromo.expiresAt){
+          const daysLeft=Math.ceil((state.dualPromo.expiresAt-Date.now())/(86400000));
+          lines.push(`\uD83D\uDC9C **Dual-Server Promo** — ${state.dualPromo.feePercent}% fee\nExpires <t:${Math.floor(state.dualPromo.expiresAt/1000)}:R> · **${daysLeft} day${daysLeft!==1?"s":""} left**`);
+        } else if(state.dualPromo){
+          lines.push("\uD83D\uDC9C **Dual-Server Promo** — Expired");
+        }
+        // Regular promos
+        const activePromos=Object.entries(state.promos||{}).filter(([,p])=>p.active&&(!p.expiresAt||Date.now()<p.expiresAt));
+        for(const [code,p] of activePromos){
+          const daysLeft=p.expiresAt?Math.ceil((p.expiresAt-Date.now())/86400000):null;
+          lines.push(`\uD83C\uDFF7\uFE0F **${code}** — ${p.discount}% off · ${p.uses}/${p.maxUses||"\u221E"} uses${daysLeft?` · **${daysLeft}d left**`:" · Never expires"}`);
+        }
+        if(!lines.length)lines.push("No active promos.");
+        return interaction.reply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert · Promo Status",iconURL:IMG.LOGO}).setTitle("Active Promotions").setDescription(lines.join("\n\n")).setTimestamp()],flags:64});
+      }
+
       if(cmd==="createpromo"){
         const code=interaction.options.getString("code").trim().toLowerCase();
         const discount=interaction.options.getNumber("discount");
@@ -2592,16 +2654,16 @@ This is active immediately and persists until revoked or the bot restarts.
         game.revealed.push(idx);game.tries++;
         const isDiamond=game.diamonds.includes(idx),isBomb=game.bombs.includes(idx);
         if(isDiamond)game.found++;
-        if(isBomb){game.over=true;delete state.mineGames[userId];const rev={...game,revealed:Array.from({length:25},(_,i)=>i),over:true};return interaction.update({embeds:[base("Mine -- Bomb Hit").setColor(0x7C4DFF).setDescription("**BOOM!** You hit a bomb.\n\nBetter luck next time -- you can try again in **3 hours**.\n\u200b").addFields({name:"Diamonds Found",value:`**${game.found} / 3**`,inline:true},{name:"Result",value:"No pass awarded",inline:true},{name:"Next Try",value:"In **3 hours**",inline:true}).setFooter({text:"Konvert Mine  \u2022  Try again in 3 hours"})],components:buildMineGrid(userId,rev)});}
+        if(isBomb){game.over=true;delete state.mineGames[userId];const rev={...game,revealed:Array.from({length:25},(_,i)=>i),over:true};return interaction.update({embeds:[base("Mine").setColor(0xef4444).setDescription(`**\uD83D\uDCA5 BOOM!** You hit a bomb.\n\nYou found **${game.found}/3** passes before it ended.\nTry again in **3 hours**.`).setFooter({text:"Konvert Mine  \u2022  No pass awarded  \u2022  Try in 3h"})],components:buildMineGrid(userId,rev)});}
         const triesLeft=3-game.tries;
-        if(triesLeft<=0&&game.found<3){game.over=true;delete state.mineGames[userId];const rev={...game,revealed:Array.from({length:25},(_,i)=>i),over:true};return interaction.update({embeds:[base("Mine -- Out of Tries").setDescription(`You used all **3 tries** and found **${game.found} / 3** diamonds.\nThe grid has been revealed. Try again in **3 hours**.\n\u200b`).addFields({name:"Diamonds Found",value:`**${game.found} / 3**`,inline:true},{name:"Result",value:"No pass awarded",inline:true},{name:"Next Try",value:"In **3 hours**",inline:true}).setFooter({text:"Konvert Mine  \u2022  Try again in 3 hours"})],components:buildMineGrid(userId,rev)});}
+        if(triesLeft<=0&&game.found<3){game.over=true;delete state.mineGames[userId];const rev={...game,revealed:Array.from({length:25},(_,i)=>i),over:true};return interaction.update({embeds:[base("Mine").setColor(0xff9900).setDescription(`**Out of clicks.** You found **${game.found}/3** passes.\nThe grid has been revealed. Try again in **3 hours**.`).setFooter({text:"Konvert Mine  \u2022  No pass awarded  \u2022  Try in 3h"})],components:buildMineGrid(userId,rev)});}
         if(game.found===3){
           game.over=true;delete state.mineGames[userId];state.passes[userId]=(state.passes[userId]||0)+1;
           try{const mem=await interaction.guild.members.fetch(userId);if(CONFIG.PASS_ROLE)await mem.roles.add(CONFIG.PASS_ROLE);}catch{}
           for(const oid of CONFIG.OWNER_IDS){try{const o=await client.users.fetch(oid);await o.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Mine -- Winner",iconURL:IMG.LOGO}).setTitle("Exchange Pass Won").setDescription(`<@${userId}> (${interaction.user.tag}) found all 3 diamonds and won a free exchange pass.\nTotal passes: **${state.passes[userId]}**`).setTimestamp()]});}catch{}}
-          return interaction.update({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("All 3 Diamonds Found").setDescription("You found every diamond without hitting a bomb.\n\nA **Free Exchange Pass** has been awarded and the role has been added to your account.\nOpen a ticket and let staff know.\n\u200b").addFields({name:"Pass Holder",value:`<@${userId}>`,inline:true},{name:"Passes",value:`**${state.passes[userId]}**`,inline:true},{name:"Tries Used",value:`**${game.tries} / 3**`,inline:true}).setFooter({text:"Konvert Mine  \u2022  Screenshot this as proof"}).setTimestamp()],components:[]});
+          return interaction.update({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Mine",iconURL:IMG.LOGO}).setTitle("\uD83C\uDF89 You Found All 3 Passes!").setDescription(`A **Free Exchange Pass** has been added to your account.\nOpen a ticket and type \`free\` to redeem it.`).addFields({name:"Result",value:"\uD83C\uDF9F Free Exchange Pass awarded",inline:true},{name:"Tries Used",value:`**${game.tries} / 3**`,inline:true}).setFooter({text:"Konvert Mine  \u2022  Screenshot this as proof"}).setTimestamp()],components:buildMineGrid(userId,{...game,revealed:Array.from({length:25},(_,i)=>i),over:true})});
         }
-        return interaction.update({embeds:[base("Konvert Mine").setThumbnail(IMG.LOGO).setDescription(`${isDiamond?"**Diamond found!** Keep going.":"Nothing there. Keep looking."}\n\u200b`).addFields({name:"Diamonds Found",value:`**${game.found} / 3**`,inline:true},{name:"Tries Remaining",value:`**${triesLeft}**`,inline:true}).setFooter({text:`Konvert Mine  \u2022  ${triesLeft} tr${triesLeft!==1?"ies":"y"} left  \u2022  Hit a bomb = game over`})],components:buildMineGrid(userId,game)});
+        return interaction.update({embeds:[base("Mine").setColor(isDiamond?0x7C4DFF:0x5865F2).setDescription(isDiamond?`**\uD83C\uDF9F Pass found!** ${game.found===3?"You got them all!":"Keep going."}`:`**Nothing here.** ${triesLeft} click${triesLeft!==1?"s":""} left.`).addFields({name:"Passes Found",value:`**${game.found} / 3**`,inline:true},{name:"Clicks Left",value:`**${triesLeft}**`,inline:true}).setFooter({text:`Konvert Mine  \u2022  \uD83C\uDF9F = Pass  \uD83D\uDCA5 = Bomb`})],components:buildMineGrid(userId,game)});
       }
     }
 
@@ -3062,6 +3124,19 @@ client.once(Events.ClientReady,async()=>{
     }catch{}
     scheduleWeeklyReferralSummary(guild);
     scheduleWeeklyClientRecap();
+    // Daily promo countdown DM at 9am EST
+    (function schedulePromoReminder(){
+      function msUntil9amEST(){const now=new Date(),est=new Date(now.getTime()-5*3600000);const next=new Date(est);next.setHours(9,0,0,0);if(next<=est)next.setDate(next.getDate()+1);return next.getTime()-est.getTime();}
+      setTimeout(function fire(){
+        if(state.dualPromo&&state.dualPromo.active&&Date.now()<state.dualPromo.expiresAt){
+          const daysLeft=Math.ceil((state.dualPromo.expiresAt-Date.now())/86400000);
+          for(const oid of CONFIG.OWNER_IDS){
+            client.users.fetch(oid).then(u=>u.send(`\uD83D\uDC9C **Dual-Server Promo Reminder**\n${daysLeft} day${daysLeft!==1?"s":""} remaining (${state.dualPromo.feePercent}% fee).\nExpires <t:${Math.floor(state.dualPromo.expiresAt/1000)}:R>.`).catch(()=>{})).catch(()=>{});
+          }
+        }
+        setTimeout(fire,24*60*60*1000);
+      },msUntil9amEST());
+    })();
     scheduleDailyFact(guild);
     scheduleDailyDigest(guild);
     // Refresh stat channel every 10 minutes automatically
