@@ -735,18 +735,15 @@ function buildMineGrid(userId,game){
       const idx=r*5+c;
       const rev=game.revealed.includes(idx);
       const isDiamond=game.diamonds.includes(idx);
-      const isBomb=game.bombs.includes(idx);
-      let label,style,disabled=false;
+      let label,style;
       if(rev||game.over){
-        if(isDiamond){label="\uD83C\uDF9F\uFE0F";style=ButtonStyle.Success;} // ticket emoji = pass
-        else if(isBomb){label="\uD83D\uDCA5";style=ButtonStyle.Danger;}      // explosion
-        else{label="\u2B1C";style=ButtonStyle.Secondary;}                      // empty square
-        disabled=true;
+        if(isDiamond){label="PASS";style=ButtonStyle.Success;}
+        else{label="BOMB";style=ButtonStyle.Danger;}
       } else {
-        label="\uD83D\uDFEB";  // purple square — unrevealed
-        style=ButtonStyle.Primary;
+        label="\u25A0";  // filled square — clean unrevealed
+        style=ButtonStyle.Secondary;
       }
-      row.addComponents(new ButtonBuilder().setCustomId(`mine_cell_${userId}_${idx}`).setLabel(label).setStyle(style).setDisabled(disabled||game.over));
+      row.addComponents(new ButtonBuilder().setCustomId(`mine_cell_${userId}_${idx}`).setLabel(label).setStyle(style).setDisabled(rev||game.over));
     }
     rows.push(row);
   }
@@ -1480,7 +1477,7 @@ client.on(Events.InteractionCreate,async interaction=>{
         if(remaining>0){const hrs=Math.floor(remaining/3600000),mins=Math.ceil((remaining%3600000)/60000);return interaction.reply({embeds:[base("Mine -- On Cooldown").setDescription(`You can mine again in **${hrs>0?`${hrs}h ${mins}m`:`${mins}m`}**.`).setFooter({text:"Konvert Mine  \u2022  Once every 3 hours"})],flags:64});}
         state.cooldowns[userId]=Date.now();
         const pos=Array.from({length:25},(_,i)=>i).sort(()=>Math.random()-0.5);
-        state.mineGames[userId]={diamonds:pos.slice(0,3),bombs:pos.slice(3,8),revealed:[],found:0,tries:0,over:false};
+        state.mineGames[userId]={diamonds:pos.slice(0,3),bombs:pos.slice(3,25),revealed:[],found:0,tries:0,over:false};
         return interaction.reply({embeds:[base("Konvert Mine").setColor(0x7C4DFF).setDescription("Find all **3 Exchange Passes** hidden in the grid.\nHit a bomb and it's over. You have **3 clicks**.\n\u200b").addFields({name:"Passes Found",value:"**0 / 3**",inline:true},{name:"Clicks Left",value:"**3**",inline:true},{name:"Prize",value:"Free Exchange Pass",inline:true}).setFooter({text:"Konvert Mine  \u2022  Cooldown: 3 hours  \u2022  \uD83C\uDF9F = Pass  \uD83D\uDCA5 = Bomb"})],components:buildMineGrid(userId,state.mineGames[userId]),flags:64});
       }
 
