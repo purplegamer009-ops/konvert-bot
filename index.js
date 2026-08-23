@@ -372,8 +372,7 @@ function pointsToDollars(pts){return (pts/POINTS_PER_DOLLAR).toFixed(2);}
 
 async function handleReferralTrade(guild,clientUserId,amountUSD){
   try{
-    const ref=getReferrals();
-    const referrerId=ref.referred[clientUserId];
+    const referrerId=null;
     if(!referrerId||referrerId===clientUserId)return;
     const _refBL=ref.blacklist||{};
     if(_refBL[referrerId]||_refBL[clientUserId])return;
@@ -817,14 +816,7 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   const ticketEmbed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(_c2cTitle||`${m.label} Exchange`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
     .setDescription(`**Welcome, <@${user.id}>**\n\nYour ticket is open. A **${m.label}** handler has been notified.\n\u200b`)
     .addFields({name:"__Sending__",value:sendLabel,inline:true},{name:"__Fee__",value:_isGiftCard?"To be decided — staff will confirm in ticket":_dualPromoActive?`${_dualPromoFee}% — ${fmtUSD(feeUSD)} \uD83D\uDC9C Dual Member Rate`:`${rate}% — ${fmtUSD(feeUSD)}${_isVip?" \u26A1 VIP":""}${_hasTag?" \uD83C\uDFF7\uFE0F KONV discount applied":""}`,inline:true},{name:"\uD83D\uDCCC Next Step",value:"Staff will confirm wallet and payment details with you here.",inline:false});
-  // Referral indicator
-  const _tRefData=getReferrals();
-  const _tReferrer=_tRefData.referred[user.id];
-  if(_tReferrer&&_tReferrer!==user.id){
-    ticketEmbed.addFields({name:"Referral",value:`Referred by <@${_tReferrer}>`,inline:true});
-  } else {
-    ticketEmbed.addFields({name:"Referral",value:"No referral",inline:true});
-  }
+
   if(method==="buyforyou"||method==="custom"){
     const _helperPing=CONFIG.HELPER_ROLE?`<@&${CONFIG.HELPER_ROLE}>`:"@Helper";
     ticketEmbed.setDescription(`${_helperPing} — New **${m?.label||method}** ticket opened.\n\u200b`);
@@ -899,10 +891,8 @@ async function completeTrade(interaction,ticket,tickets){
   _mem.tickets={...(_mem.tickets||{}),...tickets};save("tickets",_mem.tickets);
   if(interaction.guild){updateStatChannel(interaction.guild).catch(()=>{});updateLiveLeaderboard(interaction.guild).catch(()=>{});}
   console.log(`[completeTrade] userId=${ticket.userId} amount=${ticket.amountUSD} total=${Object.keys(_mem.tickets).length}`);
-  const _refData=getReferrals();
-  const _referredByForVouch=_refData.referred[ticket.userId]||null;
-  // DM owners about referral deal if enabled
-  if(state.referralDMsEnabled&&_referredByForVouch&&_referredByForVouch!==ticket.userId){
+  const _referredByForVouch=null;
+  if(false){
     for(const oid of CONFIG.OWNER_IDS){
       try{
         const owner=await client.users.fetch(oid);
@@ -927,7 +917,7 @@ async function completeTrade(interaction,ticket,tickets){
   if(state.feedEnabled&&state.feedChannel){try{const feedCh=interaction.guild.channels.cache.get(state.feedChannel);if(feedCh){const vol=getUserVolume(ticket.userId);const _tier=getTier(vol);await feedCh.send(`\u2705  **${m?.label||ticket.method}**  \u00b7  **${fmtUSD(ticket.amountUSD)}**  \u00b7  ${_tier.emoji}  \u2014  just now`);}}catch{}}
   try{const _vol=getUserVolume(ticket.userId);console.log(`[tierRole] userId=${ticket.userId} volume=${_vol}`);await applyTierRole(interaction.guild,ticket.userId,_vol);}catch(e){console.log("[tierRole error]",e.message);}
   try{const volume=getUserVolume(ticket.userId);await sendReceiptDM(ticket.userId,interaction.user.id,ticket,getUserDealCount(ticket.userId),volume);}catch{}
-  const _ref=getReferrals();const _referrerId=_ref.referred[ticket.userId];
+  const _referrerId=null;
   let _referralLine="";
   if(_referrerId&&_referrerId!==ticket.userId){const _ptsEarned=calcReferralPoints(ticket.amountUSD);try{await client.users.fetch(_referrerId);_referralLine=`\n\n\uD83D\uDD17 **Referral deal** \u2014 referred by <@${_referrerId}> \u00b7 **+${_ptsEarned} pts** credited`;}catch{_referralLine=`\n\n\uD83D\uDD17 **Referral deal** \u2014 referral points credited`;}}
   else{_referralLine="\n\n\u274C **No referral** on this trade";}
@@ -1345,7 +1335,8 @@ client.on(Events.GuildMemberAdd,async member=>{
   try{
     const guild=member.guild;
     try{
-      const ref=getReferrals();
+      const _dummyRef={referred:{},points:{}};
+      const ref=_dummyRef;
       const freshInvites=await guild.invites.fetch();
       let usedCode=null;
       for(const invite of freshInvites.values()){const prev=_inviteCache.get(invite.code)||0;if(invite.uses>prev){usedCode=invite.code;break;}}
@@ -1532,8 +1523,7 @@ client.on(Events.InteractionCreate,async interaction=>{
         vt["manual_"+Date.now()]={userId:clientUser.id,userTag:clientUser.tag,method,direction:null,coin:null,amountUSD:amount,feeUSD:calcFee(amount,"send"),walletInfo:"manual",notes:"Manual vouch via /vouch",status:"vouched",completedBy:exchUser.id,completedAt:Date.now(),createdAt:Date.now()};
         _mem.tickets=vt;save("tickets",vt);
         updateStatChannel(interaction.guild).catch(()=>{});
-        const _refD=getReferrals();
-        const _refByManual=_refD.referred[clientUser.id]||null;
+        const _refByManual=null;
         await postVouch(interaction.guild,{clientId:clientUser.id,exchangerId:exchUser.id,method,amountUSD:amount,direction:null,coin:null,message,rating,referredBy:_refByManual});
         await handleReferralTrade(interaction.guild,clientUser.id,amount);
         const vol=getUserVolume(clientUser.id);await applyTierRole(interaction.guild,clientUser.id,vol);
@@ -1684,7 +1674,6 @@ Deleting in 10 seconds.`)
         dbSet("konvert_tickets",tickets).catch(()=>{});
         updateStatChannel(interaction.guild).catch(()=>{});
         delete state.volumeAdj[target.id];
-        const ref=getReferrals();delete ref.points[target.id];saveReferrals(ref);
         try{const member=await interaction.guild.members.fetch(target.id).catch(()=>null);if(member){for(const t of TIERS){if(t.role&&member.roles.cache.has(t.role))await member.roles.remove(t.role).catch(()=>{});}}}catch{}
         await applyTierRole(interaction.guild,target.id,0);
         return interaction.reply({content:`\u2705 All stats wiped for **${target.tag||target.username}**. Removed **${removed}** entries, cleared adjustments, reset tier to New Client.`,flags:64});
@@ -1718,7 +1707,7 @@ Deleting in 10 seconds.`)
         for(const [key,t] of Object.entries(tickets)){if(t.userId===target.id){delete tickets[key];removed++;}}
         _mem.tickets=tickets;save("tickets",tickets);
         dbSet("konvert_tickets",tickets).catch(()=>{});
-        const ref=getReferrals();delete ref.points[target.id];delete ref.referred[target.id];
+
         for(const [code,uid] of Object.entries(ref.invites||{})){if(uid===target.id)delete ref.invites[code];}
         delete ref.inviteCodes[target.id];saveReferrals(ref);
         try{const member=await interaction.guild.members.fetch(target.id).catch(()=>null);if(member){for(const t of TIERS){if(t.role&&member.roles.cache.has(t.role))await member.roles.remove(t.role).catch(()=>{});}}}catch{}
@@ -1788,7 +1777,7 @@ Deleting in 10 seconds.`)
         const methods={};done.forEach(t=>{if(t.method)methods[t.method]=(methods[t.method]||0)+1;});
         const topM=Object.entries(methods).sort((a,b)=>b[1]-a[1])[0];
         const avg=done.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0)/done.length;
-        const ref=getReferrals(),refPts=ref.points[userId]?.balance||0;
+        const refPts=0;
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  My Trade History",iconURL:IMG.LOGO}).setTitle("My Trades").setThumbnail(interaction.user.displayAvatarURL({size:256})).setDescription(`${tier.emoji} **${tier.label}**${vip?" \u26A1 VIP":""}${nextT?`  \u00b7  ${fmtUSD(Math.max(nextT.min-volume,0))} to ${nextT.emoji} ${nextT.label}`:"  \u00b7  Max tier reached"}\n\u200b`).addFields({name:"\u2705  Total Trades",value:`**${done.length}**`,inline:true},{name:"\uD83D\uDCB0  Total Volume",value:`**${fmtUSD(volume)}**`,inline:true},{name:"\uD83D\uDCCA  Avg Trade",value:`**${fmtUSD(avg)}**`,inline:true},{name:"\uD83C\uDFC6  Top Method",value:topM?`**${getMethod(topM[0])?.label||topM[0]}** (${topM[1]}x)`:"\u2014",inline:true},{name:"\uD83D\uDD17  Referral Points",value:`**${refPts} pts** ($${pointsToDollars(refPts)})`,inline:true},{name:"\u26A1  VIP Discount",value:vip?"Active \u2014 0.75% off":"Not yet ($7,000+ required)",inline:true},{name:"\uD83D\uDCCB  Last 5 Trades",value:last5,inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  \u00b7  Use /stats for full tier details"}).setTimestamp()]});
       }
 
@@ -1983,7 +1972,7 @@ Deleting in 10 seconds.`)
         const totalVol=done.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
         const today=done.filter(t=>t.completedAt&&Date.now()-t.completedAt<86400000);
         const week=done.filter(t=>t.completedAt&&Date.now()-t.completedAt<7*86400000);
-        const ref=getReferrals();
+        const ref={referred:{},points:{}};
         const ms=process.uptime()*1000;const uh=Math.floor(ms/3600000);const um=Math.floor((ms%3600000)/60000);
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Server Info").setThumbnail(IMG.LOGO).addFields({name:"Members",value:`**${guild.memberCount}**`,inline:true},{name:"Open Tickets",value:`**${open.length}**`,inline:true},{name:"Total Exchanges",value:`**${done.length}**`,inline:true},{name:"Total Volume",value:`**${fmtUSD(totalVol)}**`,inline:true},{name:"Today",value:`**${today.length}** \u00b7 ${fmtUSD(today.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0))}`,inline:true},{name:"This Week",value:`**${week.length}** \u00b7 ${fmtUSD(week.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0))}`,inline:true},{name:"Referrers",value:`**${Object.keys(ref.points||{}).length}**`,inline:true},{name:"Referred Members",value:`**${Object.keys(ref.referred||{}).length}**`,inline:true},{name:"Fee Mode",value:`**${state.feeMode==="reduced"?"Reduced (5-9%)":"Standard (5-10%)"}**`,inline:true},{name:"Live Feed",value:state.feedEnabled&&state.feedChannel?`On \u2014 <#${state.feedChannel}>`:"Off",inline:true},{name:"Price Alerts",value:`**${state.alerts.length}** active`,inline:true},{name:"Uptime",value:`**${uh}h ${um}m**`,inline:true}).setFooter({text:"Konvert Exchange"}).setTimestamp()]});
       }
@@ -2001,7 +1990,7 @@ Deleting in 10 seconds.`)
         const last=done.length>0?[...done].sort((a,b)=>(b.completedAt||0)-(a.completedAt||0))[0]:null;
         const methods={};done.forEach(t=>{if(t.method)methods[t.method]=(methods[t.method]||0)+1;});
         const topM=Object.entries(methods).sort((a,b)=>b[1]-a[1])[0];
-        const ref=getReferrals();const refBy=ref.referred[target.id];const refPts=ref.points[target.id]?.balance||0;
+        const refBy=null;const refPts=0;
         const bl=load("blacklist");const isBlacklisted=!!bl[target.id];
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(isBlacklisted?0xef4444:0x7C4DFF).setAuthor({name:"Konvert Exchange \u00b7 Client Info",iconURL:IMG.LOGO}).setTitle(target.username).setThumbnail(target.displayAvatarURL({size:256})).setDescription(`${tier.emoji} **${tier.label}**${vip?" \u26A1 VIP":""}${isBlacklisted?" \uD83D\uDEAB BLACKLISTED":""}\n\u200b`).addFields({name:"Volume",value:`**${fmtUSD(volume)}**`,inline:true},{name:"Exchanges",value:`**${done.length}**`,inline:true},{name:"Avg Deal",value:`**${avg>0?fmtUSD(avg):"\u2014"}**`,inline:true},{name:"Open Tickets",value:`**${open.length}**`,inline:true},{name:"Top Method",value:topM?`**${getMethod(topM[0])?.label||topM[0]}**`:"\u2014",inline:true},{name:"Last Exchange",value:last?.completedAt?`<t:${Math.floor(last.completedAt/1000)}:R>`:"\u2014",inline:true},{name:"Referred By",value:refBy?`<@${refBy}>`:"No referral",inline:true},{name:"Referral Points",value:`**${refPts} pts**`,inline:true},{name:"VIP",value:vip?"Active \u2014 0.75% off":"Not yet",inline:true}).setFooter({text:"Konvert Exchange"}).setTimestamp()]});
       }
@@ -2383,7 +2372,7 @@ This is active immediately and persists until revoked or the bot restarts.
 
       if(interaction.customId==="btn_get_referral_link"){
         await interaction.deferReply({flags:64});
-        const userId=interaction.user.id,ref=getReferrals();
+        const userId=interaction.user.id,ref={referred:{},points:{}};
         const pts=ref.points[userId]?.balance||0;
         let existingInvite=null;
         const existing=ref.inviteCodes[userId];
@@ -2396,7 +2385,7 @@ This is active immediately and persists until revoked or the bot restarts.
 
       if(interaction.customId==="btn_check_points"){
         await interaction.deferReply({flags:64});
-        const userId=interaction.user.id,ref=getReferrals();
+        const userId=interaction.user.id,ref={referred:{},points:{}};
         const data=ref.points[userId]||{balance:0,paid:0,history:[],pendingPayout:false};
         const bal=data.balance||0,paid=data.paid||0,referredCount=Object.values(ref.referred).filter(r=>r===userId).length;
         const readyToWithdraw=bal>=MIN_WITHDRAW_POINTS&&!data.pendingPayout;
@@ -2406,7 +2395,7 @@ This is active immediately and persists until revoked or the bot restarts.
       }
 
       if(interaction.customId==="btn_request_payout"){
-        const userId=interaction.user.id,ref=getReferrals(),data=ref.points[userId];
+        const userId=interaction.user.id,ref={referred:{},points:{}},data=null;
         if(!data||data.balance<MIN_WITHDRAW_POINTS)return interaction.reply({content:"You don't have enough points to request a payout.",flags:64});
         if(data.pendingPayout)return interaction.reply({content:"You already have a pending payout request.",flags:64});
         data.pendingPayout=true;ref.points[userId]=data;saveReferrals(ref);
@@ -2792,7 +2781,7 @@ async function postDailyDigest(guild){
     const topEx=Object.entries(byEx).sort((a,b)=>b[1]-a[1])[0];
 
     // New referrals today
-    const ref=getReferrals();
+    const ref={referred:{},points:{}};
     const newRefs=Object.entries(ref.referred||{}).filter(([,refAt])=>{
       // referred doesn't have timestamps in current schema, skip if unavailable
       return false;
