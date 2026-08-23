@@ -97,7 +97,7 @@ const IMG = {
   DEAL:process.env.BOT_BANNER||"https://i.imgur.com/EdIbiik.png",
 };
 
-const PTS_IMG=process.env.BOT_LOGO||"https://i.imgur.com/dXKH5Fv.png";
+const PTS_IMG=IMG?.LOGO||"https://i.imgur.com/dXKH5Fv.png";
 const SUPPORT_CH="1477230600959299605";
 
 const CONFIG = {
@@ -385,11 +385,11 @@ async function handleReferralTrade(guild,clientUserId,amountUSD){
     try{
       const referrer=await client.users.fetch(referrerId);
       const referred=await client.users.fetch(clientUserId).catch(()=>null);
-      const dollarVal=pointsToDollars(pts);
+      const dollarVal="$0.00";
       const newBal=ref.points[referrerId].balance;
       await referrer.send({embeds:[new EmbedBuilder()
-        .setColor(0x7C4DFF).setAuthor({name:"Konvert  \u00b7  Referral Program",iconURL:PTS_IMG})
-        .setTitle("Points Earned").setThumbnail(PTS_IMG)
+        .setColor(0x7C4DFF).setAuthor({name:"Konvert",iconURL:IMG.LOGO})
+        .setTitle("Points Earned")
         .setDescription(`<@${referrerId}>, a trade just completed through your referral link.\n\u200b`)
         .addFields(
           {name:"Referred User",value:referred?`<@${referred.id}>`:"A referred client",inline:true},
@@ -892,7 +892,7 @@ async function completeTrade(interaction,ticket,tickets){
   if(interaction.guild){updateStatChannel(interaction.guild).catch(()=>{});updateLiveLeaderboard(interaction.guild).catch(()=>{});}
   console.log(`[completeTrade] userId=${ticket.userId} amount=${ticket.amountUSD} total=${Object.keys(_mem.tickets).length}`);
   const _referredByForVouch=null;
-  if(false){
+  if(false&&false){
     for(const oid of CONFIG.OWNER_IDS){
       try{
         const owner=await client.users.fetch(oid);
@@ -903,12 +903,11 @@ async function completeTrade(interaction,ticket,tickets){
           .setDescription("An exchange just completed through a referral.\n\u200b")
           .addFields(
             {name:"Client",value:`<@${ticket.userId}>`,inline:true},
-            {name:"Referred By",value:`<@${_referredByForVouch}>`,inline:true},
             {name:"Amount",value:`**${fmtUSD(ticket.amountUSD)}**`,inline:true},
             {name:"Method",value:`**${m?.label||ticket.method}**`,inline:true},
             {name:"Points Earned",value:`**+${calcReferralPoints(ticket.amountUSD)} pts**`,inline:true},
           )
-          .setFooter({text:"Use /togglereferraldms to disable these alerts"})
+          .setFooter({text:"Konvert Exchange"})
           .setTimestamp()]});
       }catch{}
     }
@@ -1278,9 +1277,7 @@ client.on(Events.MessageCreate,async message=>{
  }catch(e){console.error("[MessageCreate error]",e.message);}
 });
 
-let _inviteCache=new Map();
 async function cacheInvites(guild){
-  try{const invites=await guild.invites.fetch();_inviteCache=new Map(invites.map(i=>[i.code,i.uses]));}catch(e){console.error("[inviteCache]",e.message);}
 }
 
 // Real-time clan tag detection via raw gateway
@@ -1334,21 +1331,7 @@ client.on(Events.UserUpdate,async(oldUser,newUser)=>{
 client.on(Events.GuildMemberAdd,async member=>{
   try{
     const guild=member.guild;
-    try{
-      const _dummyRef={referred:{},points:{}};
-      const ref=_dummyRef;
-      const freshInvites=await guild.invites.fetch();
-      let usedCode=null;
-      for(const invite of freshInvites.values()){const prev=_inviteCache.get(invite.code)||0;if(invite.uses>prev){usedCode=invite.code;break;}}
-      _inviteCache=new Map(freshInvites.map(i=>[i.code,i.uses]));
-      if(usedCode&&ref.invites[usedCode]){
-        const referrerId=ref.invites[usedCode];
-        if(referrerId!==member.id){
-          ref.referred[member.id]=referrerId;
-          try{const referrer=await client.users.fetch(referrerId);await referrer.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert  \u00b7  Referral Program",iconURL:PTS_IMG}).setTitle("New Referral").setThumbnail(member.user.displayAvatarURL({size:128})).setDescription(`**${member.user.username}** just joined Konvert using your invite link.\n\nYou'll earn **${POINTS_PER_100} pts** for every **$100** they exchange \u2014 automatically, every time.\n\u200b`).addFields({name:"Rate",value:`**${POINTS_PER_100} pts** per $100 traded  \u00b7  **${POINTS_PER_DOLLAR} pts = $1**`,inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert Referral Program  \u00b7  Earn on every trade they make"}).setTimestamp()]});}catch{}
-        }
-      }
-    }catch(e){console.error("[referral join]",e.message);}
+
     const WELCOME_CHANNEL="1477787759799435344";
     const ch=guild.channels.cache.get(WELCOME_CHANNEL);
     if(!ch)return;
@@ -1360,7 +1343,7 @@ client.on(Events.InteractionCreate,async interaction=>{
   try{
     if(interaction.isChatInputCommand()){
       // Owner-only commands: check OWNER_IDS regardless of Discord permissions
-      const OWNER_ONLY_CMDS=["grantowner","revokeowner","listowners","wipestats","clearleaderboard","adjuststats","resetstats","broadcast","setfeemode","togglereferraldms","postleaderboard","serverinfo","clientinfo","receipt"];
+      const OWNER_ONLY_CMDS=["grantowner","revokeowner","listowners","wipestats","clearleaderboard","adjuststats","resetstats","broadcast","setfeemode","postleaderboard","serverinfo","clientinfo","receipt"];
       if(OWNER_ONLY_CMDS.includes(interaction.commandName)&&!CONFIG.OWNER_IDS.includes(interaction.user.id)){
         return interaction.reply({content:"❌ You don\'t have permission to use this command.",flags:64});
       }
@@ -1535,10 +1518,6 @@ client.on(Events.InteractionCreate,async interaction=>{
       if(cmd==="ticket"){const tickets=load("tickets"),found=Object.entries(tickets).find(([,t])=>t.userId===interaction.user.id&&t.status==="open");if(!found)return interaction.reply({content:"You don't have an open ticket. Use **Exchange Now** to start one.",flags:64});const [channelId,t]=found,m=getMethod(t.method);return interaction.reply({embeds:[base("Your Open Ticket").setThumbnail(IMG.LOGO).addFields({name:"Channel",value:`<#${channelId}>`,inline:true},{name:"Method",value:`**${m?.label||t.method}**`,inline:true},{name:"Amount",value:`**${fmtUSD(t.amountUSD)}**`,inline:true},{name:"Coin",value:`**${t.coin||"--"}**`,inline:true},{name:"Direction",value:t.direction==="send"?"Fiat \u2192 Crypto":"Crypto \u2192 Fiat",inline:true},{name:"Opened",value:`<t:${Math.floor(t.createdAt/1000)}:R>`,inline:true}).setFooter({text:"Konvert  \u2022  All communication stays in your ticket"})],flags:64});}
       if(cmd==="howto"){return interaction.reply({embeds:[base("How to Use Konvert").setThumbnail(IMG.LOGO).setDescription("New to Konvert? Here's how a trade works step by step.\n\u200b").addFields({name:"1.  Check Rates",value:"Use **Live Rates** or type `$BTC` / `$ETH` etc. in any channel to see the current price.",inline:false},{name:"2.  Calculate Fee",value:"Use **Calculate Fee** to estimate your cost. Fees range from **5% - 10%** depending on amount.",inline:false},{name:"3.  Open a Ticket",value:"Click **Exchange Now**, pick your payment method, fill in details, confirm. A private ticket opens instantly.",inline:false},{name:"4.  Agree on an MM",value:"A **middleman** is required on all trades. Agree on one with your exchanger inside your ticket.",inline:false},{name:"5.  Send & Confirm",value:"Staff confirms the deal. You send funds and share proof. Once confirmed, you receive your crypto or payment.",inline:false},{name:"Stay Safe",value:"Staff never DM you first. Anyone doing so is an impersonator. All communication stays in your ticket.",inline:false}).setFooter({text:"Konvert  \u2022  Questions? Ask in your ticket"})],flags:64});}
       if(cmd==="ping"){const sent=Date.now();await interaction.deferReply({flags:64});return interaction.editReply({embeds:[base("Bot Status").setThumbnail(IMG.LOGO).setDescription("**All systems operational.** Konvert is online and ready.\n\u200b").addFields({name:"Status",value:"**Online**",inline:true},{name:"Latency",value:`**${Date.now()-sent}ms**`,inline:true},{name:"API Latency",value:`**${client.ws.ping}ms**`,inline:true}).setFooter({text:"Konvert  \u2022  Bot Status"})]});}
-        let invite=existingInvite;
-
-        const referredCount=Object.values(ref.referred).filter(r=>r===userId).length;
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert  \u00b7  Referral Program",iconURL:PTS_IMG}).setTitle("\uD83D\uDD17  Your Referral Link").setThumbnail(IMG.LOGO).setDescription(`Share your link below. When someone joins through it and completes a trade, you earn points automatically.\n\u200b`).addFields({name:"Your Invite",value:`**https://discord.gg/${invite.code}**`,inline:false},{name:"Link",value:"**Permanent** \u2014 never expires",inline:true},{name:"People Referred",value:`**${referredCount}**`,inline:true},{name:"\u200b",value:"\u200b",inline:true},{name:"Your Balance",value:`**${pts} pts**`,inline:true},{name:"USD Value",value:`**$${dollarVal}**`,inline:true},{name:"Status",value:pending?"⏳ Payout pending":pts>=MIN_WITHDRAW_POINTS?"✅ Ready to withdraw":"Need **"+`${MIN_WITHDRAW_POINTS-pts}`+"** more pts",inline:true}).addFields({name:"\u200b",value:`**How it works**\n💸  **${POINTS_PER_100} pts** earned per **$100** exchanged by your referral\n💰  **${POINTS_PER_DOLLAR} pts = $1**  \u00b7  Minimum withdrawal: **${MIN_WITHDRAW_POINTS} pts ($${(MIN_WITHDRAW_POINTS/POINTS_PER_DOLLAR).toFixed(0)})**\n📬  You get a DM every time they trade`,inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert Referrals  \u2022  Earn while your network trades"}).setTimestamp()]});
       }
 
       if(cmd==="calc"){await interaction.deferReply({flags:64});if(!CONFIG.RATES_CHANNEL)return interaction.editReply("RATES_CHANNEL_ID not configured.");const ch=interaction.guild.channels.cache.get(CONFIG.RATES_CHANNEL);if(!ch)return interaction.editReply("Rates channel not found.");const embed=await buildRatesEmbed();if(ratesMsgId){const msg=await ch.messages.fetch(ratesMsgId).catch(()=>null);if(msg){await msg.edit({embeds:[embed]});}else{const s=await ch.send({embeds:[embed]});ratesMsgId=s.id;}}else{const s=await ch.send({embeds:[embed]});ratesMsgId=s.id;}return interaction.editReply("Rates posted.");}
@@ -1777,7 +1756,7 @@ Deleting in 10 seconds.`)
         const topM=Object.entries(methods).sort((a,b)=>b[1]-a[1])[0];
         const avg=done.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0)/done.length;
         const refPts=0;
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  My Trade History",iconURL:IMG.LOGO}).setTitle("My Trades").setThumbnail(interaction.user.displayAvatarURL({size:256})).setDescription(`${tier.emoji} **${tier.label}**${vip?" \u26A1 VIP":""}${nextT?`  \u00b7  ${fmtUSD(Math.max(nextT.min-volume,0))} to ${nextT.emoji} ${nextT.label}`:"  \u00b7  Max tier reached"}\n\u200b`).addFields({name:"\u2705  Total Trades",value:`**${done.length}**`,inline:true},{name:"\uD83D\uDCB0  Total Volume",value:`**${fmtUSD(volume)}**`,inline:true},{name:"\uD83D\uDCCA  Avg Trade",value:`**${fmtUSD(avg)}**`,inline:true},{name:"\uD83C\uDFC6  Top Method",value:topM?`**${getMethod(topM[0])?.label||topM[0]}** (${topM[1]}x)`:"\u2014",inline:true},{name:"\uD83D\uDD17  Referral Points",value:`**${refPts} pts** ($${pointsToDollars(refPts)})`,inline:true},{name:"\u26A1  VIP Discount",value:vip?"Active \u2014 0.75% off":"Not yet ($7,000+ required)",inline:true},{name:"\uD83D\uDCCB  Last 5 Trades",value:last5,inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  \u00b7  Use /stats for full tier details"}).setTimestamp()]});
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  My Trade History",iconURL:IMG.LOGO}).setTitle("My Trades").setThumbnail(interaction.user.displayAvatarURL({size:256})).setDescription(`${tier.emoji} **${tier.label}**${vip?" \u26A1 VIP":""}${nextT?`  \u00b7  ${fmtUSD(Math.max(nextT.min-volume,0))} to ${nextT.emoji} ${nextT.label}`:"  \u00b7  Max tier reached"}\n\u200b`).addFields({name:"\u2705  Total Trades",value:`**${done.length}**`,inline:true},{name:"\uD83D\uDCB0  Total Volume",value:`**${fmtUSD(volume)}**`,inline:true},{name:"\uD83D\uDCCA  Avg Trade",value:`**${fmtUSD(avg)}**`,inline:true},{name:"\uD83C\uDFC6  Top Method",value:topM?`**${getMethod(topM[0])?.label||topM[0]}** (${topM[1]}x)`:"\u2014",inline:true},{name:"\u26A1  VIP Discount",value:vip?"Active \u2014 0.75% off":"Not yet ($7,000+ required)",inline:true},{name:"\uD83D\uDCCB  Last 5 Trades",value:last5,inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  \u00b7  Use /stats for full tier details"}).setTimestamp()]});
       }
 
       if(cmd==="estimate"){
@@ -2374,20 +2353,6 @@ This is active immediately and persists until revoked or the bot restarts.
         await interaction.deferReply({flags:64});
         const userId=interaction.user.id,ref={referred:{},points:{}};
         const data=ref.points[userId]||{balance:0,paid:0,history:[],pendingPayout:false};
-        const bal=data.balance||0,paid=data.paid||0,referredCount=Object.values(ref.referred).filter(r=>r===userId).length;
-        const readyToWithdraw=bal>=MIN_WITHDRAW_POINTS&&!data.pendingPayout;
-        const embed=new EmbedBuilder().setColor(bal>=MIN_WITHDRAW_POINTS?0x7C4DFF:0x7C4DFF).setAuthor({name:"Konvert  \u00b7  Referral Program",iconURL:PTS_IMG}).setTitle("\uD83D\uDCB0  My Points").addFields({name:"Balance",value:`**${bal} pts** ($${pointsToDollars(bal)})`,inline:true},{name:"Total Paid Out",value:`**$${pointsToDollars(paid)}**`,inline:true},{name:"People Referred",value:`**${referredCount}**`,inline:true},{name:"Status",value:data.pendingPayout?"⏳ Payout pending":readyToWithdraw?"✅ Ready — use `/mypoints` to request":`**${MIN_WITHDRAW_POINTS-bal}** more pts to withdraw`,inline:false}).setFooter({text:"Konvert Referrals  \u2022  Use /mypoints for full history"}).setTimestamp();
-        const components=[];if(readyToWithdraw){components.push(new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_request_payout").setLabel("Request Payout").setEmoji("💸").setStyle(ButtonStyle.Success)));}
-        return interaction.editReply({embeds:[embed],components});
-      }
-
-      if(interaction.customId==="btn_request_payout"){
-        const userId=interaction.user.id,ref={referred:{},points:{}},data=null;
-        if(!data||data.balance<MIN_WITHDRAW_POINTS)return interaction.reply({content:"You don't have enough points to request a payout.",flags:64});
-        if(data.pendingPayout)return interaction.reply({content:"You already have a pending payout request.",flags:64});
-        data.pendingPayout=true;ref.points[userId]=data;
-        for(const oid of CONFIG.OWNER_IDS){try{const owner=await client.users.fetch(oid);await owner.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert  \u00b7  Referral Admin",iconURL:PTS_IMG}).setTitle("Payout Request").setThumbnail(PTS_IMG).setDescription(`<@${userId}> has requested a referral payout and is waiting.\n\u200b`).addFields({name:"\uD83D\uDCB0  Amount",value:`**${data.balance} pts**  \u00b7  **$${pointsToDollars(data.balance)}**`,inline:true},{name:"\u26A1  Action",value:`\`/paypoints @${interaction.user.username}\``,inline:true}).setTimestamp().setFooter({text:"Konvert Referral Program  \u00b7  Admin Notification"})]});}catch{}}
-        return interaction.reply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert  \u00b7  Referral Program",iconURL:PTS_IMG}).setTitle("Payout Requested").setThumbnail(PTS_IMG).setDescription(`Your payout request has been sent. Staff will process it and DM you once it's done.\n\u200b`).addFields({name:"\uD83D\uDCB0  Amount Requested",value:`**${data.balance} pts**  \u00b7  **$${pointsToDollars(data.balance)}**`,inline:true},{name:"\uD83D\uDCEC  Next Step",value:"Wait for a DM from staff confirming payment.",inline:true}).setImage(IMG.BANNER).setFooter({text:"Konvert Referral Program  \u00b7  Thank you for referring people to Konvert"}).setTimestamp()],flags:64});
       }
 
       if(interaction.customId==="btn_c2c_confirm"){
