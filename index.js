@@ -994,14 +994,14 @@ client.on(Events.MessageCreate,async message=>{
     // Payment method prompts
     const _pmCmds={
       "$paypal":{name:"PayPal",color:0x003087,rules:["Send from your **PayPal Balance only** — no card, no bank","Use **Friends & Family** — never Goods & Services","Record the **entire process** start to finish","Failure to follow these steps may result in **loss of funds**"]},
-      "$cashapp":{name:"Cash App",color:0x00D632,rules:["Send from your **Cash App Balance only** — no linked card or bank","Record the **entire process** start to finish","Ensure you are sending to the correct **$Cashtag**","Failure to follow these steps may result in **loss of funds**"]},
+      "$cashapp":{name:"Cash App",color:0x00D632,rules:["Send from your **Cash App Balance only** — no linked card or bank","Record the **entire process** start to finish","Ensure you are sending to the correct **Cashtag**","Failure to follow these steps may result in **loss of funds**"]},
       "$venmo":{name:"Venmo",color:0x3D95CE,rules:["Send from your **Venmo Balance only** — no linked card or bank","Set the payment to **Private** — not public or friends","Record the **entire process** start to finish","Failure to follow these steps may result in **loss of funds**"]},
       "$zelle":{name:"Zelle",color:0x6D1ED4,rules:["Send directly from your **bank account via Zelle**","Once sent, Zelle payments **cannot be reversed** — double check the recipient","Record the **entire process** start to finish","Failure to follow these steps may result in **loss of funds**"]},
       "$interac":{name:"Interac e-Transfer",color:0xFFCC00,rules:["Send via **Interac e-Transfer** from your online banking","Do **not** set a security question unless instructed","Record the **entire process** start to finish","Failure to follow these steps may result in **loss of funds**"]},
       "$applepay":{name:"Apple Pay",color:0x000000,rules:["Send from your **Apple Cash balance** — not a linked card","Only send to contacts confirmed inside this ticket","Record the **entire process** start to finish","Failure to follow these steps may result in **loss of funds**"]},
     };
     const _pmKey=message.content.trim().toLowerCase();
-    if(_pmCmds[_pmKey]&&ticket){
+    if(_pmCmds[_pmKey]){
       const _pm=_pmCmds[_pmKey];
       await message.channel.send({embeds:[new EmbedBuilder()
         .setColor(_pm.color)
