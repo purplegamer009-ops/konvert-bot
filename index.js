@@ -535,6 +535,14 @@ function getUserVolume(userId){
   }
   return Math.max(0,total);
 }
+function ticketFee(t){
+  const stored=parseFloat(t.feeUSD||0);
+  if(stored>0)return stored;
+  const amt=parseFloat(t.amountUSD||0);
+  if(!(amt>0))return 0;
+  if(t.method==="giftcard")return 0;
+  return calcFee(amt,t.direction||"send",false);
+}
 function getUserDealCount(userId){
   const all=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
   const real=all.filter(t=>t.userId===userId&&["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&t.method!=="adjustment_deal"&&parseFloat(t.amountUSD||0)>0).length;
@@ -583,6 +591,7 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("posttos").setDescription("[Owner] Post the Terms of Service embed").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("postlinks").setDescription("[Owner] Post the Official Links embed").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("adjuststats").setDescription("[Owner] Add or subtract volume from a user's stats").addUserOption(o=>o.setName("user").setDescription("User").setRequired(true)).addNumberOption(o=>o.setName("amount").setDescription("Amount in USD (use negative to subtract)").setRequired(true)).addStringOption(o=>o.setName("reason").setDescription("Reason for adjustment").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("transferstats").setDescription("[Owner] Move all stats from one account to another").addUserOption(o=>o.setName("from").setDescription("Account to move stats FROM").setRequired(true)).addUserOption(o=>o.setName("to").setDescription("Account to move stats TO").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("resetstats").setDescription("[Owner] Reset a user's volume adjustment back to 0").addUserOption(o=>o.setName("user").setDescription("User").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("clearleaderboard").setDescription("[Owner] Wipe all trade data from leaderboard and stats").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("wipestats").setDescription("[Owner] Completely wipe ALL stats and tickets for a single user").addUserOption(o=>o.setName("user").setDescription("User to wipe").setRequired(true)).addStringOption(o=>o.setName("confirm").setDescription('Type "CONFIRM" to proceed').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
@@ -613,6 +622,9 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("mywallets").setDescription("View all your saved exchanger wallet addresses"),
   new SlashCommandBuilder().setName("postwallets").setDescription("Post your wallet addresses in the current ticket channel"),
   new SlashCommandBuilder().setName("clearwallet").setDescription("Remove one of your saved wallet addresses").addStringOption(o=>o.setName("coin").setDescription("Coin to remove").setRequired(true)),
+  new SlashCommandBuilder().setName("alert").setDescription("Get a DM when a coin hits your target price").addStringOption(o=>o.setName("coin").setDescription("Coin ticker e.g. BTC").setRequired(true)).addNumberOption(o=>o.setName("price").setDescription("Target price in USD").setRequired(true)).addStringOption(o=>o.setName("direction").setDescription("Alert when price goes above or below").setRequired(true).addChoices({name:"Above",value:"above"},{name:"Below",value:"below"})),
+  new SlashCommandBuilder().setName("myalerts").setDescription("View your active price alerts"),
+  new SlashCommandBuilder().setName("clearalerts").setDescription("Remove all your price alerts"),
   new SlashCommandBuilder().setName("exchangerstats").setDescription("View your exchanger performance stats").addUserOption(o=>o.setName("user").setDescription("Exchanger to check").setRequired(false)),
   new SlashCommandBuilder().setName("tierlist").setDescription("See all client tiers and their requirements"),
   new SlashCommandBuilder().setName("claimtag").setDescription("Manually activate your KONV tag perk if auto-detection did not work"),
@@ -1343,7 +1355,7 @@ client.on(Events.InteractionCreate,async interaction=>{
   try{
     if(interaction.isChatInputCommand()){
       // Owner-only commands: check OWNER_IDS regardless of Discord permissions
-      const OWNER_ONLY_CMDS=["grantowner","revokeowner","listowners","wipestats","clearleaderboard","adjuststats","resetstats","broadcast","setfeemode","postleaderboard","serverinfo","clientinfo","receipt"];
+      const OWNER_ONLY_CMDS=["grantowner","revokeowner","listowners","wipestats","clearleaderboard","adjuststats","resetstats","transferstats","broadcast","setfeemode","postleaderboard","serverinfo","clientinfo","receipt"];
       if(OWNER_ONLY_CMDS.includes(interaction.commandName)&&!CONFIG.OWNER_IDS.includes(interaction.user.id)){
         return interaction.reply({content:"❌ You don\'t have permission to use this command.",flags:64});
       }
@@ -1641,6 +1653,54 @@ Deleting in 10 seconds.`)
         const tier=getTier(newVol);
         log(interaction.guild,`ADJUSTSTATS: ${interaction.user.tag} adjusted ${target.tag||target.username} by ${amount>0?"+":""}${fmtUSD(amount)} | New total: ${fmtUSD(newVol)} | Reason: ${reason}`);
         return interaction.reply({embeds:[base("Stats Adjusted").setThumbnail(target.displayAvatarURL({size:128})).setDescription(`Stats updated for <@${target.id}>.\n\u200b`).addFields({name:"Adjustment",value:`**${amount>0?"+":""}${fmtUSD(amount)}**`,inline:true},{name:"New Volume",value:`**${fmtUSD(newVol)}**`,inline:true},{name:"New Tier",value:`${tier.emoji} **${tier.label}**`,inline:true},{name:"Reason",value:reason,inline:false}).setFooter({text:`Adjusted by ${interaction.user.tag}  \u2022  Konvert`})],flags:64});
+      }
+
+      if(cmd==="transferstats"){
+        await interaction.deferReply({flags:64});
+        const fromUser=interaction.options.getUser("from");
+        const toUser=interaction.options.getUser("to");
+        if(fromUser.id===toUser.id)return interaction.editReply({content:"Cannot transfer to the same account."});
+        const tickets=Object.keys(_mem.tickets||{}).length>0?{..._mem.tickets}:load("tickets");
+        // Move every ticket owned by fromUser to toUser
+        let moved=0;
+        let movedVol=0;
+        for(const [key,t] of Object.entries(tickets)){
+          if(t.userId===fromUser.id){
+            t.userId=toUser.id;
+            t.userTag=toUser.tag||toUser.username;
+            movedVol+=(parseFloat(t.amountUSD)||0);
+            moved++;
+          }
+        }
+        // Move any manual volume adjustments
+        if(state.volumeAdj[fromUser.id]){
+          state.volumeAdj[toUser.id]=(state.volumeAdj[toUser.id]||0)+state.volumeAdj[fromUser.id];
+          delete state.volumeAdj[fromUser.id];
+        }
+        // Move mine passes
+        if(state.passes[fromUser.id]){
+          state.passes[toUser.id]=(state.passes[toUser.id]||0)+state.passes[fromUser.id];
+          delete state.passes[fromUser.id];
+        }
+        _mem.tickets=tickets;save("tickets",tickets);
+        dbSet("konvert_tickets",tickets).catch(()=>{});
+        updateStatChannel(interaction.guild).catch(()=>{});
+        // Remove all tier roles from source account
+        try{
+          const fromMember=await interaction.guild.members.fetch(fromUser.id).catch(()=>null);
+          if(fromMember){for(const t of TIERS){if(t.role&&fromMember.roles.cache.has(t.role))await fromMember.roles.remove(t.role).catch(()=>{});}}
+        }catch{}
+        // Apply correct tier role to destination account
+        const newVol=getUserVolume(toUser.id);
+        await applyTierRole(interaction.guild,toUser.id,newVol).catch(()=>{});
+        const newTier=getTier(newVol);
+        log(interaction.guild,`TRANSFERSTATS: ${interaction.user.tag} moved ${moved} trades (${fmtUSD(movedVol)}) from ${fromUser.tag||fromUser.username} to ${toUser.tag||toUser.username}`);
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert  \u00b7  Stats Transfer",iconURL:IMG.LOGO}).setTitle("Transfer Complete").addFields(
+          {name:"From",value:`<@${fromUser.id}>\nNow **$0.00** \u00b7 0 trades`,inline:true},
+          {name:"To",value:`<@${toUser.id}>\nNow **${fmtUSD(newVol)}** \u00b7 ${getUserDealCount(toUser.id)} trades`,inline:true},
+          {name:"Moved",value:`**${moved}** trades \u00b7 **${fmtUSD(movedVol)}** volume`,inline:false},
+          {name:"New Tier",value:`${newTier.emoji} **${newTier.label}**`,inline:true},
+        ).setFooter({text:"Konvert  \u2022  Stats transferred"}).setTimestamp()]});
       }
 
       if(cmd==="resetstats"){
@@ -2273,6 +2333,38 @@ This is active immediately and persists until revoked or the bot restarts.
         return interaction.reply({content:"\u2705 Addresses posted.",flags:64});
       }
 
+      if(cmd==="alert"){
+        await interaction.deferReply({flags:64});
+        const raw=interaction.options.getString("coin").trim();
+        const coin=resolveCoin(raw);
+        const target=interaction.options.getNumber("price");
+        const dir=interaction.options.getString("direction");
+        if(!GECKO[coin]&&!BINANCE[coin])return interaction.editReply({content:`**${coin}** is not a supported coin for alerts.`});
+        if(!(target>0))return interaction.editReply({content:"Enter a target price greater than 0."});
+        const mine=state.alerts.filter(a=>a.userId===interaction.user.id);
+        if(mine.length>=10)return interaction.editReply({content:"You already have 10 alerts. Use `/clearalerts` first."});
+        const cur=await Promise.race([getPrice(coin),new Promise(r=>setTimeout(()=>r(null),5000))]).catch(()=>null);
+        state.alerts.push({userId:interaction.user.id,coin,target,dir,createdAt:Date.now()});
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert  \u00b7  Price Alert",iconURL:IMG.LOGO}).setTitle("Alert Set").addFields(
+          {name:"Coin",value:coin,inline:true},
+          {name:"Trigger",value:`${dir==="above"?"Above":"Below"} $${target}`,inline:true},
+          {name:"Current",value:cur?`$${cur.toLocaleString("en-US",{maximumFractionDigits:2})}`:"--",inline:true},
+        ).setFooter({text:"You will get a DM when it triggers  \u2022  Alert fires once"})]});
+      }
+
+      if(cmd==="myalerts"){
+        const mine=state.alerts.filter(a=>a.userId===interaction.user.id);
+        if(!mine.length)return interaction.reply({content:"You have no active price alerts. Use `/alert` to set one.",flags:64});
+        const lines=mine.map((a,i)=>`**${i+1}.** ${a.coin} ${a.dir==="above"?"above":"below"} **$${a.target}**`).join("\n");
+        return interaction.reply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert  \u00b7  Your Price Alerts",iconURL:IMG.LOGO}).setDescription(lines).setFooter({text:`${mine.length} active alert${mine.length!==1?"s":""}`})],flags:64});
+      }
+
+      if(cmd==="clearalerts"){
+        const before=state.alerts.length;
+        state.alerts=state.alerts.filter(a=>a.userId!==interaction.user.id);
+        return interaction.reply({content:`Cleared **${before-state.alerts.length}** alert(s).`,flags:64});
+      }
+
       if(cmd==="exchangerstats"){
         await interaction.deferReply({flags:64});
         const target=interaction.options.getUser("user")||interaction.user;
@@ -2282,7 +2374,7 @@ This is active immediately and persists until revoked or the bot restarts.
           return interaction.editReply({content:`No completed exchanges found for **${target.username}** as exchanger.`});
         }
         const totalVol=handled.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
-        const totalFees=handled.reduce((s,t)=>s+(parseFloat(t.feeUSD||0)),0);
+        const totalFees=handled.reduce((s,t)=>s+ticketFee(t),0);
         const avg=totalVol/handled.length;
         const methods={};handled.forEach(t=>{if(t.method)methods[t.method]=(methods[t.method]||0)+1;});
         const topM=Object.entries(methods).sort((a,b)=>b[1]-a[1])[0];
@@ -2705,19 +2797,13 @@ async function postDailyDigest(guild){
     const today=done.filter(t=>t.completedAt&&t.completedAt>=todayStart);
     const todayVol=today.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
     // Fee: use stored feeUSD, fallback to calcFee if missing
-    const todayFees=today.reduce((s,t)=>{
-      const fee=parseFloat(t.feeUSD||0);
-      if(fee>0)return s+fee;
-      // Recalculate if feeUSD not stored
-      const amt=parseFloat(t.amountUSD||0);
-      return s+(amt>0?calcFee(amt,t.direction||"send",false):0);
-    },0);
+    const todayFees=today.reduce((s,t)=>s+ticketFee(t),0);
     const open=allT.filter(t=>t.status==="open"&&t.method!=="adjustment").length;
     const disputes=allT.filter(t=>t.status==="dispute").length;
     // All-time stats — include adjustment_deal in count
     const allDone=allT.filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0);
     const allVol=allDone.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
-    const allFees=allDone.reduce((s,t)=>s+(parseFloat(t.feeUSD)||0)||calcFee(parseFloat(t.amountUSD||0),t.direction||"send",false),0);
+    const allFees=allDone.reduce((s,t)=>s+ticketFee(t),0);
     // Week stats
     const weekStart=Date.now()-7*86400000;
     const week=allDone.filter(t=>t.completedAt&&t.completedAt>=weekStart);
@@ -2757,6 +2843,7 @@ async function postDailyDigest(guild){
         {name:"Today — Fees",value:fmtUSD(todayFees),inline:true},
         {name:"This Week",value:`${week.length} trades · ${fmtUSD(weekVol)}`,inline:true},
         {name:"All-Time",value:`${allDone.length} trades · ${fmtUSD(allVol)}`,inline:true},
+        {name:"All-Time Fees",value:fmtUSD(allFees),inline:true},
         {name:"Avg Deal",value:avgDeal>0?fmtUSD(avgDeal):"--",inline:true},
         {name:"Open Tickets",value:`${open}`,inline:true},
         {name:"Disputes",value:`${disputes}`,inline:true},
@@ -2933,6 +3020,31 @@ client.once(Events.ClientReady,async()=>{
     })();
     scheduleDailyFact(guild);
     scheduleDailyDigest(guild);
+    // Price alert checker — every 2 minutes
+    setInterval(async()=>{
+      if(!state.alerts.length)return;
+      const coins=[...new Set(state.alerts.map(a=>a.coin))];
+      const prices={};
+      for(const c of coins){
+        const p=await Promise.race([getPrice(c),new Promise(r=>setTimeout(()=>r(null),5000))]).catch(()=>null);
+        if(p)prices[c]=p;
+      }
+      const still=[];
+      for(const a of state.alerts){
+        const cur=prices[a.coin];
+        if(!cur){still.push(a);continue;}
+        const hit=(a.dir==="above"&&cur>=a.target)||(a.dir==="below"&&cur<=a.target);
+        if(!hit){still.push(a);continue;}
+        try{
+          const u=await client.users.fetch(a.userId);
+          await u.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert  \u00b7  Price Alert",iconURL:IMG.LOGO}).setTitle(`${a.coin} hit your target`).setThumbnail(COIN_LOGO[a.coin]||IMG.LOGO).addFields(
+            {name:"Current Price",value:`$${cur.toLocaleString("en-US",{maximumFractionDigits:2})}`,inline:true},
+            {name:"Your Target",value:`${a.dir==="above"?"Above":"Below"} $${a.target}`,inline:true},
+          ).setFooter({text:"Konvert  \u2022  Alert removed. Set a new one with /alert"}).setTimestamp()]});
+        }catch{}
+      }
+      state.alerts=still;
+    },2*60*1000);
     // Refresh stat channel every 10 minutes automatically
     setInterval(()=>updateStatChannel(guild).catch(()=>{}),10*60*1000);
   }
