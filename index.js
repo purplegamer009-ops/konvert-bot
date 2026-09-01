@@ -438,6 +438,8 @@ async function withTimeout(interaction,fn,ms=8000){
 }
 const KONV_TAG_ROLE="1526282822468370566";
 const SECOND_GUILD_ID="1531692858577518602";
+const VOUCH_POST_CHANNEL="1533253002763436072";
+const VOUCH_LINK="https://discord.com/channels/1432137319611105375/1533253002763436072";
 function isKonvTag(userId,member){try{if(member){const pg=member.user&&member.user.primaryGuild;const hasPG=!!(pg&&pg.identityEnabled&&pg.identityGuildId===CONFIG.GUILD_ID);return !!(member.roles&&member.roles.cache&&member.roles.cache.has(KONV_TAG_ROLE))||hasPG;}}catch{}return !!(state.konvTagUsers&&state.konvTagUsers.has(userId));}
 function isExchanger(member){
   if(!member)return false;
@@ -928,41 +930,28 @@ async function completeTrade(interaction,ticket,tickets){
   if(state.feedEnabled&&state.feedChannel){try{const feedCh=interaction.guild.channels.cache.get(state.feedChannel);if(feedCh){const vol=getUserVolume(ticket.userId);const _tier=getTier(vol);await feedCh.send(`\u2705  **${m?.label||ticket.method}**  \u00b7  **${fmtUSD(ticket.amountUSD)}**  \u00b7  ${_tier.emoji}  \u2014  just now`);}}catch{}}
   try{const _vol=getUserVolume(ticket.userId);console.log(`[tierRole] userId=${ticket.userId} volume=${_vol}`);await applyTierRole(interaction.guild,ticket.userId,_vol);}catch(e){console.log("[tierRole error]",e.message);}
   try{const volume=getUserVolume(ticket.userId);await sendReceiptDM(ticket.userId,interaction.user.id,ticket,getUserDealCount(ticket.userId),volume);}catch{}
-  const _referrerId=null;
-  let _referralLine="";
-  if(_referrerId&&_referrerId!==ticket.userId){const _ptsEarned=calcReferralPoints(ticket.amountUSD);try{await client.users.fetch(_referrerId);_referralLine=`\n\n\uD83D\uDD17 **Referral deal** \u2014 referred by <@${_referrerId}> \u00b7 **+${_ptsEarned} pts** credited`;}catch{_referralLine=`\n\n\uD83D\uDD17 **Referral deal** \u2014 referral points credited`;}}
-  else{_referralLine="\n\n\u274C **No referral** on this trade";}
-  // Show completion — 5 min window for client review. _vouchPosted guards against any double post.
+  // Completion — 90s window to go vouch in the vouch channel, then auto-close.
   let _vouchPosted=false;
-  const _postOnce=async(reviewMsg)=>{
+  const _postOnce=async()=>{
     if(_vouchPosted)return;
     _vouchPosted=true;
-    await postVouch(interaction.guild,{clientId:ticket.userId,exchangerId:ticket.completedBy,method:m?.label||ticket.method,amountUSD:ticket.amountUSD,direction:ticket.direction,coin:ticket.coin,recvCoin:ticket.recvCoin||null,message:reviewMsg||null,rating:5,referredBy:_referredByForVouch});
+    await postVouch(interaction.guild,{clientId:ticket.userId,exchangerId:ticket.completedBy,method:m?.label||ticket.method,amountUSD:ticket.amountUSD,direction:ticket.direction,coin:ticket.coin,recvCoin:ticket.recvCoin||null,message:null,rating:5,referredBy:null});
     updateStatChannel(interaction.guild).catch(()=>{});
     await doCloseTicket(interaction.channel,interaction.guild,interaction.user,"Trade completed");
     setTimeout(()=>interaction.channel.delete().catch(()=>{}),2000);
   };
   const _vRow=new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("skip_vouch").setLabel("Skip Review").setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder().setLabel("Vouch Here").setStyle(ButtonStyle.Link).setURL(VOUCH_LINK),
+    new ButtonBuilder().setCustomId("skip_vouch").setLabel("Close Now").setStyle(ButtonStyle.Secondary)
   );
   const _vPrompt=new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
-    .setTitle("\u2705 Exchange Complete!")
-    .setDescription(`<@${ticket.userId}> \u2014 your exchange is done!\n\nOptionally type a **review message** and it posts to vouches automatically.\n\n*90 seconds to leave a review \u2014 or click Skip to close now.*${_referralLine}`)
-    .setFooter({text:"Konvert Exchange  \u2022  Your review helps the community"});
+    .setTitle("Exchange Complete")
+    .setDescription(`<@${ticket.userId}> \u2014 your exchange is done.\n\nPlease leave a vouch in <#${VOUCH_POST_CHANNEL}> \u2014 it takes 5 seconds and helps the community.\n\n*This ticket closes in 90 seconds.*`)
+    .setFooter({text:"Konvert Exchange  \u2022  Thanks for trading with us"});
   await interaction.editReply({content:`<@${ticket.userId}>`,embeds:[_vPrompt],components:[_vRow]});
-  // Store _postOnce on channel so skip button can call it directly
+  // Store _postOnce on channel so the Close Now button can call it directly
   if(interaction.channel)interaction.channel._completePostOnce=_postOnce;
-  const _ticketOwnerId=ticket.userId;
-  const _msgFilter=msg=>msg.author.id===_ticketOwnerId&&!msg.author.bot;
-  const _collector=interaction.channel.createMessageCollector({filter:_msgFilter,time:90*1000,max:1});
-  _collector.on("collect",async(msg)=>{
-    _collector.stop("collected");
-    await msg.reply("\uD83D\uDC4B Thanks! Posting vouch now.").catch(()=>{});
-    await _postOnce(msg.content.slice(0,500));
-  });
-  _collector.on("end",(_col,reason)=>{
-    if(reason!=="collected")_postOnce(null);
-  });
+  setTimeout(()=>{_postOnce().catch(()=>{});},90*1000);
 }
 
 client.on(Events.MessageCreate,async message=>{
@@ -2470,9 +2459,10 @@ This is active immediately and persists until revoked or the bot restarts.
       if(interaction.customId==="skip_vouch"){
         const _tix=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
         const _stix=_tix[interaction.channel.id];
-        if(!_stix||interaction.user.id!==_stix.userId)return interaction.reply({content:"Only the client can skip the review.",flags:64});
+        const _canCloseNow=interaction.user.id===_stix?.userId||isExchanger(interaction.member)||CONFIG.OWNER_IDS.includes(interaction.user.id);
+        if(!_stix||!_canCloseNow)return interaction.reply({content:"Only the client or an exchanger can close this.",flags:64});
         await interaction.deferUpdate().catch(()=>{});
-        await interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setTitle("Closing...").setDescription("No review submitted. Closing ticket now.")],components:[]}).catch(()=>{});
+        await interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setTitle("Closing").setDescription(`Ticket closing now. Don't forget to vouch in <#${VOUCH_POST_CHANNEL}>.`)],components:[]}).catch(()=>{});
         // Call _postOnce directly — it's stored on the channel by completeTrade
         const _fn=interaction.channel._completePostOnce;
         if(typeof _fn==="function"){
