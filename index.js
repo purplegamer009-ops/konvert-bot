@@ -948,7 +948,10 @@ async function completeTrade(interaction,ticket,tickets){
     .setTitle("Exchange Complete")
     .setDescription(`<@${ticket.userId}> \u2014 your exchange is done.\n\nPlease leave a vouch in <#${VOUCH_POST_CHANNEL}> \u2014 it takes 5 seconds and helps the community.\n\n*This ticket closes in 90 seconds.*`)
     .setFooter({text:"Konvert Exchange  \u2022  Thanks for trading with us"});
-  await interaction.editReply({content:`<@${ticket.userId}>`,embeds:[_vPrompt],components:[_vRow]});
+  // Post publicly so the client actually sees it (btn_done defers ephemerally)
+  await interaction.channel.send({content:`<@${ticket.userId}>`,embeds:[_vPrompt],components:[_vRow]}).catch(()=>{});
+  // Quiet confirmation for whoever triggered it
+  if(!interaction._fake){try{await interaction.editReply({content:"Exchange marked complete.",embeds:[],components:[]});}catch{}}
   // Store _postOnce on channel so the Close Now button can call it directly
   if(interaction.channel)interaction.channel._completePostOnce=_postOnce;
   setTimeout(()=>{_postOnce().catch(()=>{});},90*1000);
@@ -1007,9 +1010,21 @@ client.on(Events.MessageCreate,async message=>{
     }
     // $open — ping exchangers
     if(message.content.trim()==="$open"&&ticket&&ticket.status==="open"&&(isExchanger(message.member)||CONFIG.OWNER_IDS.includes(message.author.id))){
-      const _exRoles=Object.values(CONFIG.ROLES||{}).filter(Boolean);
-      const _pings=[...(CONFIG.STAFF_ROLE?["<@&"+CONFIG.STAFF_ROLE+">"]:[]),..._exRoles.map(r=>"<@&"+r+">")].join(" ");
-      await message.channel.send({content:(_pings||"@here")+" — This ticket needs an exchanger."}).catch(()=>{});
+      const _allRoleIds=[...new Set([
+        ...(CONFIG.STAFF_ROLE?[CONFIG.STAFF_ROLE]:[]),
+        ...(CONFIG.EXCHANGER_ROLE?[CONFIG.EXCHANGER_ROLE]:[]),
+        ...Object.values(CONFIG.ROLES||{}).filter(Boolean),
+      ])];
+      // Only ping roles that can actually view this ticket channel
+      const _visible=_allRoleIds.filter(rid=>{
+        const role=message.guild.roles.cache.get(rid);
+        if(!role)return false;
+        try{return !!message.channel.permissionsFor(role)?.has(PermissionFlagsBits.ViewChannel);}catch{return false;}
+      });
+      const _mOpen=getMethod(ticket.method);
+      if(!_visible.length)return void message.reply("No exchanger role has access to this channel. Add one to the channel permissions first.").catch(()=>{});
+      const _pings=_visible.map(r=>"<@&"+r+">").join(" ");
+      await message.channel.send({content:`${_pings} — **${_mOpen?.label||ticket.method}** ticket needs an exchanger. ${fmtUSD(ticket.amountUSD||0)}`,allowedMentions:{roles:_visible}}).catch(()=>{});
       return;
     }
     // $info — ticket summary
@@ -1055,7 +1070,7 @@ client.on(Events.MessageCreate,async message=>{
         const _allT=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
         ticket._overrideExchangerId=message.author.id;
         // Create a fake interaction-like object for completeTrade
-        const _fakeInt={guild:message.guild,channel:message.channel,user:message.author,member:message.member,deferred:true,replied:false,editReply:async(d)=>message.channel.send(typeof d==="string"?{content:d}:d).catch(()=>{}),followUp:async(d)=>message.channel.send(typeof d==="string"?{content:d}:d).catch(()=>{})};
+        const _fakeInt={_fake:true,guild:message.guild,channel:message.channel,user:message.author,member:message.member,deferred:true,replied:false,editReply:async(d)=>message.channel.send(typeof d==="string"?{content:d}:d).catch(()=>{}),followUp:async(d)=>message.channel.send(typeof d==="string"?{content:d}:d).catch(()=>{})};
         await completeTrade(_fakeInt,ticket,_allT);
         return;
       }
