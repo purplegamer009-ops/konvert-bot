@@ -441,10 +441,20 @@ const SECOND_GUILD_ID="1531692858577518602";
 const VOUCH_POST_CHANNEL="1533253002763436072";
 const VOUCH_LINK="https://discord.com/channels/1432137319611105375/1533253002763436072";
 function isKonvTag(userId,member){try{if(member){const pg=member.user&&member.user.primaryGuild;const hasPG=!!(pg&&pg.identityEnabled&&pg.identityGuildId===CONFIG.GUILD_ID);return !!(member.roles&&member.roles.cache&&member.roles.cache.has(KONV_TAG_ROLE))||hasPG;}}catch{}return !!(state.konvTagUsers&&state.konvTagUsers.has(userId));}
+const OWNER_ROLE="1477857207600152608";
+// Owner = in OWNER_IDS list OR holding the owner role
+function isOwner(userId,member){
+  try{
+    if(CONFIG.OWNER_IDS.includes(userId))return true;
+    if(member&&member.roles&&member.roles.cache&&member.roles.cache.has(OWNER_ROLE))return true;
+  }catch{}
+  return false;
+}
 function isExchanger(member){
   if(!member)return false;
   const allRoles=Object.values(CONFIG.ROLES||{}).filter(Boolean);
   return CONFIG.OWNER_IDS.includes(member.id)||
+    !!(member.roles.cache.has(OWNER_ROLE))||
     !!(CONFIG.STAFF_ROLE&&member.roles.cache.has(CONFIG.STAFF_ROLE))||
     !!(CONFIG.EXCHANGER_ROLE&&member.roles.cache.has(CONFIG.EXCHANGER_ROLE))||
     allRoles.some(r=>member.roles.cache.has(r));
@@ -1009,7 +1019,7 @@ client.on(Events.MessageCreate,async message=>{
       return;
     }
     // $open — ping exchangers
-    if(message.content.trim()==="$open"&&ticket&&ticket.status==="open"&&(isExchanger(message.member)||CONFIG.OWNER_IDS.includes(message.author.id))){
+    if(message.content.trim()==="$open"&&ticket&&ticket.status==="open"&&(isExchanger(message.member)||isOwner(message.author.id,message.member))){
       const _allRoleIds=[...new Set([
         ...(CONFIG.STAFF_ROLE?[CONFIG.STAFF_ROLE]:[]),
         ...(CONFIG.EXCHANGER_ROLE?[CONFIG.EXCHANGER_ROLE]:[]),
@@ -1028,7 +1038,7 @@ client.on(Events.MessageCreate,async message=>{
       return;
     }
     // $info — ticket summary
-    if(message.content.trim()==="$info"&&ticket&&(isExchanger(message.member)||CONFIG.OWNER_IDS.includes(message.author.id))){
+    if(message.content.trim()==="$info"&&ticket&&(isExchanger(message.member)||isOwner(message.author.id,message.member))){
       const _im=getMethod(ticket.method);const _ivol=getUserVolume(ticket.userId);const _itier=getTier(_ivol);
       await message.reply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Ticket Info",iconURL:IMG.LOGO}).addFields({name:"Client",value:"<@"+ticket.userId+">",inline:true},{name:"Method",value:_im?.label||ticket.method||"--",inline:true},{name:"Amount",value:fmtUSD(ticket.amountUSD||0),inline:true},{name:"Volume",value:fmtUSD(_ivol),inline:true},{name:"Tier",value:_itier.emoji+" "+_itier.label,inline:true},{name:"Opened",value:"<t:"+Math.floor((ticket.createdAt||Date.now())/1000)+":R>",inline:true}).setTimestamp()]}).catch(()=>{});
       return;
@@ -1047,17 +1057,17 @@ client.on(Events.MessageCreate,async message=>{
       await message.reply("Rates: <$150=10% | $150-349=9% | $350-599=8% | $600-799=7% | $800+=6% | Min $5 | VIP -0.75%").catch(()=>{});return;
     }
     // $vol [@user]
-    if(message.content.trim().startsWith("$vol")&&(isExchanger(message.member)||CONFIG.OWNER_IDS.includes(message.author.id))){
+    if(message.content.trim().startsWith("$vol")&&(isExchanger(message.member)||isOwner(message.author.id,message.member))){
       const _vu=message.mentions.users.first()||message.author;const _vvol=getUserVolume(_vu.id);const _vt=getTier(_vvol);
       await message.reply(_vu.username+": **"+fmtUSD(_vvol)+"** | "+_vt.emoji+" **"+_vt.label+"**").catch(()=>{});return;
     }
     // $passes [@user]
-    if(message.content.trim().startsWith("$passes")&&CONFIG.OWNER_IDS.includes(message.author.id)){
+    if(message.content.trim().startsWith("$passes")&&isOwner(message.author.id,message.member)){
       const _pu=message.mentions.users.first()||message.author;const _pc=state.passes[_pu.id]||0;
       await message.reply(_pu.username+" has **"+_pc+"** pass"+(+_pc!==1?"es":"")+".").catch(()=>{});return;
     }
     // $note [text]
-    if(message.content.trim().startsWith("$note ")&&ticket&&(isExchanger(message.member)||CONFIG.OWNER_IDS.includes(message.author.id))){
+    if(message.content.trim().startsWith("$note ")&&ticket&&(isExchanger(message.member)||isOwner(message.author.id,message.member))){
       const _nt=message.content.trim().slice(6);ticket.staffNote=_nt;
       const _ant=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");_ant[message.channel.id]=ticket;_mem.tickets=_ant;save("tickets",_mem.tickets);
       await message.reply("Note saved: \""+_nt+"\"").catch(()=>{});return;
@@ -1065,7 +1075,7 @@ client.on(Events.MessageCreate,async message=>{
     // $complete — mark exchange complete
 
     if(message.content.trim()==="$complete"&&ticket&&ticket.status==="open"){
-      const _canComp=CONFIG.OWNER_IDS.includes(message.author.id)||(CONFIG.STAFF_ROLE&&message.member?.roles.cache.has(CONFIG.STAFF_ROLE))||Object.values(CONFIG.ROLES).filter(Boolean).some(r=>message.member?.roles.cache.has(r));
+      const _canComp=isOwner(message.author.id,message.member)||(CONFIG.STAFF_ROLE&&message.member?.roles.cache.has(CONFIG.STAFF_ROLE))||Object.values(CONFIG.ROLES).filter(Boolean).some(r=>message.member?.roles.cache.has(r));
       if(_canComp){
         const _allT=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
         ticket._overrideExchangerId=message.author.id;
@@ -1076,19 +1086,19 @@ client.on(Events.MessageCreate,async message=>{
       }
     }
     // $ban — blacklist a user (reply to their message or mention)
-    if(message.content.trim().startsWith("$ban ")&&CONFIG.OWNER_IDS.includes(message.author.id)){
+    if(message.content.trim().startsWith("$ban ")&&isOwner(message.author.id,message.member)){
       const _banId=message.mentions.users.first()?.id||message.content.trim().split(" ")[1];
       if(_banId){const bl=load("blacklist");bl[_banId]=true;save("blacklist",bl);await message.reply(`Banned <@${_banId}> from Konvert.`).catch(()=>{});}
       return;
     }
     // $unban — remove from blacklist
-    if(message.content.trim().startsWith("$unban ")&&CONFIG.OWNER_IDS.includes(message.author.id)){
+    if(message.content.trim().startsWith("$unban ")&&isOwner(message.author.id,message.member)){
       const _unId=message.mentions.users.first()?.id||message.content.trim().split(" ")[1];
       if(_unId){const bl=load("blacklist");delete bl[_unId];save("blacklist",bl);await message.reply(`Unbanned <@${_unId}>.`).catch(()=>{});}
       return;
     }
     // $purge [number] — delete last N messages (max 100)
-    if(message.content.trim().startsWith("$purge")&&(CONFIG.OWNER_IDS.includes(message.author.id)||(CONFIG.STAFF_ROLE&&message.member?.roles.cache.has(CONFIG.STAFF_ROLE)))){
+    if(message.content.trim().startsWith("$purge")&&(isOwner(message.author.id,message.member)||(CONFIG.STAFF_ROLE&&message.member?.roles.cache.has(CONFIG.STAFF_ROLE)))){
       const _n=Math.min(parseInt(message.content.trim().split(" ")[1]||"10")||10,100);
       await message.channel.bulkDelete(_n+1,true).catch(()=>{});
       const _pm=await message.channel.send(`Deleted ${_n} messages.`).catch(()=>null);
@@ -1098,7 +1108,7 @@ client.on(Events.MessageCreate,async message=>{
     // $close — auto close ticket
     if(message.content.trim()==="$close"&&ticket&&ticket.status==="open"){
       const _isExRoles2=Object.values(CONFIG.ROLES).filter(Boolean);
-      const _canClose=CONFIG.OWNER_IDS.includes(message.author.id)||(CONFIG.STAFF_ROLE&&message.member?.roles.cache.has(CONFIG.STAFF_ROLE))||(CONFIG.EXCHANGER_ROLE&&message.member?.roles.cache.has(CONFIG.EXCHANGER_ROLE))||_isExRoles2.some(r=>message.member?.roles.cache.has(r));
+      const _canClose=isOwner(message.author.id,message.member)||(CONFIG.STAFF_ROLE&&message.member?.roles.cache.has(CONFIG.STAFF_ROLE))||(CONFIG.EXCHANGER_ROLE&&message.member?.roles.cache.has(CONFIG.EXCHANGER_ROLE))||_isExRoles2.some(r=>message.member?.roles.cache.has(r));
       if(_canClose){
         await message.channel.send("Closing ticket...").catch(()=>{});
         await doCloseTicket(message.channel,message.guild,message.author,"Closed by staff");
@@ -1109,7 +1119,7 @@ client.on(Events.MessageCreate,async message=>{
     // $remind — remind client and start 12h auto-close countdown
     if(message.content.trim()==="$remind"&&ticket&&ticket.status==="open"){
       const _isExRoles3=Object.values(CONFIG.ROLES).filter(Boolean);
-      const _canRemind=CONFIG.OWNER_IDS.includes(message.author.id)||(CONFIG.STAFF_ROLE&&message.member?.roles.cache.has(CONFIG.STAFF_ROLE))||(CONFIG.EXCHANGER_ROLE&&message.member?.roles.cache.has(CONFIG.EXCHANGER_ROLE))||_isExRoles3.some(r=>message.member?.roles.cache.has(r));
+      const _canRemind=isOwner(message.author.id,message.member)||(CONFIG.STAFF_ROLE&&message.member?.roles.cache.has(CONFIG.STAFF_ROLE))||(CONFIG.EXCHANGER_ROLE&&message.member?.roles.cache.has(CONFIG.EXCHANGER_ROLE))||_isExRoles3.some(r=>message.member?.roles.cache.has(r));
       if(_canRemind){
         const _clientId=ticket.userId;
         await message.channel.send({content:`<@${_clientId}> You have **12 hours** to respond to this ticket or it will be automatically closed.`}).catch(()=>{});
@@ -1360,7 +1370,7 @@ client.on(Events.InteractionCreate,async interaction=>{
     if(interaction.isChatInputCommand()){
       // Owner-only commands: check OWNER_IDS regardless of Discord permissions
       const OWNER_ONLY_CMDS=["grantowner","revokeowner","listowners","wipestats","clearleaderboard","adjuststats","resetstats","transferstats","broadcast","setfeemode","postleaderboard","serverinfo","clientinfo","receipt"];
-      if(OWNER_ONLY_CMDS.includes(interaction.commandName)&&!CONFIG.OWNER_IDS.includes(interaction.user.id)){
+      if(OWNER_ONLY_CMDS.includes(interaction.commandName)&&!isOwner(interaction.user.id,interaction.member)){
         return interaction.reply({content:"❌ You don\'t have permission to use this command.",flags:64});
       }
       const cmd=interaction.commandName;
@@ -2474,7 +2484,7 @@ This is active immediately and persists until revoked or the bot restarts.
       if(interaction.customId==="skip_vouch"){
         const _tix=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
         const _stix=_tix[interaction.channel.id];
-        const _canCloseNow=interaction.user.id===_stix?.userId||isExchanger(interaction.member)||CONFIG.OWNER_IDS.includes(interaction.user.id);
+        const _canCloseNow=interaction.user.id===_stix?.userId||isExchanger(interaction.member)||isOwner(interaction.user.id,interaction.member);
         if(!_stix||!_canCloseNow)return interaction.reply({content:"Only the client or an exchanger can close this.",flags:64});
         await interaction.deferUpdate().catch(()=>{});
         await interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setTitle("Closing").setDescription(`Ticket closing now. Don't forget to vouch in <#${VOUCH_POST_CHANNEL}>.`)],components:[]}).catch(()=>{});
@@ -2541,7 +2551,7 @@ This is active immediately and persists until revoked or the bot restarts.
       if(interaction.customId==="btn_done"){
         const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
         const ticket=tickets[interaction.channel.id];
-        if(!isExchanger(interaction.member)&&!CONFIG.OWNER_IDS.includes(interaction.user.id))return interaction.reply({content:"Only exchangers can complete tickets.",flags:64});
+        if(!isExchanger(interaction.member)&&!isOwner(interaction.user.id,interaction.member))return interaction.reply({content:"Only exchangers can complete tickets.",flags:64});
         if(!ticket)return interaction.reply({content:"Ticket not found.",flags:64});
         if(ticket.status==="vouched"||ticket.status==="closed")return interaction.reply({content:"This exchange has already been completed.",flags:64});
         await interaction.deferReply({flags:64});
@@ -2550,7 +2560,7 @@ This is active immediately and persists until revoked or the bot restarts.
         return;
       }
       if(interaction.customId==="btn_close"){
-        const _isOwnerClose=CONFIG.OWNER_IDS.includes(interaction.user.id);
+        const _isOwnerClose=isOwner(interaction.user.id,interaction.member);
         const _isStaffClose=CONFIG.STAFF_ROLE?interaction.member.roles.cache.has(CONFIG.STAFF_ROLE):false;
         const _allExRoles=Object.values(CONFIG.ROLES).filter(Boolean);
         if(!isExchanger(interaction.member)&&!_isOwnerClose&&!_isStaffClose)return interaction.reply({content:"Only exchangers or staff can close tickets.",flags:64});
