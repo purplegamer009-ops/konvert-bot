@@ -453,10 +453,13 @@ function isOwner(userId,member){
 }
 // ── Profit sharing ───────────────────────────────────────────
 const OWNER_PROFIT_SHARE=0.40;                      // the owner's cut of every exchanger's profit
-const PROFIT_REPLY_WINDOW_MS=24*60*60*1000;         // how long an exchanger has to report before the owner is told they didn't
+const PROFIT_REPLY_WINDOW_MS=24*60*60*1000;         // how long an exchanger has to respond before the owner is told they didn't
 const PROFIT_DM_IDS=(process.env.PROFIT_DM_IDS||"1203760586379370601").split(",").map(s=>s.trim()).filter(Boolean);
+const PROFIT_PAYEE=process.env.PROFIT_PAYEE||"J (@jsballing)";   // who exchangers are told to pay
 const _sharePct=Math.round(OWNER_PROFIT_SHARE*100);
+const _r2=n=>Math.round(Number(n)*100)/100;
 const ownerCut=profit=>Math.round(Math.round(Number(profit)*100)*OWNER_PROFIT_SHARE)/100;
+const defaultProfit=t=>_r2(ticketFee(t));           // unless they say otherwise, the profit is the fee the client was charged
 
 function _dealLine(t){
   const m=getMethod(t.method);
@@ -464,38 +467,32 @@ function _dealLine(t){
 }
 function profitRequestEmbed(t){
   return new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
-    .setTitle("Deal Complete \u2014 Report Your Profit")
-    .setDescription(`How much profit did you make on this deal?\n\nKonvert takes **${_sharePct}%** of it. Enter **0** if you made nothing.`)
-    .addFields({name:"Deal",value:_dealLine(t),inline:true},{name:"Client",value:`<@${t.userId}>`,inline:true})
-    .setFooter({text:"Please report within 24 hours"}).setTimestamp();
+    .setTitle("Deal Complete")
+    .setDescription(`**${_dealLine(t)}**\n\nFee charged to client: **${fmtUSD(t.profitDefault)}**\nYou owe **${PROFIT_PAYEE}** ${_sharePct}%: **${fmtUSD(t.profitDefaultCut)}**\n\nConfirm the split, or enter your actual profit if it was different.`)
+    .setFooter({text:"Please respond within 24 hours"}).setTimestamp();
 }
 function profitButtonRow(ticketId){
   return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId(`btn_profit__${ticketId}`).setLabel("Enter Profit").setStyle(ButtonStyle.Success));
+    new ButtonBuilder().setCustomId(`btn_profitok__${ticketId}`).setLabel("Confirm Split").setStyle(ButtonStyle.Success),
+    new ButtonBuilder().setCustomId(`btn_profit__${ticketId}`).setLabel("Different Profit").setStyle(ButtonStyle.Secondary));
 }
 function ownerProfitEmbed(t,late){
+  const profitText=t.profitConfirmedDefault?`**${fmtUSD(t.profitAmount)}** (confirmed)`:`**${fmtUSD(t.profitAmount)}** (changed from ${fmtUSD(t.profitDefault)})`;
   return new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  \u00b7  Profit Share",iconURL:IMG.LOGO})
     .setTitle(`Owed: ${fmtUSD(t.ownerCut)}`)
-    .setDescription(`<@${t.completedBy}> reported **${fmtUSD(t.profitAmount)}** profit on a **${_dealLine(t)}** deal${late?" (reported late)":""}.`)
-    .addFields(
-      {name:"Exchanger",value:`<@${t.completedBy}>`,inline:true},
-      {name:"Their Profit",value:fmtUSD(t.profitAmount),inline:true},
-      {name:`Your ${_sharePct}%`,value:fmtUSD(t.ownerCut),inline:true},
-      {name:"Client",value:`<@${t.userId}>`,inline:true})
+    .setDescription(`<@${t.completedBy}> \u00b7 ${_dealLine(t)} \u00b7 client <@${t.userId}>\nProfit ${profitText} \u2192 your ${_sharePct}%${late?" \u00b7 reported late":""}`)
     .setTimestamp();
 }
 function noReplyEmbed(t){
   return new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange  \u00b7  Profit Share",iconURL:IMG.LOGO})
-    .setTitle("No Profit Reported")
-    .setDescription(`<@${t.completedBy}> hasn't reported profit for a **${_dealLine(t)}** deal completed <t:${Math.floor((t.completedAt||t.profitRequestedAt)/1000)}:R>.`)
-    .addFields({name:"Exchanger",value:`<@${t.completedBy}>`,inline:true},{name:"Client",value:`<@${t.userId}>`,inline:true})
-    .setFooter({text:"They can still report it \u2014 you'll get a DM if they do"}).setTimestamp();
+    .setTitle("No Response")
+    .setDescription(`<@${t.completedBy}> hasn't confirmed the split for a **${_dealLine(t)}** deal.\nExpected: **${fmtUSD(t.profitDefaultCut)}** (${_sharePct}% of the ${fmtUSD(t.profitDefault)} fee).`)
+    .setFooter({text:"They can still respond \u2014 you'll get a DM"}).setTimestamp();
 }
 function dmFailedEmbed(t){
   return new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange  \u00b7  Profit Share",iconURL:IMG.LOGO})
     .setTitle("Couldn't DM Exchanger")
-    .setDescription(`<@${t.completedBy}> has their DMs closed, so the profit request wasn't delivered for a **${_dealLine(t)}** deal. Ask them for their profit directly.`)
-    .addFields({name:"Exchanger",value:`<@${t.completedBy}>`,inline:true},{name:"Client",value:`<@${t.userId}>`,inline:true})
+    .setDescription(`<@${t.completedBy}>'s DMs are closed, so the split wasn't delivered for a **${_dealLine(t)}** deal.\nExpected: **${fmtUSD(t.profitDefaultCut)}** (${_sharePct}% of the ${fmtUSD(t.profitDefault)} fee).`)
     .setTimestamp();
 }
 // DMs every recipient in PROFIT_DM_IDS; resolves to how many actually received it
@@ -503,7 +500,7 @@ async function notifyProfitOwners(embed){
   const results=await Promise.allSettled(PROFIT_DM_IDS.map(async id=>{const u=await client.users.fetch(id);await u.send({embeds:[embed]});}));
   return results.filter(r=>r.status==="fulfilled").length;
 }
-// Called when a deal completes: asks the exchanger who was credited for their profit
+// Called once a deal is finalized: asks the exchanger who was credited to confirm the split
 async function requestProfit(guild,ticketId,channelName){
   const t=(_mem.tickets||{})[ticketId];
   if(!t||!t.completedBy||t.profitRequestedAt)return;                 // nobody to ask, or already asked
@@ -511,6 +508,7 @@ async function requestProfit(guild,ticketId,channelName){
   const member=guild&&guild.members&&guild.members.cache?guild.members.cache.get(exId):null;
   if(PROFIT_DM_IDS.includes(exId)||isOwner(exId,member))return;      // owners don't owe themselves
   t.profitRequestedAt=Date.now();t.profitChannelName=channelName||null;
+  t.profitDefault=defaultProfit(t);t.profitDefaultCut=ownerCut(t.profitDefault);
   save("tickets",_mem.tickets);
   let delivered=false;
   try{
@@ -525,24 +523,47 @@ async function requestProfit(guild,ticketId,channelName){
     await notifyProfitOwners(dmFailedEmbed(t));
   }
 }
-// Exchanger presses "Enter Profit" in their DM
+// Saves the final number, shows the exchanger their receipt, DMs the owner
+async function recordProfit(interaction,t,profit){
+  const late=!!t.profitOwnerNotified;                                 // the owner was already told they hadn't replied
+  t.profitAmount=_r2(profit);
+  t.ownerCut=ownerCut(profit);
+  t.profitConfirmedDefault=t.profitAmount===_r2(t.profitDefault);
+  t.profitReportedAt=Date.now();
+  save("tickets",_mem.tickets);
+  const done=new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Split Recorded")
+    .setDescription(`Profit **${fmtUSD(t.profitAmount)}** \u2192 you owe **${PROFIT_PAYEE}** **${fmtUSD(t.ownerCut)}**.`)
+    .setFooter({text:"Thanks \u2014 the owner has been notified"}).setTimestamp();
+  const canUpdate=(typeof interaction.isButton==="function"&&interaction.isButton())||(typeof interaction.isFromMessage==="function"&&interaction.isFromMessage());
+  if(canUpdate)await interaction.update({embeds:[done],components:[]}).catch(()=>{});
+  else await interaction.reply({embeds:[done],flags:64}).catch(()=>{});
+  await notifyProfitOwners(ownerProfitEmbed(t,late));
+}
+// "Confirm Split": accept the default (40% of the fee)
+async function confirmProfitSplit(interaction){
+  const tid=interaction.customId.slice("btn_profitok__".length);
+  const t=(_mem.tickets||{})[tid];
+  if(!t||t.completedBy!==interaction.user.id)return interaction.reply({content:"This isn't your deal to confirm.",flags:64});
+  if(t.profitReportedAt)return interaction.reply({content:"You already confirmed this deal.",flags:64});
+  return recordProfit(interaction,t,t.profitDefault);
+}
+// "Different Profit": open the form
 async function openProfitModal(interaction){
   const tid=interaction.customId.slice("btn_profit__".length);
   const t=(_mem.tickets||{})[tid];
   if(!t||t.completedBy!==interaction.user.id)return interaction.reply({content:"This isn't your deal to report.",flags:64});
-  if(t.profitReportedAt)return interaction.reply({content:"You already reported profit for this deal.",flags:64});
-  const modal=new ModalBuilder().setCustomId(`modal_profit__${tid}`).setTitle("Report Profit");
+  if(t.profitReportedAt)return interaction.reply({content:"You already confirmed this deal.",flags:64});
+  const modal=new ModalBuilder().setCustomId(`modal_profit__${tid}`).setTitle("Actual Profit");
   modal.addComponents(new ActionRowBuilder().addComponents(
     new TextInputBuilder().setCustomId("inp_profit").setLabel("Profit on this deal (USD)").setStyle(TextInputStyle.Short)
       .setPlaceholder("e.g. 12.50  \u2014  enter 0 if none").setMinLength(1).setMaxLength(12).setRequired(true)));
   return interaction.showModal(modal);
 }
-// Exchanger submits the amount
 async function submitProfit(interaction){
   const tid=interaction.customId.slice("modal_profit__".length);
   const t=(_mem.tickets||{})[tid];
   if(!t||t.completedBy!==interaction.user.id)return interaction.reply({content:"This isn't your deal to report.",flags:64});
-  if(t.profitReportedAt)return interaction.reply({content:"You already reported profit for this deal.",flags:64});
+  if(t.profitReportedAt)return interaction.reply({content:"You already confirmed this deal.",flags:64});
   const raw=String(interaction.fields.getTextInputValue("inp_profit")||"").replace(/[$,\s]/g,"");
   const profit=Number(raw);
   const deal=parseFloat(t.amountUSD)||0;
@@ -550,22 +571,9 @@ async function submitProfit(interaction){
     return interaction.reply({content:"Enter a number like **12.50** \u2014 or **0** if you made nothing. Press the button to try again.",flags:64});
   if(profit>deal+0.005)
     return interaction.reply({content:`That's more than the whole deal (${fmtUSD(deal)}). Check the number and press the button to try again.`,flags:64});
-  const late=!!t.profitOwnerNotified;                                 // the owner was already told they hadn't replied
-  t.profitAmount=Math.round(profit*100)/100;
-  t.ownerCut=ownerCut(profit);
-  t.profitReportedAt=Date.now();
-  save("tickets",_mem.tickets);
-  const done=new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Profit Recorded")
-    .addFields(
-      {name:"Your Profit",value:fmtUSD(t.profitAmount),inline:true},
-      {name:`Konvert's ${_sharePct}%`,value:fmtUSD(t.ownerCut),inline:true},
-      {name:"You Keep",value:fmtUSD(Math.round((t.profitAmount-t.ownerCut)*100)/100),inline:true})
-    .setFooter({text:"Thanks \u2014 the owner has been notified"}).setTimestamp();
-  if(typeof interaction.isFromMessage==="function"&&interaction.isFromMessage())await interaction.update({embeds:[done],components:[]}).catch(()=>{});
-  else await interaction.reply({embeds:[done],flags:64}).catch(()=>{});
-  await notifyProfitOwners(ownerProfitEmbed(t,late));
+  return recordProfit(interaction,t,profit);
 }
-// Runs every 10 minutes (and once at startup): tells the owner about exchangers who never replied
+// Runs every 10 minutes (and once at startup): tells the owner about exchangers who never responded
 let _profitSweepRunning=false;
 async function sweepProfitReplies(){
   if(_profitSweepRunning)return;
@@ -586,7 +594,8 @@ async function sweepProfitReplies(){
 
 // ── Ticket claim system ──────────────────────────────────────
 const MM_SERVICES="**Jace's MM**, **Halal MM**, or **Astro MM**";
-const MM_CONFIRM_MS=30*60*1000;   // the client has 30 minutes to confirm a required middleman
+const REMIND_COOLDOWN_MS=2*60*1000;       // an exchanger can nudge the client once every 2 minutes
+const _remindAt=new Map();
 const _money=n=>"$"+Number(n).toLocaleString("en-US",{maximumFractionDigits:2});
 const _CLAIM_PERMS={ViewChannel:true,SendMessages:true,ReadMessageHistory:true,AttachFiles:true,EmbedLinks:true};
 
@@ -605,9 +614,9 @@ function parseExchangerLimit(member){
   return null;
 }
 function describeLimit(lim){
-  if(lim&&lim.mm)return {limitText:"Use MM Always",rule:`This exchanger works through a middleman only. Don't send anything first \u2014 use ${MM_SERVICES}.`};
-  if(lim)return {limitText:_money(lim.amount),rule:`Don't send more than **${_money(lim.amount)}** first. Anything above that needs a middleman: ${MM_SERVICES}.`};
-  return {limitText:"Not listed",rule:`No go-first limit is listed on this exchanger's name. Ask them to confirm it here, and use a middleman for anything above it: ${MM_SERVICES}.`};
+  if(lim&&lim.mm)return {limitText:"Use MM Always",rule:`This exchanger always uses a middleman (${MM_SERVICES}). Don't send anything first.`};
+  if(lim)return {limitText:_money(lim.amount),rule:`Go-first limit: **${_money(lim.amount)}**. Above that, use a middleman (${MM_SERVICES}).`};
+  return {limitText:"Not listed",rule:`No go-first limit is listed. Ask the exchanger to confirm it, and use a middleman (${MM_SERVICES}) above it.`};
 }
 
 // ---- One panel message; its buttons always follow the ticket's real state ----
@@ -617,27 +626,34 @@ function claimRow(){
     new ButtonBuilder().setCustomId("btn_close").setLabel("Close Ticket").setEmoji("\uD83D\uDD12").setStyle(ButtonStyle.Danger)
   );
 }
+function flagButton(){return new ButtonBuilder().setCustomId("btn_report").setLabel("Flag Ticket").setEmoji("\u26A0\uFE0F").setStyle(ButtonStyle.Danger);}
+function remindButton(){return new ButtonBuilder().setCustomId("btn_remind").setLabel("Remind").setStyle(ButtonStyle.Secondary);}
 function mmConfirmRow(){
   return new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("btn_mmconfirm").setLabel("I Understand \u2014 Using a Middleman").setStyle(ButtonStyle.Success)
-  );
+    new ButtonBuilder().setCustomId("btn_mmconfirm").setLabel("Confirm Middleman").setStyle(ButtonStyle.Success),
+    remindButton());
+}
+function issueButton(label){return new ButtonBuilder().setCustomId("btn_report").setLabel(label).setEmoji("\u26A0\uFE0F").setStyle(ButtonStyle.Danger);}
+function completionRow(){
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("btn_confirmdone").setLabel("Confirm Completion").setStyle(ButtonStyle.Success),
+    issueButton("Report Issue"));
 }
 function panelRow(ticket){
   if(ticket.status&&ticket.status!=="open")return null;           // finished: no buttons
   if(!ticket.claimedBy)return claimRow();                          // waiting for an exchanger
   const close=new ButtonBuilder().setCustomId("btn_close").setLabel("Close Ticket").setEmoji("\uD83D\uDD12").setStyle(ButtonStyle.Danger);
-  if(ticket.reported)return new ActionRowBuilder().addComponents(close);   // frozen, waiting on an owner
-  const help=new ButtonBuilder().setCustomId("btn_report").setLabel("Get Help").setStyle(ButtonStyle.Secondary);
-  if(ticket.mmPending)return new ActionRowBuilder().addComponents(help,close);   // waiting on the client's middleman confirmation
+  if(ticket.reported)return new ActionRowBuilder().addComponents(close);                       // frozen, waiting on an owner
+  if(ticket.mmPending||ticket.completionPending)return new ActionRowBuilder().addComponents(flagButton(),close);   // waiting on the client
   const done=new ButtonBuilder().setCustomId("btn_done").setLabel("Mark Complete").setEmoji("\u2705").setStyle(ButtonStyle.Success);
-  return new ActionRowBuilder().addComponents(done,help,close);
+  return new ActionRowBuilder().addComponents(done,flagButton(),close);
 }
 async function findPanelMessage(channel,ticket){
   if(ticket.panelMessageId){const m=await channel.messages.fetch(ticket.panelMessageId).catch(()=>null);if(m)return m;}
-  // Older tickets don't have the id saved: find the bot's panel in recent messages
+  // Older tickets don't have the id saved: find the bot's panel (it carries Claim or Mark Complete)
   const recent=await channel.messages.fetch({limit:50}).catch(()=>null);
   if(!recent)return null;
-  const IDS=new Set(["btn_claim","btn_done","btn_report"]);
+  const IDS=new Set(["btn_claim","btn_done"]);
   const m=recent.find(x=>x.author&&client.user&&x.author.id===client.user.id&&(x.components||[]).some(r=>(r.components||[]).some(c=>IDS.has(c.customId))));
   if(m)ticket.panelMessageId=m.id;
   return m||null;
@@ -650,33 +666,37 @@ async function refreshPanel(channel,ticket){
     await msg.edit({components:row?[row]:[]});
   }catch(e){console.error("[panel] refresh failed:",e.message);}
 }
+// Strips the buttons off any confirmation message that is no longer relevant
+async function clearConfirmButtons(channel,ticket){
+  for(const id of [ticket.completionMessageId,ticket.mmPending?ticket.claimMessageId:null,ticket.checkinAnswered?null:ticket.checkinMessageId]){
+    if(!id)continue;
+    const m=await channel.messages.fetch(id).catch(()=>null);
+    if(m)await m.edit({components:[]}).catch(()=>{});
+  }
+}
 
 // ---- The "claimed" announcement ----
 function buildClaimEmbed(ticket,mode){
   const ex=ticket.claimedBy,cl=ticket.userId;
-  const {limitText,rule}=describeLimit(ticket.claimLimit||null);
   const e=new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO});
-  const help="Something wrong? Press Get Help and the exchanger is frozen until an owner steps in.";
   if(mode==="normal"){
+    const {rule}=describeLimit(ticket.claimLimit||null);
     return e.setTitle("Ticket Claimed")
-      .setDescription(`<@${cl}>, your ticket was claimed by <@${ex}>.\n\n${rule}`)
-      .addFields({name:"Exchanger",value:`<@${ex}>`,inline:true},{name:"Go-First Limit",value:limitText,inline:true})
-      .setFooter({text:help}).setTimestamp();
+      .setDescription(`<@${cl}>, your ticket was claimed by <@${ex}>.\n${rule}`)
+      .setFooter({text:"Something wrong? Press Flag Ticket."}).setTimestamp();
   }
-  const confirmed=mode==="mmConfirmed";
-  const why=ticket.mmReason||"This trade is above their go-first limit";
-  return e.setTitle(confirmed?"Ticket Claimed \u2014 Middleman Confirmed":"Ticket Claimed \u2014 Middleman Required")
-    .setDescription(confirmed
-      ?`<@${cl}>, your ticket was claimed by <@${ex}>.\n\nBoth of you confirmed a middleman will be used: ${MM_SERVICES}. Don't send anything to each other directly.`
-      :`<@${cl}>, your ticket was claimed by <@${ex}>.\n\n${why}, so a **middleman is required**. Use ${MM_SERVICES} \u2014 do **not** send anything to the exchanger directly.\n\n<@${cl}>, press the button below to confirm you understand. <@${ex}> can't message until you do.`)
-    .addFields(
-      {name:"Trade",value:_money(parseFloat(ticket.amountUSD)||0),inline:true},
-      {name:"Go-First Limit",value:limitText,inline:true},
-      {name:"Confirmations",value:`Exchanger \u2014 confirmed\nClient \u2014 ${confirmed?"confirmed":"waiting"}`,inline:false})
-    .setFooter({text:confirmed?help:"Releases automatically in 30 minutes if not confirmed  \u2022  Press Get Help if something's wrong"}).setTimestamp();
+  if(mode==="mmConfirmed"){
+    return e.setTitle("Middleman Confirmed")
+      .setDescription(`<@${cl}> and <@${ex}> both confirmed a middleman (${MM_SERVICES}). Don't send anything to each other directly.`)
+      .setFooter({text:"Something wrong? Press Flag Ticket."}).setTimestamp();
+  }
+  const why=ticket.mmReason||"This trade needs a middleman.";
+  return e.setTitle("Middleman Required")
+    .setDescription(`<@${cl}>, your ticket was claimed by <@${ex}>.\n${why} Use ${MM_SERVICES} \u2014 don't send anything to the exchanger directly.\n\n<@${cl}>, press **Confirm Middleman** to continue.`)
+    .setFooter({text:"Exchanger confirmed  \u2022  waiting for the client"}).setTimestamp();
 }
 
-// ---- Exchanger suspension (triggered by the client's Get Help button) ----
+// ---- Exchanger suspension (triggered by the client's Flag Ticket button) ----
 function isSuspended(userId){return !!(_mem.suspensions&&_mem.suspensions[userId]);}
 // Open ticket channels that still exist, skipping tickets where this person is the *client*
 function _openTicketChannels(guild,exceptClientId){
@@ -724,35 +744,34 @@ async function reportTicket(interaction,ticket,tickets,reason){
     save("suspensions",_mem.suspensions);
     await lockExchangerEverywhere(guild,exId);
   }
-  // Panel drops to just "Close Ticket"; a pending middleman button can't be confirmed anymore
-  await refreshPanel(ch,ticket);
-  if(ticket.mmPending&&ticket.claimMessageId){
-    const cm=await ch.messages.fetch(ticket.claimMessageId).catch(()=>null);
+  await refreshPanel(ch,ticket);   // the panel drops to just "Close Ticket"
+  if(ticket.checkinMessageId&&!ticket.checkinAnswered){
+    const cm=await ch.messages.fetch(ticket.checkinMessageId).catch(()=>null);
     if(cm)await cm.edit({components:[]}).catch(()=>{});
+    ticket.checkinAnswered="reported";save("tickets",_mem.tickets);
   }
 
   const owners=CONFIG.OWNER_IDS;
+  const clean=String(reason).replace(/\s+/g," ").trim().slice(0,300);
   const desc=exempt
-    ?`<@${ticket.userId}> asked for help with this exchange. An owner will review it.`
-    :`<@${ticket.userId}> asked for help with this exchange.\n\n<@${exId}> is frozen \u2014 they can't message or take any action in tickets until an owner reviews this.\n\n**Do not send any more funds in this ticket** until an owner replies.`;
+    ?`<@${ticket.userId}> flagged this ticket. An owner will review it.\n> ${clean}`
+    :`<@${ticket.userId}> flagged this ticket. <@${exId}> is frozen until an owner reviews it.\n**Don't send any more funds.**\n> ${clean}`;
   await ch.send({
     content:owners.map(id=>`<@${id}>`).join(" "),
-    embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange  \u00b7  Get Help",iconURL:IMG.LOGO}).setTitle("Help Requested")
-      .setDescription(desc).addFields({name:"What happened",value:reason.slice(0,1000)})
-      .setFooter({text:"Konvert Exchange  \u2022  Pending owner review"}).setTimestamp()],
+    embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("\u26A0\uFE0F Ticket Flagged")
+      .setDescription(desc).setTimestamp()],
     allowedMentions:{users:owners}
   }).catch(()=>{});
 
   const link=`https://discord.com/channels/${guild.id}/${ch.id}`;
   for(const oid of owners){
     client.users.fetch(oid).then(u=>u.send({embeds:[new EmbedBuilder().setColor(0xef4444)
-      .setAuthor({name:"Konvert Exchange  \u00b7  Get Help",iconURL:IMG.LOGO})
-      .setTitle(exempt?"Help Requested (Owner Exchanger)":"Exchanger Frozen \u2014 Review Needed")
-      .setDescription(`[Open the ticket](${link})`)
-      .addFields({name:"Client",value:`<@${ticket.userId}>`,inline:true},{name:"Exchanger",value:`<@${exId}>`,inline:true},{name:"Amount",value:_money(parseFloat(ticket.amountUSD)||0),inline:true},{name:"What happened",value:reason.slice(0,1000)},{name:"To resolve",value:"`/reinstate` lifts the freeze. `/suspended` lists everyone pending."})
+      .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
+      .setTitle("\u26A0\uFE0F Ticket Flagged")
+      .setDescription(`[Open ticket](${link})\n<@${ticket.userId}> flagged <@${exId}> \u00b7 ${_money(parseFloat(ticket.amountUSD)||0)}\n> ${clean}${exempt?"":"\n\n`/reinstate` lifts the freeze."}`)
       .setTimestamp()]})).catch(()=>{});
   }
-  log(guild,`HELP: #${ch.name} | client ${ticket.userId} | exchanger ${exId}${exempt?" (owner - not frozen)":" frozen"} | ${reason.slice(0,150)}`);
+  log(guild,`FLAG: #${ch.name} | client ${ticket.userId} | exchanger ${exId}${exempt?" (owner - not frozen)":" frozen"} | ${clean.slice(0,150)}`);
   return {exempt};
 }
 
@@ -772,27 +791,27 @@ async function claimTicket(interaction,opts={}){
   if(isSuspended(interaction.user.id)&&!owner)
     return interaction.reply({content:"Your exchanger access is suspended pending owner review, so you can't claim tickets.",flags:64});
 
-  // Does this claim need a middleman? (over their limit, already at their limit across tickets, or "Use MM Always")
+  // Does this claim need a middleman? Over their limit, over it in total across open tickets, or "Use MM Always".
   const lim=parseExchangerLimit(interaction.member);
   const amt=parseFloat(ticket.amountUSD)||0;
   let mmReason=null,warnText=null;
   if(!owner&&lim){
     if(lim.mm){
-      mmReason="This exchanger works through a middleman only";
+      mmReason="This exchanger always uses a middleman.";
       warnText="Your name says **Use MM Always**.";
     }else if(amt>lim.amount+0.005){
-      mmReason="This trade is above their go-first limit";
-      warnText=`This ticket is **${_money(amt)}**, above your **${_money(lim.amount)}** limit.`;
+      mmReason=`This trade is above their **${_money(lim.amount)}** go-first limit.`;
+      warnText=`This ticket (**${_money(amt)}**) is above your **${_money(lim.amount)}** limit.`;
     }else{
       let held=0;
       for(const [cid,t] of Object.entries(tickets)){
-        // middleman tickets carry no go-first risk, and tickets whose channel is gone don't count
+        // open tickets only (a ticket stays open until the client confirms it's complete); middleman tickets carry no go-first risk
         if(cid===ch.id||!t||t.status!=="open"||t.claimedBy!==interaction.user.id||t.mmRequired)continue;
         if(interaction.guild.channels.cache.has(cid))held+=parseFloat(t.amountUSD)||0;
       }
       if(held+amt>lim.amount+0.005){
-        mmReason="This exchanger is already at their go-first limit across other tickets";
-        warnText=`You already have **${_money(held)}** open, so this would put you at **${_money(held+amt)}** \u2014 over your **${_money(lim.amount)}** limit.`;
+        mmReason=`They're at their **${_money(lim.amount)}** go-first limit across other tickets.`;
+        warnText=`You have **${_money(held)}** open \u2014 this would bring you to **${_money(held+amt)}**, over your **${_money(lim.amount)}** limit.`;
       }
     }
   }
@@ -802,7 +821,7 @@ async function claimTicket(interaction,opts={}){
   if(needsMm&&!opts.mmConfirmed){
     return interaction.reply({
       embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Middleman Required")
-        .setDescription(`${warnText}\n\nYou can still take this ticket, but only through a middleman (${MM_SERVICES}). The client has to confirm too, and you won't be able to message until they do. You can't go first.`)],
+        .setDescription(`${warnText}\n\nYou can still take it through a middleman (${MM_SERVICES}). The client must confirm first, and you can't message until they do.`)],
       components:[new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId("btn_mmclaim").setLabel("Claim with Middleman").setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId("btn_mmcancel").setLabel("Cancel").setStyle(ButtonStyle.Secondary))],
@@ -814,7 +833,7 @@ async function claimTicket(interaction,opts={}){
   ticket.claimedBy=interaction.user.id;
   ticket.claimedAt=Date.now();
   ticket.claimLimit=lim?(lim.mm?{mm:true}:{amount:lim.amount}):null;
-  if(needsMm){ticket.mmRequired=true;ticket.mmPending=true;ticket.mmPendingUntil=Date.now()+MM_CONFIRM_MS;ticket.mmReason=mmReason;}
+  if(needsMm){ticket.mmRequired=true;ticket.mmPending=true;ticket.mmReason=mmReason;}
   await interaction.deferUpdate().catch(()=>{});
   if(!needsMm){
     try{
@@ -827,6 +846,7 @@ async function claimTicket(interaction,opts={}){
     }
   }
   // middleman claims: the exchanger stays view-only until the client confirms
+  if(!needsMm)scheduleCheckin(ticket);
   _mem.tickets=tickets;save("tickets",tickets);
   await refreshPanel(ch,ticket);
 
@@ -839,10 +859,10 @@ async function claimTicket(interaction,opts={}){
   const sent=await ch.send(payload).catch(()=>null);
   if(sent){ticket.claimMessageId=sent.id;_mem.tickets=tickets;save("tickets",tickets);}
   if(fromEphemeral)await interaction.editReply({content:needsMm?"You claimed this ticket. Waiting for the client to confirm the middleman.":"You claimed this ticket.",embeds:[],components:[]}).catch(()=>{});
-  log(interaction.guild,`CLAIM: #${ch.name} | ${interaction.user.tag} | client <@${ticket.userId}> | ${needsMm?"MIDDLEMAN: "+mmReason:"limit "+describeLimit(ticket.claimLimit).limitText}`);
+  log(interaction.guild,`CLAIM: #${ch.name} | ${interaction.user.tag} | client <@${ticket.userId}> | ${needsMm?"MIDDLEMAN":"limit "+describeLimit(ticket.claimLimit).limitText}`);
 }
 
-// Client presses "I Understand" on a middleman claim: unlocks the exchanger
+// Client presses "Confirm Middleman": unlocks the exchanger
 async function confirmMiddleman(interaction){
   const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
   const ch=interaction.channel;
@@ -850,57 +870,166 @@ async function confirmMiddleman(interaction){
   if(!ticket||ticket.status!=="open")return interaction.reply({content:"This ticket is no longer open.",flags:64});
   if(interaction.user.id!==ticket.userId)return interaction.reply({content:"Only the client can confirm this.",flags:64});
   if(!ticket.claimedBy||!ticket.mmPending)return interaction.reply({content:"There's nothing to confirm right now.",flags:64});
-  if(ticket.reported)return interaction.reply({content:"A help request is pending on this ticket, so it can't be confirmed right now.",flags:64});
+  if(ticket.reported)return interaction.reply({content:"This ticket is flagged \u2014 an owner needs to review it first.",flags:64});
   if(isSuspended(ticket.claimedBy))return interaction.reply({content:"This exchanger is currently frozen pending owner review.",flags:64});
   await interaction.deferUpdate().catch(()=>{});
-  const prevUntil=ticket.mmPendingUntil;
-  ticket.mmPending=false;ticket.mmConfirmedAt=Date.now();delete ticket.mmPendingUntil;
+  ticket.mmPending=false;ticket.mmConfirmedAt=Date.now();
   try{
     await ch.permissionOverwrites.edit(ticket.claimedBy,_CLAIM_PERMS,{type:1});
   }catch(e){
-    ticket.mmPending=true;delete ticket.mmConfirmedAt;ticket.mmPendingUntil=prevUntil;
+    ticket.mmPending=true;delete ticket.mmConfirmedAt;
     console.error("[mm] unlock failed:",e.message);
     return interaction.followUp({content:"Couldn't unlock the exchanger (permission update failed). Press the button again.",flags:64}).catch(()=>{});
   }
+  scheduleCheckin(ticket);
   _mem.tickets=tickets;save("tickets",tickets);
   await interaction.editReply({embeds:[buildClaimEmbed(ticket,"mmConfirmed")],components:[]}).catch(()=>{});
   await refreshPanel(ch,ticket);
-  await ch.send({content:`<@${ticket.claimedBy}> You're unlocked \u2014 both of you confirmed the middleman. You can chat now.`,allowedMentions:{users:[ticket.claimedBy]}}).catch(()=>{});
+  await ch.send({content:`<@${ticket.claimedBy}> You can chat now.`,allowedMentions:{users:[ticket.claimedBy]}}).catch(()=>{});
   log(interaction.guild,`MM CONFIRMED: #${ch.name} | client <@${ticket.userId}> | exchanger <@${ticket.claimedBy}>`);
 }
 
-// Gives a ticket back to the queue (used by $unclaim and by the middleman timeout)
-async function releaseClaim(channel,ticket,tickets,{by=null,auto=false}={}){
+// ---- Completion: the exchanger marks it, the client confirms (or flags) ----
+function completionEmbed(ticket){
+  return new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
+    .setTitle("Confirm Completion")
+    .setDescription(`<@${ticket.userId}>, <@${ticket.claimedBy}> marked this exchange complete.\nConfirm if everything went through, or report an issue.`)
+    .setFooter({text:"Reporting an issue freezes the exchanger until an owner reviews it."}).setTimestamp();
+}
+async function requestCompletion(channel,ticket,tickets){
+  if(ticket.completionPending)return false;
+  ticket.completionPending=true;ticket.completionRequestedAt=Date.now();
+  tickets[channel.id]=ticket;_mem.tickets=tickets;save("tickets",tickets);
+  const sent=await channel.send({content:`<@${ticket.userId}>`,embeds:[completionEmbed(ticket)],components:[completionRow()],allowedMentions:{users:[ticket.userId]}}).catch(()=>null);
+  if(!sent){
+    ticket.completionPending=false;delete ticket.completionRequestedAt;
+    save("tickets",_mem.tickets);
+    return false;
+  }
+  ticket.completionMessageId=sent.id;
+  save("tickets",_mem.tickets);
+  await refreshPanel(channel,ticket);
+  return true;
+}
+async function confirmCompletion(interaction){
+  const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
+  const ch=interaction.channel;
+  const ticket=tickets[ch.id];
+  if(!ticket||ticket.status!=="open")return interaction.reply({content:"This ticket is no longer open.",flags:64});
+  if(interaction.user.id!==ticket.userId)return interaction.reply({content:"Only the client can confirm this.",flags:64});
+  if(!ticket.completionPending||!ticket.claimedBy)return interaction.reply({content:"There's nothing to confirm right now.",flags:64});
+  if(ticket.reported)return interaction.reply({content:"This ticket is flagged \u2014 an owner needs to review it first.",flags:64});
+  await interaction.deferUpdate().catch(()=>{});
+  ticket.completionPending=false;ticket.completionConfirmedAt=Date.now();delete ticket.completionMessageId;
+  await interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Completion Confirmed")
+    .setDescription(`<@${ticket.userId}> confirmed the exchange.`).setTimestamp()],components:[]}).catch(()=>{});
+  // Finalize as the exchanger who handled it, so stats, receipts and the profit DM all credit the right person
+  ticket._overrideExchangerId=ticket.claimedBy;
+  const exUser=await client.users.fetch(ticket.claimedBy).catch(()=>({id:ticket.claimedBy,tag:ticket.claimedBy,username:ticket.claimedBy}));
+  const exMember=interaction.guild?await interaction.guild.members.fetch(ticket.claimedBy).catch(()=>null):null;
+  const proxy={_fake:true,guild:interaction.guild,channel:ch,user:exUser,member:exMember,deferred:true,replied:false,editReply:async()=>{},followUp:async()=>{}};
+  await completeTrade(proxy,ticket,tickets);
+}
+
+// Exchanger nudges the client without needing to type
+async function remindClient(interaction){
+  const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
+  const ch=interaction.channel;
+  const ticket=tickets[ch.id];
+  if(!ticket||ticket.status!=="open")return interaction.reply({content:"This ticket is no longer open.",flags:64});
+  const owner=isOwner(interaction.user.id,interaction.member);
+  if(!owner&&interaction.user.id!==ticket.claimedBy)return interaction.reply({content:"Only the exchanger on this ticket can send a reminder.",flags:64});
+  if(isSuspended(interaction.user.id)&&!owner)return interaction.reply({content:"Your exchanger access is suspended pending owner review.",flags:64});
+  if(ticket.reported)return interaction.reply({content:"This ticket is flagged.",flags:64});
+  if(!ticket.mmPending)return interaction.reply({content:"Nothing is waiting on the client.",flags:64});
+  const what="confirm the middleman",msgId=ticket.claimMessageId;
+  const wait=REMIND_COOLDOWN_MS-(Date.now()-(_remindAt.get(ch.id)||0));
+  if(wait>0)return interaction.reply({content:`You can remind the client again in ${Math.ceil(wait/1000)}s.`,flags:64});
+  _remindAt.set(ch.id,Date.now());
+  await interaction.deferUpdate().catch(()=>{});
+  const link=msgId&&interaction.guild?`https://discord.com/channels/${interaction.guild.id}/${ch.id}/${msgId}`:null;
+  await ch.send({content:`<@${ticket.userId}> <@${ticket.claimedBy}> is waiting for you to ${link?`[${what}](${link})`:what}.`,allowedMentions:{users:[ticket.userId]}}).catch(()=>{});
+}
+
+// ---- Random "Is everything okay?" check-in: one per ticket, at an unpredictable time ----
+const CHECKIN_MIN_MS=5*60*1000, CHECKIN_MAX_MS=15*60*1000;   // after the exchanger is able to talk
+let _checkinSweepRunning=false;
+function scheduleCheckin(ticket,rnd=Math.random){
+  if(ticket.checkinAt||ticket.checkinSentAt)return;
+  ticket.checkinAt=Date.now()+CHECKIN_MIN_MS+Math.floor(rnd()*(CHECKIN_MAX_MS-CHECKIN_MIN_MS));
+}
+function checkinEmbed(t){
+  return new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
+    .setTitle("Is everything okay?")
+    .setDescription(`<@${t.userId}>, how is your exchange with <@${t.claimedBy}> going?`)
+    .setFooter({text:"Press No to report an issue \u2014 the exchanger is frozen until an owner reviews it."}).setTimestamp();
+}
+function checkinRow(){
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("btn_checkin_ok").setLabel("Yes, all good").setStyle(ButtonStyle.Success),
+    issueButton("No, report issue"));
+}
+// Runs every minute (and once at startup): posts the check-in when a ticket's random time arrives
+async function sweepCheckins(guild){
+  if(_checkinSweepRunning)return;
+  _checkinSweepRunning=true;
+  try{
+    const now=Date.now(),due=[];let changed=false;
+    for(const [cid,t] of Object.entries(_mem.tickets||{})){
+      if(!t||t.status!=="open"||!t.claimSystem||!t.claimedBy||t.checkinSentAt)continue;
+      if(t.mmPending||t.completionPending||t.reported)continue;          // already waiting on the client, or frozen
+      if(CONFIG.OWNER_IDS.includes(t.claimedBy))continue;                // owners are trusted
+      if(!t.checkinAt){scheduleCheckin(t);changed=true;continue;}         // claimed before check-ins existed
+      if(t.checkinAt>now)continue;
+      const ch=guild.channels.cache.get(cid);
+      if(!ch)continue;
+      t.checkinSentAt=now;changed=true;due.push([ch,t]);                  // mark first so overlapping runs can't double-post
+    }
+    if(changed)save("tickets",_mem.tickets);
+    for(const [ch,t] of due){
+      const sent=await ch.send({content:`<@${t.userId}>`,embeds:[checkinEmbed(t)],components:[checkinRow()],allowedMentions:{users:[t.userId]}}).catch(()=>null);
+      if(sent)t.checkinMessageId=sent.id;
+      else{delete t.checkinSentAt;t.checkinAt=Date.now()+60*1000;}       // couldn't post: try again in a minute
+      save("tickets",_mem.tickets);
+    }
+  }finally{_checkinSweepRunning=false;}
+}
+// Client answers "Yes, all good" (the "No" button is the normal report flow)
+async function answerCheckin(interaction){
+  const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
+  const ticket=tickets[interaction.channel.id];
+  if(!ticket||ticket.status!=="open")return interaction.reply({content:"This ticket is no longer open.",flags:64});
+  if(interaction.user.id!==ticket.userId)return interaction.reply({content:"Only the client can answer this.",flags:64});
+  if(ticket.checkinAnswered)return interaction.reply({content:"Already answered.",flags:64});
+  await interaction.deferUpdate().catch(()=>{});
+  ticket.checkinAnswered="ok";
+  save("tickets",_mem.tickets);
+  await interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
+    .setTitle("Check-In").setDescription(`<@${ticket.userId}> says everything is fine.`).setTimestamp()],components:[]}).catch(()=>{});
+}
+
+// Gives a ticket back to the queue (used by $unclaim)
+async function releaseClaim(channel,ticket,tickets,{by=null}={}){
   const prev=ticket.claimedBy;
   if(!prev)return false;
-  const claimMsgId=ticket.claimMessageId;
+  const staleMsgs=[ticket.claimMessageId,ticket.completionMessageId,ticket.checkinMessageId].filter(Boolean);
   delete ticket.claimedBy;delete ticket.claimedAt;delete ticket.claimLimit;delete ticket.reported;
   delete ticket.mmRequired;delete ticket.mmPending;delete ticket.mmPendingUntil;delete ticket.mmConfirmedAt;delete ticket.mmReason;delete ticket.claimMessageId;
+  delete ticket.completionPending;delete ticket.completionRequestedAt;delete ticket.completionMessageId;
+  delete ticket.checkinAt;delete ticket.checkinSentAt;delete ticket.checkinMessageId;delete ticket.checkinAnswered;
   tickets[channel.id]=ticket;_mem.tickets=tickets;save("tickets",tickets);
-  // Tidy up: the old "claimed by" message, and the exchanger's special access (owners keep theirs from ticket creation)
-  if(claimMsgId){const m=await channel.messages.fetch(claimMsgId).catch(()=>null);if(m)await m.delete().catch(()=>{});}
+  // Tidy up: old claim/confirmation messages, and the exchanger's special access (owners keep theirs from ticket creation)
+  for(const id of staleMsgs){const m=await channel.messages.fetch(id).catch(()=>null);if(m)await m.delete().catch(()=>{});}
   if(!CONFIG.OWNER_IDS.includes(prev))await channel.permissionOverwrites.delete(prev).catch(()=>{});
   await refreshPanel(channel,ticket);
   await channel.send({
     content:`<@${ticket.userId}>`,
     embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Ticket Released")
-      .setDescription(auto?`The middleman wasn't confirmed in time, so <@${prev}> was released from this ticket. Any exchanger can claim it now.`:`<@${prev}> released this ticket. Any exchanger can claim it now.`)
-      .setTimestamp()],
+      .setDescription(`<@${prev}> released this ticket. Any exchanger can claim it.`).setTimestamp()],
     allowedMentions:{users:[ticket.userId]}
   }).catch(()=>{});
-  log(channel.guild,`RELEASE: #${channel.name} | ${prev}${auto?" (middleman not confirmed)":""}${by&&by!==prev?" | by "+by:""}`);
+  log(channel.guild,`RELEASE: #${channel.name} | ${prev}${by&&by!==prev?" | by "+by:""}`);
   return true;
-}
-// Runs every minute (and once at startup) so a restart can never strand a pending middleman claim
-async function sweepMmPending(guild){
-  const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
-  const now=Date.now();
-  for(const [cid,t] of Object.entries(tickets)){
-    if(!t||t.status!=="open"||!t.mmPending||t.reported||!t.mmPendingUntil||t.mmPendingUntil>now)continue;
-    const ch=guild.channels.cache.get(cid);
-    if(!ch)continue;
-    try{await releaseClaim(ch,t,tickets,{auto:true});}catch(e){console.error("[mmSweep]",cid,e.message);}
-  }
 }
 
 function isExchanger(member){
@@ -1300,7 +1429,7 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   const _feeValue=_isGiftCard?"To be decided in this ticket"
     :`${_dualPromoActive?_dualPromoFee:rate}% \u2014 ${fmtUSD(feeUSD)}`+(_feeNotes.length?`\n${_feeNotes.join(" \u00b7 ")}`:"");
   const ticketEmbed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle(_c2cTitle||`${m.label} Exchange`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
-    .setDescription(`Welcome, <@${user.id}>. Your ticket is open \u2014 a **${m.label}** exchanger will claim it shortly.\n\u200b`)
+    .setDescription(`Welcome, <@${user.id}>. Your ticket is open \u2014 an exchanger will claim it shortly.\n\u200b`)
     .addFields({name:"You Send",value:sendLabel,inline:true},{name:"Fee",value:_feeValue,inline:true},{name:"Next Step",value:"Your exchanger will confirm wallet and payment details here.",inline:false});
 
   if(method==="buyforyou"||method==="custom"){
@@ -1312,11 +1441,10 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
     .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
     .setTitle("Before You Proceed")
     .setDescription(
-      `**Go-First Limit** \u2014 Your exchanger's name shows their limit. Under it, you can go first. Over it, or if it says "Use MM Always", use a middleman: ${MM_SERVICES}.\n\n`
-      +"**Middleman** \u2014 Open a ticket with the middleman before sending anything. Only go first above the limit if **@3uce** or **@jswaps** explicitly says so in this ticket.\n\n"
-      +"**Security** \u2014 **@3uce** and **@jswaps** will never DM you first. Anyone who does is an impersonator. Everything stays in this ticket."
+      `**Go-first limit** \u2014 shown in your exchanger's name. Above it, or if it says "Use MM Always", use a middleman (${MM_SERVICES}) and open their ticket before sending anything.\n\n`
+      +"**Security** \u2014 **@3uce** and **@jswaps** never DM first. Anyone who does is an impersonator."
     )
-    .setFooter({text:"Konvert Exchange  \u2022  When in doubt, always use a middleman"});
+    .setFooter({text:"Konvert Exchange  \u2022  When in doubt, use a middleman"});
   const btns=claimRow();
   const _panel=await ch.send({content:`<@${user.id}>`,embeds:[ticketEmbed,rulesEmbed],components:[btns]});
   const pings=[];
@@ -1377,7 +1505,7 @@ async function completeTrade(interaction,ticket,tickets){
   _mem.tickets={...(_mem.tickets||{}),...tickets};save("tickets",_mem.tickets);
   if(interaction.guild){updateStatChannel(interaction.guild).catch(()=>{});updateLiveLeaderboard(interaction.guild).catch(()=>{});}
   console.log(`[completeTrade] userId=${ticket.userId} amount=${ticket.amountUSD} total=${Object.keys(_mem.tickets).length}`);
-  if(ticket.claimSystem)refreshPanel(interaction.channel,ticket).catch(()=>{});
+  if(ticket.claimSystem){refreshPanel(interaction.channel,ticket).catch(()=>{});clearConfirmButtons(interaction.channel,ticket).catch(()=>{});}
   requestProfit(interaction.guild,ticketKey,interaction.channel&&interaction.channel.name).catch(e=>console.error("[profit]",e.message));
   const _referredByForVouch=null;
   if(false&&false){
@@ -1420,8 +1548,8 @@ async function completeTrade(interaction,ticket,tickets){
   );
   const _vPrompt=new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
     .setTitle("Exchange Complete")
-    .setDescription(`<@${ticket.userId}> \u2014 your exchange is done.\n\nPlease leave a vouch in <#${VOUCH_POST_CHANNEL}> \u2014 it takes 5 seconds and helps the community.\n\n*This ticket closes in 90 seconds.*`)
-    .setFooter({text:"Konvert Exchange  \u2022  Thanks for trading with us"});
+    .setDescription(`<@${ticket.userId}> \u2014 thanks for trading with us. Please leave a vouch in <#${VOUCH_POST_CHANNEL}>.`)
+    .setFooter({text:"This ticket closes in 90 seconds"});
   // Post publicly so the client actually sees it (btn_done defers ephemerally)
   await interaction.channel.send({content:`<@${ticket.userId}>`,embeds:[_vPrompt],components:[_vRow]}).catch(()=>{});
   // Quiet confirmation for whoever triggered it
@@ -1553,10 +1681,18 @@ client.on(Events.MessageCreate,async message=>{
       const _canComp=isOwner(message.author.id,message.member)||isExchanger(message.member);
       if(_canComp){
         if(isSuspended(message.author.id)&&!isOwner(message.author.id,message.member)){await message.reply("Your exchanger access is suspended pending owner review.").catch(()=>{});return;}
-        if(ticket.reported&&!isOwner(message.author.id,message.member)){await message.reply("This ticket has a pending help request. An owner needs to review it first.").catch(()=>{});return;}
+        if(ticket.reported&&!isOwner(message.author.id,message.member)){await message.reply("This ticket is flagged. An owner needs to review it first.").catch(()=>{});return;}
         if(ticket.mmPending&&!isOwner(message.author.id,message.member)){await message.reply("Waiting for the client to confirm the middleman.").catch(()=>{});return;}
         if(ticket.claimSystem&&!ticket.claimedBy){await message.reply("Claim this ticket before completing it.").catch(()=>{});return;}
         if(ticket.claimSystem&&message.author.id!==ticket.claimedBy&&!isOwner(message.author.id,message.member)){await message.reply(`Only <@${ticket.claimedBy}> can complete this ticket.`).catch(()=>{});return;}
+        if(ticket.claimSystem){
+          // The client confirms before anything is finalized
+          if(ticket.completionPending){await message.reply("Already waiting for the client to confirm.").catch(()=>{});return;}
+          const _tk=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
+          const _ok=await requestCompletion(message.channel,ticket,_tk);
+          if(!_ok)await message.reply("Couldn't send the confirmation. Try again.").catch(()=>{});
+          return;
+        }
         const _allT=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
         ticket._overrideExchangerId=ticket.claimedBy||message.author.id;
         // Create a fake interaction-like object for completeTrade
@@ -3119,10 +3255,10 @@ This is active immediately and persists until revoked or the bot restarts.
       if(interaction.customId==="btn_report"){
         const _rt=(Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets"))[interaction.channel.id];
         if(!_rt||_rt.status!=="open")return interaction.reply({content:"This ticket is no longer open.",flags:64});
-        if(interaction.user.id!==_rt.userId)return interaction.reply({content:"Only the client of this ticket can ask for help.",flags:64});
+        if(interaction.user.id!==_rt.userId)return interaction.reply({content:"Only the client of this ticket can flag it.",flags:64});
         if(!_rt.claimedBy)return interaction.reply({content:"No exchanger has claimed this ticket yet.",flags:64});
-        if(_rt.reported)return interaction.reply({content:"Help was already requested on this ticket. An owner will step in.",flags:64});
-        const _rm=new ModalBuilder().setCustomId("modal_report").setTitle("Get Help");
+        if(_rt.reported)return interaction.reply({content:"This ticket is already flagged. An owner will step in.",flags:64});
+        const _rm=new ModalBuilder().setCustomId("modal_report").setTitle("Flag Ticket");
         _rm.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_reason").setLabel("What went wrong?").setStyle(TextInputStyle.Paragraph).setMinLength(10).setMaxLength(500).setRequired(true).setPlaceholder("Describe what happened. The exchanger is frozen until an owner reviews this.")));
         return interaction.showModal(_rm);
       }
@@ -3130,6 +3266,10 @@ This is active immediately and persists until revoked or the bot restarts.
       if(interaction.customId==="btn_mmclaim"){await claimTicket(interaction,{mmConfirmed:true});return;}
       if(interaction.customId==="btn_mmcancel"){await interaction.update({content:"Cancelled \u2014 the ticket is still unclaimed.",embeds:[],components:[]}).catch(()=>{});return;}
       if(interaction.customId==="btn_mmconfirm"){await confirmMiddleman(interaction);return;}
+      if(interaction.customId==="btn_confirmdone"){await confirmCompletion(interaction);return;}
+      if(interaction.customId==="btn_remind"){await remindClient(interaction);return;}
+      if(interaction.customId==="btn_checkin_ok"){await answerCheckin(interaction);return;}
+      if(interaction.customId.startsWith("btn_profitok__")){await confirmProfitSplit(interaction);return;}
       if(interaction.customId.startsWith("btn_profit__")){await openProfitModal(interaction);return;}
       if(interaction.customId==="btn_done"){
         const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
@@ -3138,11 +3278,18 @@ This is active immediately and persists until revoked or the bot restarts.
         if(!ticket)return interaction.reply({content:"Ticket not found.",flags:64});
         if(ticket.status==="vouched"||ticket.status==="closed")return interaction.reply({content:"This exchange has already been completed.",flags:64});
         if(isSuspended(interaction.user.id)&&!isOwner(interaction.user.id,interaction.member))return interaction.reply({content:"Your exchanger access is suspended pending owner review.",flags:64});
-        if(ticket.reported&&!isOwner(interaction.user.id,interaction.member))return interaction.reply({content:"This ticket has a pending help request. An owner needs to review it before it can be completed.",flags:64});
+        if(ticket.reported&&!isOwner(interaction.user.id,interaction.member))return interaction.reply({content:"This ticket is flagged. An owner needs to review it before it can be completed.",flags:64});
         if(ticket.mmPending&&!isOwner(interaction.user.id,interaction.member))return interaction.reply({content:"Waiting for the client to confirm the middleman.",flags:64});
         if(ticket.claimSystem){
           if(!ticket.claimedBy)return interaction.reply({content:"Claim this ticket before completing it.",flags:64});
           if(interaction.user.id!==ticket.claimedBy&&!isOwner(interaction.user.id,interaction.member))return interaction.reply({content:`Only <@${ticket.claimedBy}> can complete this ticket.`,flags:64});
+        }
+        if(ticket.claimSystem){
+          // The client confirms before anything is finalized
+          if(ticket.completionPending)return interaction.reply({content:"Already waiting for the client to confirm.",flags:64});
+          await interaction.deferReply({flags:64});
+          const _sent=await requestCompletion(interaction.channel,ticket,tickets);
+          return interaction.editReply({content:_sent?"Sent to the client for confirmation.":"Couldn't send the confirmation. Try again."});
         }
         await interaction.deferReply({flags:64});
         ticket._overrideExchangerId=ticket.claimedBy||interaction.user.id;
@@ -3217,12 +3364,12 @@ This is active immediately and persists until revoked or the bot restarts.
         const _mtk=_mt[interaction.channel.id];
         // Re-check everything: state may have changed while the form was open
         if(!_mtk||_mtk.status!=="open")return interaction.editReply({content:"This ticket is no longer open."});
-        if(interaction.user.id!==_mtk.userId)return interaction.editReply({content:"Only the client of this ticket can ask for help."});
+        if(interaction.user.id!==_mtk.userId)return interaction.editReply({content:"Only the client of this ticket can flag it."});
         if(!_mtk.claimedBy)return interaction.editReply({content:"No exchanger has claimed this ticket yet."});
-        if(_mtk.reported)return interaction.editReply({content:"Help was already requested on this ticket. An owner will step in."});
+        if(_mtk.reported)return interaction.editReply({content:"This ticket is already flagged. An owner will step in."});
         const _reason=interaction.fields.getTextInputValue("inp_reason").trim().slice(0,500);
         const _res=await reportTicket(interaction,_mtk,_mt,_reason);
-        return interaction.editReply({content:_res.exempt?"Your request was sent to the owners.":"Your request was sent. The exchanger is frozen and an owner will step in. Please don't send any more funds in this ticket."});
+        return interaction.editReply({content:_res.exempt?"Flag sent to the owners.":"Ticket flagged. The exchanger is frozen and an owner will step in \u2014 don't send any more funds."});
       }
 
       if(interaction.customId==="modal_support"){
@@ -3655,9 +3802,11 @@ client.once(Events.ClientReady,async()=>{
     // Profit reports: tell the owner about exchangers who haven't replied (every 10 minutes; survives restarts)
     setInterval(()=>sweepProfitReplies().catch(e=>console.error("[profitSweep]",e.message)),10*60*1000);
     setTimeout(()=>sweepProfitReplies().catch(()=>{}),30*1000);
-    // Release middleman claims the client never confirmed (every minute; survives restarts)
-    setInterval(()=>sweepMmPending(guild).catch(e=>console.error("[mmSweep]",e.message)),60*1000);
-    setTimeout(()=>sweepMmPending(guild).catch(()=>{}),20*1000);
+    // Random "Is everything okay?" check-ins (every minute; survives restarts)
+    setInterval(()=>sweepCheckins(guild).catch(e=>console.error("[checkin]",e.message)),60*1000);
+    setTimeout(()=>sweepCheckins(guild).catch(()=>{}),25*1000);
+    // Show who profit DMs go to, so a wrong ID is obvious in the logs
+    for(const _pid of PROFIT_DM_IDS)client.users.fetch(_pid).then(u=>console.log(`[profit] profit DMs go to ${u.username} (${_pid})`)).catch(()=>console.log(`[profit] WARNING: can't find profit DM recipient ${_pid}`));
     // Price alert checker — every 2 minutes
     setInterval(async()=>{
       if(!state.alerts.length)return;
