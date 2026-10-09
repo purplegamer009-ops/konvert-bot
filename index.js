@@ -100,9 +100,12 @@ const IMG = {
 const PTS_IMG=IMG?.LOGO||"https://i.imgur.com/dXKH5Fv.png";
 const SUPPORT_CH="1477230600959299605";
 
+// Owners that can never be removed, frozen, held, flagged, blacklisted or analysed by the safety system
+const PERMANENT_OWNER_IDS=["1203760586379370601","1506173494398812220"];
+
 const CONFIG = {
   TOKEN:process.env.DISCORD_TOKEN, CLIENT_ID:process.env.CLIENT_ID, GUILD_ID:process.env.GUILD_ID,
-  OWNER_IDS:[...(process.env.OWNER_IDS||"").split(",").map(s=>s.trim()).filter(Boolean),...["1203760586379370601"].filter(id=>!(process.env.OWNER_IDS||"").includes(id))],
+  OWNER_IDS:[...(process.env.OWNER_IDS||"").split(",").map(s=>s.trim()).filter(Boolean),...PERMANENT_OWNER_IDS.filter(id=>!(process.env.OWNER_IDS||"").includes(id))],
   STAFF_ROLE:process.env.STAFF_ROLE_ID||null, EXCHANGER_ROLE:process.env.EXCHANGER_ROLE_ID||null,
   TICKET_CATEGORY:process.env.TICKET_CATEGORY_ID||null, VOUCH_CHANNEL:process.env.VOUCH_CHANNEL_ID||null, HELPER_ROLE:process.env.HELPER_ROLE_ID||null,
   LOG_CHANNEL:process.env.LOG_CHANNEL_ID||null, RATES_CHANNEL:process.env.RATES_CHANNEL_ID||null,
@@ -226,8 +229,9 @@ const DB={
   blacklist:`${DATA_DIR}/konvert_blacklist.json`,
   referrals:`${DATA_DIR}/konvert_referrals.json`,
   suspensions:`${DATA_DIR}/konvert_suspensions.json`,
+  holds:`${DATA_DIR}/konvert_holds.json`,
 };
-const _mem={tickets:{},wallets:{},blacklist:{},referrals:{},suspensions:{}};
+const _mem={tickets:{},wallets:{},blacklist:{},referrals:{},suspensions:{},holds:{}};
 
 const load=k=>{
   // Always return in-memory cache if populated
@@ -446,7 +450,7 @@ const OWNER_ROLE="1477857207600152608";
 // Owner = in OWNER_IDS list OR holding the owner role
 function isOwner(userId,member){
   try{
-    if(CONFIG.OWNER_IDS.includes(userId))return true;
+    if(PERMANENT_OWNER_IDS.includes(userId)||CONFIG.OWNER_IDS.includes(userId))return true;
     if(member&&member.roles&&member.roles.cache&&member.roles.cache.has(OWNER_ROLE))return true;
   }catch{}
   return false;
@@ -454,7 +458,13 @@ function isOwner(userId,member){
 // ── Profit sharing ───────────────────────────────────────────
 const OWNER_PROFIT_SHARE=0.40;                      // the owner's cut of every exchanger's profit
 const PROFIT_REPLY_WINDOW_MS=24*60*60*1000;         // how long an exchanger has to respond before the owner is told they didn't
-const PROFIT_DM_IDS=(process.env.PROFIT_DM_IDS||"1203760586379370601").split(",").map(s=>s.trim()).filter(Boolean);
+const PROFIT_J_ID="1506173494398812220";            // always gets the profit-split notices, whatever PROFIT_DM_IDS says
+const _idList=v=>String(v||"").split(/[\s,;]+/).map(x=>x.replace(/[<@!>]/g,"")).filter(Boolean);
+// Who is told about splits: PROFIT_DM_IDS (default: Haq) and always J, so a stale or mistyped env value can never leave him out
+const PROFIT_DM_IDS=[...new Set([...(_idList(process.env.PROFIT_DM_IDS).length?_idList(process.env.PROFIT_DM_IDS):["1203760586379370601"]),PROFIT_J_ID])];
+// Nobody owes a split to themselves: J (the one being paid) and anyone in PROFIT_EXEMPT_IDS are never asked. Every other exchanger, owners included, is.
+const PROFIT_EXEMPT_IDS=[...new Set([..._idList(process.env.PROFIT_EXEMPT_IDS),PROFIT_J_ID])];
+const PROFIT_LOG_CHANNEL=process.env.PROFIT_LOG_CHANNEL_ID||CONFIG.LOG_CHANNEL||null;   // where a notice goes when someone's DMs are closed
 const PROFIT_PAYEE=process.env.PROFIT_PAYEE||"J (@jsballing)";   // who exchangers are told to pay
 const _sharePct=Math.round(OWNER_PROFIT_SHARE*100);
 const _r2=n=>Math.round(Number(n)*100)/100;
@@ -495,33 +505,54 @@ function dmFailedEmbed(t){
     .setDescription(`<@${t.completedBy}>'s DMs are closed, so the split wasn't delivered for a **${_dealLine(t)}** deal.\nExpected: **${fmtUSD(t.profitDefaultCut)}** (${_sharePct}% of the ${fmtUSD(t.profitDefault)} fee).`)
     .setTimestamp();
 }
-// DMs every recipient in PROFIT_DM_IDS; resolves to how many actually received it
-async function notifyProfitOwners(embed){
-  const results=await Promise.allSettled(PROFIT_DM_IDS.map(async id=>{const u=await client.users.fetch(id);await u.send({embeds:[embed]});}));
-  return results.filter(r=>r.status==="fulfilled").length;
+function profitTestEmbed(){
+  return new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Profit Share",iconURL:IMG.LOGO})
+    .setTitle("Test: profit notices reach you").setDescription("This is only a test. Real notices arrive here when an exchanger confirms a split.").setTimestamp();
+}
+function _homeGuild(){
+  try{const c=client.guilds.cache;return (CONFIG.GUILD_ID&&c.get(CONFIG.GUILD_ID))||c.first()||null;}catch{return null;}
+}
+// DMs every recipient in PROFIT_DM_IDS. Someone who can't be DMed (closed DMs, ...) is written to the console with the reason and gets the notice in
+// the log channel instead, with an @mention, so a split can never silently go missing. Resolves to {sent:[ids], failed:[{id,reason}]}.
+async function notifyProfitOwners(embed,{test=false}={}){
+  const sent=[],failed=[];
+  await Promise.all(PROFIT_DM_IDS.map(async id=>{
+    try{const u=await client.users.fetch(id);await u.send({embeds:[embed]});sent.push(id);}
+    catch(e){const reason=(e&&e.message)||String(e);failed.push({id,reason});console.error("[profit] couldn't DM",id+":",reason);}
+  }));
+  if(failed.length&&!test)await profitFallback(embed,failed);
+  return {sent,failed};
+}
+async function profitFallback(embed,failed){
+  try{
+    const guild=_homeGuild();
+    const ch=guild&&PROFIT_LOG_CHANNEL?guild.channels.cache.get(PROFIT_LOG_CHANNEL):null;
+    if(!ch)return false;
+    await ch.send({content:`${failed.map(f=>`<@${f.id}>`).join(" ")} — I couldn't DM you this profit notice (check your DM settings for this server), so it is here instead:`,embeds:[embed],allowedMentions:{users:failed.map(f=>f.id)}});
+    return true;
+  }catch(e){console.error("[profit] fallback post failed:",e.message);return false;}
 }
 // Called once a deal is finalized: asks the exchanger who was credited to confirm the split
 async function requestProfit(guild,ticketId,channelName){
   const t=(_mem.tickets||{})[ticketId];
   if(!t||!t.completedBy||t.profitRequestedAt)return;                 // nobody to ask, or already asked
-  const exId=t.completedBy;
-  const member=guild&&guild.members&&guild.members.cache?guild.members.cache.get(exId):null;
-  if(PROFIT_DM_IDS.includes(exId)||isOwner(exId,member))return;      // owners don't owe themselves
+  const exId=t.completedBy,where=`#${channelName||ticketId}`;
+  if(PROFIT_EXEMPT_IDS.includes(exId)){log(guild,`PROFIT: ${where} | ${exId} is the one being paid, so no split is asked`);return;}
   t.profitRequestedAt=Date.now();t.profitChannelName=channelName||null;
   t.profitDefault=defaultProfit(t);t.profitDefaultCut=ownerCut(t.profitDefault);
   save("tickets",_mem.tickets);
-  let delivered=false;
+  let delivered=false,why="";
   try{
     const u=await client.users.fetch(exId);
     await u.send({embeds:[profitRequestEmbed(t)],components:[profitButtonRow(ticketId)]});
     delivered=true;
-  }catch(e){console.error("[profit] couldn't DM exchanger",exId,e.message);}
-  if(!delivered){
-    // Closed DMs: tell the owner right away instead of waiting out the 24 hours
-    t.profitDmFailed=true;t.profitOwnerNotified=true;
-    save("tickets",_mem.tickets);
-    await notifyProfitOwners(dmFailedEmbed(t));
-  }
+  }catch(e){why=(e&&e.message)||String(e);console.error("[profit] couldn't DM exchanger",exId+":",why);}
+  if(delivered){log(guild,`PROFIT: ${where} | split asked of ${exId} | fee ${fmtUSD(t.profitDefault)} | owed ${fmtUSD(t.profitDefaultCut)}`);return;}
+  // Closed DMs: tell the owners right away instead of waiting out the 24 hours
+  t.profitDmFailed=true;t.profitOwnerNotified=true;
+  save("tickets",_mem.tickets);
+  log(guild,`PROFIT: ${where} | couldn't DM exchanger ${exId} (${why}) | owners told`);
+  await notifyProfitOwners(dmFailedEmbed(t));
 }
 // Saves the final number, shows the exchanger their receipt, DMs the owner
 async function recordProfit(interaction,t,profit){
@@ -537,7 +568,8 @@ async function recordProfit(interaction,t,profit){
   const canUpdate=(typeof interaction.isButton==="function"&&interaction.isButton())||(typeof interaction.isFromMessage==="function"&&interaction.isFromMessage());
   if(canUpdate)await interaction.update({embeds:[done],components:[]}).catch(()=>{});
   else await interaction.reply({embeds:[done],flags:64}).catch(()=>{});
-  await notifyProfitOwners(ownerProfitEmbed(t,late));
+  const r=await notifyProfitOwners(ownerProfitEmbed(t,late));
+  log(_homeGuild(),`PROFIT: ${t.profitChannelName?"#"+t.profitChannelName+" | ":""}${t.completedBy} reported ${fmtUSD(t.profitAmount)}${late?" (late)":""} | owed ${fmtUSD(t.ownerCut)} | told ${r.sent.length}/${PROFIT_DM_IDS.length}`);
 }
 // "Confirm Split": accept the default (40% of the fee)
 async function confirmProfitSplit(interaction){
@@ -626,34 +658,38 @@ function claimRow(){
     new ButtonBuilder().setCustomId("btn_close").setLabel("Close Ticket").setEmoji("\uD83D\uDD12").setStyle(ButtonStyle.Danger)
   );
 }
-function flagButton(){return new ButtonBuilder().setCustomId("btn_report").setLabel("Flag Ticket").setEmoji("\u26A0\uFE0F").setStyle(ButtonStyle.Danger);}
+// Discord has no orange button colour, so the help buttons are grey with an orange dot. Close Ticket stays red.
+const HELP_EMOJI="\uD83D\uDFE0";
+function flagButton(){return new ButtonBuilder().setCustomId("btn_report").setLabel("Flag Ticket").setEmoji(HELP_EMOJI).setStyle(ButtonStyle.Secondary);}
 function remindButton(){return new ButtonBuilder().setCustomId("btn_remind").setLabel("Remind").setStyle(ButtonStyle.Secondary);}
 function mmConfirmRow(){
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId("btn_mmconfirm").setLabel("Confirm Middleman").setStyle(ButtonStyle.Success),
     remindButton());
 }
-function issueButton(label){return new ButtonBuilder().setCustomId("btn_report").setLabel(label).setEmoji("\u26A0\uFE0F").setStyle(ButtonStyle.Danger);}
+function issueButton(label){return new ButtonBuilder().setCustomId("btn_report").setLabel(label).setEmoji(HELP_EMOJI).setStyle(ButtonStyle.Secondary);}
 function completionRow(){
   return new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId("btn_confirmdone").setLabel("Confirm Completion").setStyle(ButtonStyle.Success),
     issueButton("Report Issue"));
 }
+function hopButton(){return new ButtonBuilder().setCustomId("btn_hopin").setLabel("Hop In").setEmoji("👋").setStyle(ButtonStyle.Primary);}
 function panelRow(ticket){
   if(ticket.status&&ticket.status!=="open")return null;           // finished: no buttons
   if(!ticket.claimedBy)return claimRow();                          // waiting for an exchanger
-  const close=new ButtonBuilder().setCustomId("btn_close").setLabel("Close Ticket").setEmoji("\uD83D\uDD12").setStyle(ButtonStyle.Danger);
+  const close=new ButtonBuilder().setCustomId("btn_close").setLabel("Close Ticket").setEmoji("🔒").setStyle(ButtonStyle.Danger);
   if(ticket.reported)return new ActionRowBuilder().addComponents(close);                       // frozen, waiting on an owner
-  if(ticket.mmPending||ticket.completionPending)return new ActionRowBuilder().addComponents(flagButton(),close);   // waiting on the client
-  const done=new ButtonBuilder().setCustomId("btn_done").setLabel("Mark Complete").setEmoji("\u2705").setStyle(ButtonStyle.Success);
-  return new ActionRowBuilder().addComponents(done,flagButton(),close);
+  const hop=ticket.openToAll?[hopButton()]:[];                      // opened to all exchangers ($all): anyone can join
+  if(ticket.mmPending||ticket.completionPending)return new ActionRowBuilder().addComponents(flagButton(),...hop,close);   // waiting on the client
+  const done=new ButtonBuilder().setCustomId("btn_done").setLabel("Mark Complete").setEmoji("✅").setStyle(ButtonStyle.Success);
+  return new ActionRowBuilder().addComponents(done,flagButton(),...hop,close);
 }
 async function findPanelMessage(channel,ticket){
   if(ticket.panelMessageId){const m=await channel.messages.fetch(ticket.panelMessageId).catch(()=>null);if(m)return m;}
   // Older tickets don't have the id saved: find the bot's panel (it carries Claim or Mark Complete)
   const recent=await channel.messages.fetch({limit:50}).catch(()=>null);
   if(!recent)return null;
-  const IDS=new Set(["btn_claim","btn_done"]);
+  const IDS=new Set(["btn_claim","btn_done","btn_hopin"]);
   const m=recent.find(x=>x.author&&client.user&&x.author.id===client.user.id&&(x.components||[]).some(r=>(r.components||[]).some(c=>IDS.has(c.customId))));
   if(m)ticket.panelMessageId=m.id;
   return m||null;
@@ -684,6 +720,10 @@ function buildClaimEmbed(ticket,mode){
     return e.setTitle("Ticket Claimed")
       .setDescription(`<@${cl}>, your ticket was claimed by <@${ex}>.\n${rule}`)
       .setFooter({text:"Something wrong? Press Flag Ticket."}).setTimestamp();
+  }
+  if(mode==="owner"){
+    return e.setTitle("Ticket Claimed")
+      .setDescription(`<@${cl}>, your ticket was claimed by <@${ex}>.\n<@${ex}> is an owner — **safe to go first**.`).setTimestamp();
   }
   if(mode==="mmConfirmed"){
     return e.setTitle("Middleman Confirmed")
@@ -731,13 +771,14 @@ async function unlockExchangerEverywhere(guild,userId){
   }
   return n;
 }
-async function reportTicket(interaction,ticket,tickets,reason){
-  const guild=interaction.guild,ch=interaction.channel,exId=ticket.claimedBy;
+async function reportTicket(interaction,ticket,tickets,reason,opts={}){
+  const guild=interaction.guild,ch=interaction.channel,exId=ticket.claimedBy,source=opts.source||"client";
   ticket.reported=true;ticket.reportedAt=Date.now();ticket.reportReason=reason;ticket.reportedExchanger=exId;
   _mem.tickets=tickets;save("tickets",tickets);
 
   const exMember=await guild.members.fetch(exId).catch(()=>null);
   const exempt=isOwner(exId,exMember);   // owners are reviewed, never auto-frozen
+  if(!exempt){ticket.clientHeld=true;save("tickets",tickets);}   // the client was told to hold off, so they hear when it is over
   if(!exempt){
     if(!_mem.suspensions)_mem.suspensions={};
     _mem.suspensions[exId]={reason,channelId:ch.id,clientId:ticket.userId,amountUSD:parseFloat(ticket.amountUSD)||0,method:ticket.method||null,at:Date.now()};
@@ -753,25 +794,32 @@ async function reportTicket(interaction,ticket,tickets,reason){
 
   const owners=CONFIG.OWNER_IDS;
   const clean=String(reason).replace(/\s+/g," ").trim().slice(0,300);
-  const desc=exempt
-    ?`<@${ticket.userId}> flagged this ticket. An owner will review it.\n> ${clean}`
-    :`<@${ticket.userId}> flagged this ticket. <@${exId}> is frozen until an owner reviews it.\n**Don't send any more funds.**\n> ${clean}`;
+  const auto=source!=="client";   // paused by the safety system or an owner rather than flagged by the client
+  const desc=auto
+    ?(exempt?`An owner will review this ticket.`
+            :`This ticket was paused for a safety review. <@${exId}> is frozen until an owner reviews it.\n**Don't send any more funds.**`)
+    :(exempt?`<@${ticket.userId}> flagged this ticket. An owner will review it.\n> ${clean}`
+            :`<@${ticket.userId}> flagged this ticket. <@${exId}> is frozen until an owner reviews it.\n**Don't send any more funds.**\n> ${clean}`);
+  const title=auto?"\u23F8\uFE0F Ticket Paused":"\u26A0\uFE0F Ticket Flagged";
   await ch.send({
     content:owners.map(id=>`<@${id}>`).join(" "),
-    embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("\u26A0\uFE0F Ticket Flagged")
+    embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle(title)
       .setDescription(desc).setTimestamp()],
     allowedMentions:{users:owners}
   }).catch(()=>{});
 
   const link=`https://discord.com/channels/${guild.id}/${ch.id}`;
-  for(const oid of owners){
-    client.users.fetch(oid).then(u=>u.send({embeds:[new EmbedBuilder().setColor(0xef4444)
+  const who=source==="system"?`Paused by the safety system \u00B7 <@${ticket.userId}> with <@${exId}>`
+    :source==="owner"?`Paused by <@${opts.by}> \u00B7 <@${ticket.userId}> with <@${exId}>`
+    :`<@${ticket.userId}> flagged <@${exId}>`;
+  const dm={embeds:[new EmbedBuilder().setColor(0xef4444)
       .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
-      .setTitle("\u26A0\uFE0F Ticket Flagged")
-      .setDescription(`[Open ticket](${link})\n<@${ticket.userId}> flagged <@${exId}> \u00b7 ${_money(parseFloat(ticket.amountUSD)||0)}\n> ${clean}${exempt?"":"\n\n`/reinstate` lifts the freeze."}`)
-      .setTimestamp()]})).catch(()=>{});
-  }
-  log(guild,`FLAG: #${ch.name} | client ${ticket.userId} | exchanger ${exId}${exempt?" (owner - not frozen)":" frozen"} | ${clean.slice(0,150)}`);
+      .setTitle(title)
+      .setDescription(`[Open ticket](${link})\n${who} \u00B7 ${_money(parseFloat(ticket.amountUSD)||0)}\n> ${clean}${exempt?"":"\n\n`/reinstate` lifts the freeze."}`)
+      .setTimestamp()]};
+  if(auto&&!exempt)dm.components=[riskAlertRow(exId,ch.id,{frozen:true})];   // one tap to undo it
+  for(const oid of owners)client.users.fetch(oid).then(u=>u.send(dm)).catch(()=>{});
+  log(guild,`${auto?"PAUSE":"FLAG"}: #${ch.name} | client ${ticket.userId} | exchanger ${exId}${exempt?" (owner - not frozen)":" frozen"} | ${clean.slice(0,150)}`);
   return {exempt};
 }
 
@@ -790,6 +838,8 @@ async function claimTicket(interaction,opts={}){
   }
   if(isSuspended(interaction.user.id)&&!owner)
     return interaction.reply({content:"Your exchanger access is suspended pending owner review, so you can't claim tickets.",flags:64});
+  if(isOnHold(interaction.user.id)&&!owner)
+    return interaction.reply({content:"New claims are paused while an owner reviews recent activity on your account. You can keep working your open tickets.",flags:64});
 
   // Does this claim need a middleman? Over their limit, over it in total across open tickets, or "Use MM Always".
   const lim=parseExchangerLimit(interaction.member);
@@ -832,7 +882,8 @@ async function claimTicket(interaction,opts={}){
   // Lock synchronously, before any await, so two simultaneous clicks can't both claim it
   ticket.claimedBy=interaction.user.id;
   ticket.claimedAt=Date.now();
-  ticket.claimLimit=lim?(lim.mm?{mm:true}:{amount:lim.amount}):null;
+  ticket.claimLimit=(!owner&&lim)?(lim.mm?{mm:true}:{amount:lim.amount}):null;
+  if(owner)ticket.ownerClaim=true;else delete ticket.ownerClaim;   // owners are trusted: no limits, no middleman wording
   if(needsMm){ticket.mmRequired=true;ticket.mmPending=true;ticket.mmReason=mmReason;}
   await interaction.deferUpdate().catch(()=>{});
   if(!needsMm){
@@ -840,26 +891,26 @@ async function claimTicket(interaction,opts={}){
       await ch.permissionOverwrites.edit(interaction.user,_CLAIM_PERMS);
     }catch(e){
       // Roll back so the ticket isn't left locked with nobody able to talk
-      delete ticket.claimedBy;delete ticket.claimedAt;delete ticket.claimLimit;
+      delete ticket.claimedBy;delete ticket.claimedAt;delete ticket.claimLimit;delete ticket.ownerClaim;
       console.error("[claim] permission edit failed:",e.message);
       return interaction.followUp({content:"Couldn't claim this ticket (permission update failed). Try again.",flags:64}).catch(()=>{});
     }
   }
   // middleman claims: the exchanger stays view-only until the client confirms
-  if(!needsMm)scheduleCheckin(ticket);
+  if(!needsMm&&!owner)planWithSiblings(ticket,ch.id,tickets,interaction.guild);
   _mem.tickets=tickets;save("tickets",tickets);
   await refreshPanel(ch,ticket);
 
   const payload={
     content:`<@${interaction.user.id}> <@${ticket.userId}>`,
-    embeds:[buildClaimEmbed(ticket,needsMm?"mmPending":"normal")],
+    embeds:[buildClaimEmbed(ticket,needsMm?"mmPending":(owner?"owner":"normal"))],
     allowedMentions:{users:[interaction.user.id,ticket.userId]}
   };
   if(needsMm)payload.components=[mmConfirmRow()];
   const sent=await ch.send(payload).catch(()=>null);
   if(sent){ticket.claimMessageId=sent.id;_mem.tickets=tickets;save("tickets",tickets);}
   if(fromEphemeral)await interaction.editReply({content:needsMm?"You claimed this ticket. Waiting for the client to confirm the middleman.":"You claimed this ticket.",embeds:[],components:[]}).catch(()=>{});
-  log(interaction.guild,`CLAIM: #${ch.name} | ${interaction.user.tag} | client <@${ticket.userId}> | ${needsMm?"MIDDLEMAN":"limit "+describeLimit(ticket.claimLimit).limitText}`);
+  log(interaction.guild,`CLAIM: #${ch.name} | ${interaction.user.tag} | client <@${ticket.userId}> | ${needsMm?"MIDDLEMAN":owner?"OWNER":"limit "+describeLimit(ticket.claimLimit).limitText}`);
 }
 
 // Client presses "Confirm Middleman": unlocks the exchanger
@@ -881,7 +932,7 @@ async function confirmMiddleman(interaction){
     console.error("[mm] unlock failed:",e.message);
     return interaction.followUp({content:"Couldn't unlock the exchanger (permission update failed). Press the button again.",flags:64}).catch(()=>{});
   }
-  scheduleCheckin(ticket);
+  planWithSiblings(ticket,ch.id,tickets,interaction.guild);
   _mem.tickets=tickets;save("tickets",tickets);
   await interaction.editReply({embeds:[buildClaimEmbed(ticket,"mmConfirmed")],components:[]}).catch(()=>{});
   await refreshPanel(ch,ticket);
@@ -978,15 +1029,22 @@ async function sweepCheckins(guild){
     for(const [cid,t] of Object.entries(_mem.tickets||{})){
       if(!t||t.status!=="open"||!t.claimSystem||!t.claimedBy||t.checkinSentAt)continue;
       if(t.mmPending||t.completionPending||t.reported)continue;          // already waiting on the client, or frozen
-      if(CONFIG.OWNER_IDS.includes(t.claimedBy))continue;                // owners are trusted
-      if(!t.checkinAt){scheduleCheckin(t);changed=true;continue;}         // claimed before check-ins existed
+      if(t.ownerClaim||isOwner(t.claimedBy))continue;                // owners are trusted
+      if(!t.checkinAt){                                                   // nothing scheduled: roll once whether this ticket gets a check-in at all
+        if(!t.checkinPlan){planCheckin(t,cid,_mem.tickets,{has:id=>guild.channels.cache.has(id)});changed=true;}
+        continue;
+      }
       if(t.checkinAt>now)continue;
+      if(isSuspended(t.claimedBy)){delete t.checkinAt;scheduleCheckin(t);changed=true;continue;}   // frozen: nothing to ask, look again later
       const ch=guild.channels.cache.get(cid);
       if(!ch)continue;
       t.checkinSentAt=now;changed=true;due.push([ch,t]);                  // mark first so overlapping runs can't double-post
     }
     if(changed)save("tickets",_mem.tickets);
     for(const [ch,t] of due){
+      // The client left the server: nobody to ask (any other lookup failure still sends it)
+      const here=await guild.members.fetch(t.userId).then(()=>true).catch(e=>![10007,10013].includes(e&&e.code));
+      if(!here){t.checkinSkipped="client left";save("tickets",_mem.tickets);continue;}
       const sent=await ch.send({content:`<@${t.userId}>`,embeds:[checkinEmbed(t)],components:[checkinRow()],allowedMentions:{users:[t.userId]}}).catch(()=>null);
       if(sent)t.checkinMessageId=sent.id;
       else{delete t.checkinSentAt;t.checkinAt=Date.now()+60*1000;}       // couldn't post: try again in a minute
@@ -1008,34 +1066,890 @@ async function answerCheckin(interaction){
     .setTitle("Check-In").setDescription(`<@${ticket.userId}> says everything is fine.`).setTimestamp()],components:[]}).catch(()=>{});
 }
 
-// Gives a ticket back to the queue (used by $unclaim)
+// Gives a ticket back to the queue (used by $unclaim). A fresh embed with new buttons goes out and re-pings the payment method's exchangers.
 async function releaseClaim(channel,ticket,tickets,{by=null}={}){
   const prev=ticket.claimedBy;
   if(!prev)return false;
   const staleMsgs=[ticket.claimMessageId,ticket.completionMessageId,ticket.checkinMessageId].filter(Boolean);
-  delete ticket.claimedBy;delete ticket.claimedAt;delete ticket.claimLimit;delete ticket.reported;
+  const hoppers=Object.keys(ticket.hoppedIn||{});
+  delete ticket.claimedBy;delete ticket.claimedAt;delete ticket.claimLimit;delete ticket.ownerClaim;delete ticket.reported;
   delete ticket.mmRequired;delete ticket.mmPending;delete ticket.mmPendingUntil;delete ticket.mmConfirmedAt;delete ticket.mmReason;delete ticket.claimMessageId;
   delete ticket.completionPending;delete ticket.completionRequestedAt;delete ticket.completionMessageId;
   delete ticket.checkinAt;delete ticket.checkinSentAt;delete ticket.checkinMessageId;delete ticket.checkinAnswered;
+  delete ticket.hoppedIn;
+  resetSafetyFields(ticket);_safety.delete(channel.id);
+  ticket.reopenedAt=Date.now();
   tickets[channel.id]=ticket;_mem.tickets=tickets;save("tickets",tickets);
-  // Tidy up: old claim/confirmation messages, and the exchanger's special access (owners keep theirs from ticket creation)
+  // Tidy up: old claim/confirmation messages, and the special access of the exchanger (and anyone who hopped in); owners keep theirs from ticket creation
   for(const id of staleMsgs){const m=await channel.messages.fetch(id).catch(()=>null);if(m)await m.delete().catch(()=>{});}
-  if(!CONFIG.OWNER_IDS.includes(prev))await channel.permissionOverwrites.delete(prev).catch(()=>{});
-  await refreshPanel(channel,ticket);
-  await channel.send({
-    content:`<@${ticket.userId}>`,
-    embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Ticket Released")
-      .setDescription(`<@${prev}> released this ticket. Any exchanger can claim it.`).setTimestamp()],
-    allowedMentions:{users:[ticket.userId]}
-  }).catch(()=>{});
+  for(const id of new Set([prev,...hoppers]))if(!CONFIG.OWNER_IDS.includes(id))await channel.permissionOverwrites.delete(id).catch(()=>{});
+  // The old panel is retired. A fresh one (new embed + new Claim / Close buttons) pings whoever can take the ticket and becomes its panel.
+  const oldPanel=await findPanelMessage(channel,ticket);
+  const fresh=await postOpenPanel(channel,ticket,{title:"Ticket Open Again",lead:`<@${prev}> released this ticket. It is back in the queue — any exchanger can claim it.`});
+  if(fresh){if(oldPanel&&oldPanel.id!==fresh.id)await oldPanel.edit({components:[]}).catch(()=>{});}
+  else await refreshPanel(channel,ticket);                          // couldn't post: at least put the buttons back on the old panel
   log(channel.guild,`RELEASE: #${channel.name} | ${prev}${by&&by!==prev?" | by "+by:""}`);
   return true;
 }
+// A fresh panel for a ticket that needs an exchanger: an embed plus the buttons for its current state. It pings the roles that can take the
+// ticket and becomes the ticket's panel, so later claims / completions keep its buttons up to date.
+async function postOpenPanel(channel,ticket,{title,lead}){
+  const m=getMethod(ticket.method);
+  const roles=ticketPingRoles(channel,ticket);
+  const row=panelRow(ticket);
+  const embed=new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle(title)
+    .setDescription(`${lead}\n\n**${(m&&m.label)||ticket.method||"Exchange"}** · ${fmtUSD(parseFloat(ticket.amountUSD)||0)} · client <@${ticket.userId}>`)
+    .setFooter({text:ticket.claimedBy?"Press Hop In to join this ticket":"Press Claim Ticket to take it"}).setTimestamp();
+  const content=[...roles.map(r=>`<@&${r}>`),`<@${ticket.userId}>`].join(" ");
+  const sent=await channel.send({content,embeds:[embed],components:row?[row]:[],allowedMentions:{roles,users:[ticket.userId]}}).catch(e=>{console.error("[panel] couldn't post:",e.message);return null;});
+  if(sent){ticket.panelMessageId=sent.id;save("tickets",_mem.tickets);}
+  return sent;
+}
+// Every role that handles exchanges: the payment-method roles and the general exchanger role
+function exchangerRoleIds(){
+  return [...new Set([...Object.values(CONFIG.ROLES||{}),CONFIG.EXCHANGER_ROLE].filter(Boolean))];
+}
+// Which of these roles can actually see the channel
+function _rolesThatSee(channel,ids){
+  const guild=channel.guild;
+  return ids.filter(rid=>{
+    const role=guild&&guild.roles&&guild.roles.cache.get(rid);
+    if(!role)return false;
+    try{const p=channel.permissionsFor(role);return !!(p&&p.has(PermissionFlagsBits.ViewChannel));}catch{return false;}
+  });
+}
+// Who hears about a ticket that needs an exchanger: its payment method's role, staff, the helper role for custom orders, and every exchanger
+// role once it has been opened to all. Only roles that can see the channel are pinged (Discord notifies nobody else anyway).
+function ticketPingRoles(channel,ticket){
+  const want=[];
+  const mr=CONFIG.ROLES&&CONFIG.ROLES[ticket.method];
+  if(mr)want.push(mr);
+  if(CONFIG.STAFF_ROLE)want.push(CONFIG.STAFF_ROLE);
+  if((ticket.method==="custom"||ticket.method==="buyforyou")&&CONFIG.HELPER_ROLE)want.push(CONFIG.HELPER_ROLE);
+  if(ticket.openToAll)want.push(...exchangerRoleIds());
+  return _rolesThatSee(channel,[...new Set(want)]);
+}
+// $all: every exchanger role (whatever the payment method) can see the ticket, and a fresh panel pings them all.
+// Unclaimed: anyone can press Claim Ticket. Claimed: anyone can press Hop In and talk alongside the exchanger.
+const ALL_COOLDOWN_MS=60*1000;             // once a minute per ticket (it pings a lot of people)
+const _allAt=new Map();
+async function openToAllExchangers(channel,ticket,tickets,{by=null}={}){
+  const last=_allAt.get(channel.id)||0;
+  if(Date.now()-last<ALL_COOLDOWN_MS)return {ok:false,wait:Math.ceil((ALL_COOLDOWN_MS-(Date.now()-last))/1000)};
+  _allAt.set(channel.id,Date.now());
+  const guild=channel.guild;
+  let opened=0;
+  for(const rid of exchangerRoleIds()){
+    const role=guild&&guild.roles&&guild.roles.cache.get(rid);
+    if(!role||_rolesThatSee(channel,[rid]).length)continue;          // no such role, or it can already see the ticket
+    try{await channel.permissionOverwrites.edit(role,{ViewChannel:true,ReadMessageHistory:true,SendMessages:false});opened++;}
+    catch(e){console.error("[all] couldn't open the ticket to role",rid+":",e.message);}
+  }
+  ticket.openToAll=true;ticket.openToAllAt=Date.now();ticket.openToAllBy=by;
+  tickets[channel.id]=ticket;_mem.tickets=tickets;save("tickets",tickets);
+  const lead=ticket.claimedBy
+    ?`This ticket is open to **all exchangers**. <@${ticket.claimedBy}> is handling it — anyone else can press **Hop In** to join.`
+    :`This ticket is open to **all exchangers**, whatever their payment method. Press **Claim Ticket** to take it.`;
+  const oldPanel=await findPanelMessage(channel,ticket);
+  const fresh=await postOpenPanel(channel,ticket,{title:"Open to All Exchangers",lead});
+  if(fresh){if(oldPanel&&oldPanel.id!==fresh.id)await oldPanel.edit({components:[]}).catch(()=>{});}
+  else await refreshPanel(channel,ticket);
+  log(guild,`OPEN TO ALL: #${channel.name} | by ${by} | ${opened} role(s) can now see it`);
+  return {ok:true,opened,posted:!!fresh};
+}
+// "Hop In": an exchanger joins a ticket someone else has claimed (only once it has been opened to all with $all)
+async function hopIn(interaction){
+  const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
+  const ch=interaction.channel;
+  const ticket=tickets[ch.id];
+  const uid=interaction.user.id;
+  if(!ticket||ticket.status!=="open")return interaction.reply({content:"This ticket is no longer open.",flags:64});
+  if(!isExchanger(interaction.member))return interaction.reply({content:"Only exchangers can hop in.",flags:64});
+  if(uid===ticket.userId)return interaction.reply({content:"You can't hop into your own ticket.",flags:64});
+  if(!ticket.openToAll)return interaction.reply({content:"This ticket isn't open to everyone.",flags:64});
+  if(!ticket.claimedBy)return interaction.reply({content:"Nobody has claimed this yet — press Claim Ticket instead.",flags:64});
+  if(ticket.reported)return interaction.reply({content:"This ticket is flagged — an owner needs to review it first.",flags:64});
+  const owner=isOwner(uid,interaction.member);
+  if(isSuspended(uid)&&!owner)return interaction.reply({content:"Your exchanger access is suspended pending owner review.",flags:64});
+  if(isOnHold(uid)&&!owner)return interaction.reply({content:"Joining tickets is paused while an owner reviews recent activity on your account.",flags:64});
+  if(uid===ticket.claimedBy||(ticket.hoppedIn&&ticket.hoppedIn[uid]))return interaction.reply({content:"You're already in this ticket.",flags:64});
+  try{await ch.permissionOverwrites.edit(interaction.user,_CLAIM_PERMS);}
+  catch(e){console.error("[hopin] permission edit failed:",e.message);return interaction.reply({content:"Couldn't add you to this ticket (permission update failed). Try again.",flags:64});}
+  ticket.hoppedIn={...(ticket.hoppedIn||{}),[uid]:Date.now()};
+  _mem.tickets=tickets;save("tickets",tickets);
+  await interaction.reply({content:"You're in — you can talk in this ticket now.",flags:64}).catch(()=>{});
+  await ch.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Exchanger Joined")
+    .setDescription(`<@${uid}> hopped in to help <@${ticket.claimedBy}>.`).setTimestamp()],allowedMentions:{parse:[]}}).catch(()=>{});
+  log(interaction.guild,`HOP IN: #${ch.name} | ${uid} | claimed by ${ticket.claimedBy}`);
+}
+
+// ── Safety system ────────────────────────────────────────────
+// Reads each claimed ticket for signs a client may need help, and answers in proportion. Nothing is said in the ticket
+// until it is time to act: every signal below caution is only written to the log channel.
+//   watch    (25+)  logged for the owners; nothing visible in the ticket
+//   caution  (50+)  the exchanger can't claim new tickets · the client gets a calm "Safety Check" · owners are
+//                   alerted (Clear / Freeze) · the exchanger's other clients are checked in on sooner
+//   critical (80+)  the ticket is paused and the exchanger frozen, exactly like a client flag
+// Owners, and any ticket an owner claims or opens, are never analysed, held or frozen.
+// Owners clear an exchanger of all doubt with /clearexchanger, $clear, /reinstate or the alert's Clear button (liftRestrictions).
+// Turn the whole thing off with the environment variable SAFETY_SYSTEM=off.
+const SAFETY={
+  enabled:process.env.SAFETY_SYSTEM!=="off",
+  levels:{watch:25,caution:50,critical:80},
+  rank:{watch:1,caution:2,critical:3},
+  caps:{accuse:100,missing:40,chase:36,worry:16,steer:70,silent:25},   // most one kind of signal can add
+  points:{accuse:50,missing:20,chase:12,worry:8,silent:20},
+  confirmMs:90*1000,           // "did you send?" only counts if nobody answered it by then
+  repeatMs:20*60*1000,         // ...unless it's the 3rd+ in this window (stalling replies can't reset it)
+  silentMs:10*60*1000,         // a client waiting this long after paying or complaining = silent exchanger
+  holdMs:6*60*60*1000,         // a caution hold lifts by itself after this, unless an owner acts sooner
+  clearedBonus:25,             // a ticket an owner cleared needs stronger evidence to be flagged again
+  heldBonus:10                 // an exchanger already on hold is judged a little stricter in their other tickets
+};
+// Random check-ins: each ticket rolls once, when the exchanger can talk, and these odds decide whether it gets one
+const CHECKIN_ODDS={base:0.30,perOther:0.15,maxOthers:0.45,big:[[250,0.20],[100,0.10]],atRisk:0.30};
+const _safety=new Map();       // channelId -> live conversation state (not saved; it rebuilds as people talk)
+let _safetySweepRunning=false;
+
+// ---- 1. Reading the conversation (pure text rules, no Discord calls) ----
+const _NEG=/\b(?:not|never|no|nothing|none|without|didn'?t|haven'?t|hasn'?t|wasn'?t|isn'?t|won'?t|can'?t|couldn'?t|don'?t|doesn'?t|aren'?t|weren'?t|wouldn'?t)\b/;
+function _norm(raw){
+  return String(raw||"").toLowerCase()
+    .replace(/<a?:\w+:\d+>/g," ").replace(/<[@#&!]+\d+>/g," ").replace(/https?:\/\/\S+/g," ")
+    .replace(/[\u2018\u2019]/g,"'").replace(/([a-z])\1{2,}/g,"$1").replace(/\s+/g," ").trim();
+}
+function _hasNeg(t){return _NEG.test(t.replace(/\bno\s+(?:problem|problems|worries|rush|issue|issues)\b/g," "));}
+const _C={
+  // an outright accusation or demand, however it's phrased
+  accuseHard:[
+    /\b(?:scamm?(?:ed|ing)|stole|stolen|robbed|robbing)\s+(?:me|my)\b/,
+    /\byou\s+(?:just\s+|really\s+|actually\s+)?(?:scamm?ed|stole|robbed|ripped|conned|cheated)\b/,
+    /\b(?:ripped|rip|ripping)\s+(?:me\s+)?off\b/,
+    /\b(?:i|im|i'm|ive|i've|i\s+am|i\s+was|i\s+got|i\s+have\s+been|i\s+been|got|been)\s+(?:(?:just|literally|being|been|gotten|really|so|totally)\s+)*(?:scamm?ed|robbed|cheated|conned)\b/,
+    /\b(?:money|funds?|crypto|coins?|payment|cash)\s+back\b|\bback\s+(?:my|the)\s+(?:money|funds?|crypto|coins?|payment|cash)\b/,
+    /\b(?:give|return|pay)\s+me\s+(?:back\s+)?my\s+(?:money|funds?|crypto|coins?|btc|ltc|usdt|eth|sol|payment|cash)\b/,
+    /\b(?:give|send|return|pay)\s+(?:me\s+)?(?:back\s+)?(?:my|the)\s+(?:money|funds?|crypto|coins?|btc|ltc|usdt|eth|sol|payment|cash)\s+back\b/,
+    /\b(?:give|send|return|pay)\s+(?:me\s+)?back\s+(?:my|the)\s+(?:money|funds?|crypto|coins?|btc|ltc|usdt|eth|sol|payment|cash)\b/,
+    /\b(?:refund|chargeback|charge\s+back)\b/,
+    /\b(?:keeping|kept|keep|took|taking|take|holding)\s+(?:all\s+)?(?:of\s+)?my\s+(?:money|funds?|crypto|coins?|payment|btc|ltc|usdt|eth|sol|cash)\b/,
+    /\b(?:report(?:ing)?|expos(?:e|ing)|sue|suing)\s+(?:you|u|him|her|this)\b/,
+    /\b(?:calling|call|contact(?:ing)?|going\s+to|go\s+to)\s+(?:the\s+)?(?:police|cops|fbi|rcmp)\b/,
+    /\b(?:calling|call|contact(?:ing)?)\s+(?:the\s+|my\s+)?(?:bank|paypal|cash\s*app)\b[^.?!]{0,40}\b(?:dispute|report|reverse|chargeback|scam|scammed|fraud|stolen|steal|refund|back)\b/,
+    /\b(?:going|gonna|will|i'?ll|im\s+going)\s+(?:to\s+)?dispute\b/,
+    /\b(?:send|give|return|pay|put|transfer)\s+(?:it|them|that|this|everything|all\s+of\s+it)\s+back\b/,
+    /\bi\s+(?:want|need|demand)\s+(?:it|them|that|my\s+\w+|the\s+\w+|everything)\s+back\b/,
+    /\b(?:lawyer|attorney|legal\s+action|cyber\s*crime|authorities|rcmp|interpol)\b/,
+    /\bwarn(?:ing)?\s+(?:everyone|everybody|others|people|the\s+(?:server|community))\b/,
+    /\b(?:get|have)\s+(?:you|u)\s+(?:banned|blacklisted|arrested)\b|\bban\s+(?:you|u)\b/,
+    /\bstop\s+lying\b/,
+    /\breturn\s+(?:my|the)\s+(?:money|funds?|crypto|coins?|btc|ltc|usdt|eth|sol|payment|cash)\b/
+  ],
+  // accusation wording that is only an accusation when it isn't a question ("are you a scammer?" is a worry)
+  accuseSoft:[
+    /\byou(?:'?re|\s+are|\s+r|\s+ur)?\s+(?:(?:a|the|just|literally|really|trying\s+to|tryna|gonna|such\s+a)\s+)*(?:scamm?(?:er|ers|ing|ed)?|thief|stealing|steal|fraud|fraudster|fake)\b/,
+    /\b(?:u|ur|ya|your)\s+(?:(?:a|just|such\s+a)\s+)*(?:scamm?(?:er|ers|ing|ed)?|thief|fraud|fake)\b/,
+    /\b(?:he|she|they|this\s+(?:guy|dude|person|man|girl|exchanger))\s+(?:(?:is|are|was|just|literally|a)\s+)*(?:scamm?(?:er|ers|ing|ed)?|stealing|thief|fraud)\b/,
+    /\b(?:this|that|it)\s+(?:is|was|'?s)\s+(?:a\s+)?(?:scam|fraud|theft|robbery)\b/,
+    /^(?:scammer|scam|thief|fraud)[\s!.]*$/
+  ],
+  // the client says something hasn't arrived
+  missing:[
+    /\b(?:haven'?t|have\s+not|hasn'?t|has\s+not|didn'?t|did\s+not|never|not\s+yet|yet\s+to)\s+(?:received|receive|seen|see|find|found|gotten|get|got)\s+(?:it|them|anything|any|the\s+(?:money|funds?|crypto|payment|coins?)|my\s+(?:money|funds?|crypto|payment|coins?))\b(?!\s+(?:address|link|details?|info|instructions?|method|page|button|qr|code|tag|name|email))/,
+    /\b(?:haven'?t|have\s+not|hasn'?t|has\s+not|didn'?t|did\s+not|never|not\s+yet|yet\s+to)\s+(?:received|receive)\b/,
+    /\b(?:don'?t|do\s+not|can'?t|cannot|can\s+not|couldn'?t)\s+(?:see|find|receive)\s+(?:it|them|anything|any|the\s+(?:money|funds?|crypto|payment|coins?)|my\s+(?:money|funds?|crypto|payment|coins?))\b(?!\s+(?:address|link|details?|info|instructions?|method|page|button|qr|code|tag|name|email))/,
+    /\bnot\s+(?:yet\s+)?received\b/,
+    /\b(?:nothing|no\s+(?:money|funds?|payment|crypto|coins?|btc|ltc|usdt|eth|sol|transfer|deposit|notification))\s+(?:yet|here|arrived|came|has|have|hasn'?t|received|showing|in|on|from|through|at\s+all)\b/,
+    /\b(?:received|got|get|see|seen)\s+(?:nothing(?!\s+(?:wrong|bad|weird|suspicious|off|odd|strange|special|else|more|new|unusual))|no\s+(?:money|funds?|payment|crypto|coins?|transfer))\b/,
+    /\bwhere(?:'?s|\s+is|\s+are|\s+r)?\s+(?:my|the|our)\s+(?:\w+\s+){0,2}(?:money|funds?|crypto|coins?|payment|btc|ltc|usdt|eth|sol|transfer|order|stuff)\b/,
+    /\bwhere(?:'?s|\s+is)\s+it\b/,
+    /\b(?:not|isn'?t|aren'?t|hasn'?t|haven'?t)\s+(?:showing|arrived|in\s+my|come\s+through|come\s+in|reflect(?:ing|ed)|appear(?:ing|ed))\b/,
+    /\b(?:isn'?t|aren'?t|hasn'?t|haven'?t)\s+(?:here|there)\b/,
+    /\b(?:you|u|he)\s+(?:still\s+)?(?:didn'?t|did\s+not|never|haven'?t|have\s+not)\s+(?:send|sent|pay|paid|transfer(?:red)?|give|gave)\b/,
+    /\bstill\s+(?:nothing|no\s+(?:money|funds?|crypto|payment|update|response|reply))\b/
+  ],
+  // impatience: nudges and "are you there?"
+  chase:[
+    /\b(?:did|have|has)\s+(?:you|u|ya|he)\s+(?:already\s+)?(?:send|sent|pay|paid|transfer(?:red)?|check(?:ed)?|receive[d]?|get|got|confirm(?:ed)?|do|done|look(?:ed)?|see|seen)\b(?!\s+(?:this|that|it|these|those)\s+before)/,
+    /\b(?:you|u)\s+(?:sent|send|sending)\s*\?/,
+    /\b(?:sent|paid|done)\s+yet\b|\byet\s*\?/,
+    /\b(?:any|no)\s+(?:update|updates|news|progress)\b/,
+    /\bupdate\s*\?/,
+    /\bwhat'?s\s+(?:the\s+)?(?:update|status|delay|holding\s+(?:it|this)\s+up|taking\s+so\s+long)\b/,
+    /\bhow\s+long\b/,
+    /\btaking\s+(?:so\s+)?(?:long|forever|ages)\b/,
+    /\bhurry(?:\s+up)?\b|\bcome\s+on\b|\bany\s+(?:minute|time)\s+now\b|\bplease\s+(?:respond|reply|answer)\b/,
+    /\b(?:are|r)\s+(?:you|u)\s+(?:there|here|alive|ignoring|even)\b/,
+    /\b(?:you|u)\s+(?:there|here|alive)\s*\?/,
+    /\bhe+l+o+\s*\?|\banyone\s+(?:there|here)\b|\bwhere\s+(?:are|r|did)\s+(?:you|u|he)(?!\s+(?:from|located|based|live|living|stay|staying|send|sent|get|got|buy|bought|find|found))\b/,
+    /\b(?:ignoring|ignored)\s+me\b|\banswer\s+me\b/,
+    /\bstill\s+waiting\b|\bwaiting\s+(?:for|on)\s+(?:you\b|u\b|ur\s+(?:reply|response|answer|confirmation)|your\s+(?:reply|response|answer|confirmation|message|update)|a\s+(?:response|reply))|\bi'?m\s+waiting\b/,
+    /\b(?:ive|i'?ve|i\s+have|been|have\s+been)\s+(?:been\s+)?waiting\b|\bwaiting\s+(?:forever|ages|so\s+long|too\s+long|a\s+long\s+time)\b/,
+    /\b(?:is|are)\s+(?:it|you|this|that)\s+(?:sent|done|ready|finished|complete|completed|processed|going\s+through|on\s+(?:the|its)\s+way)\b/,
+    /\b(?:sent|paid|done|ready|finished|processed)\s+yet\b/,
+    /\b(?:are|r)\s+(?:you|u)\s+(?:coming|going\s+to\s+come)\s+back\b|\bwhere(?:'?d|\s+did)\s+(?:you|u)\s+go\b/,
+    /\bhow(?:'?s|\s+is)\s+(?:it|that|the\s+(?:send|payment|transfer|order|trade|swap))\s+(?:coming|progressing|looking)\b|\bhow(?:'?s|\s+is)\s+it\s+going\s+with\b/,
+    /\btaking\s+(?:(?:way|so|too|very|really)\s+)*(?:long|forever|ages|slow)\b/,
+    /\b(?:give|need|want|get)\s+(?:me\s+)?(?:an?\s+)?updates?\b/,
+    /\bdo\s+(?:it|this)\s+already\b/,
+    /\bdid\s+(?:it|that|the\s+\w+)\s+(?:go\s+through|work|arrive|land|come\s+through|hit)\b/,
+    /\bany\s+(?:news|luck|progress)\b/,
+    /\bwhat(?:'?s|\s+is)\s+(?:the\s+)?(?:update|status|delay|eta|progress|holding\s+(?:it|this)\s+up|going\s+on|happening|hold\s*up|problem|issue)\b/,
+    /^(?:(?:hello|hey|yo|hi)\s+)?(?:are\s+)?(?:you|u)\s+(?:still\s+)?(?:there|here|alive|awake|around|online)\s*[?!.]*$/,
+    /\b(?:you|u)\s+(?:alive|awake|around|online|active)\s*\?/,
+    /\b(?:anybody|anyone|somebody)\s+(?:home|alive|awake|around|there|here)\b|\b(?:hello|hey|hi|yo)\s+(?:anyone|anybody)\b|\bwake\s+up\b|\b(?:ghost|ghosted|ghosting)\b/,
+    /(?<!\b(?:only|just|barely|hardly)\s)\b(?:been|it'?s|its|it\s+has\s+been)\s+(?:been\s+)?(?:\d+\s*(?:min|mins|minutes?|hours?|hrs?)|an?\s+(?:hour|while|long\s+time)|ages|forever)\b/,
+    /(?<!\b(?:i|i'll|ill|im|will|am|gonna|to|me|we|let)\s)\b(?:send|release|process|confirm|finish|complete)\s+(?:it|this|them|that|everything|my\s+\w+|the\s+\w+)?\s*(?:already|asap)\b/,
+    /^(?:please\s+|pls\s+|plz\s+)?(?:send|release|process|confirm|finish|complete)\s+(?:it|this|them|that|everything)\s+now\b/,
+    /\b(?:respond|reply|answer)\s+(?:me|now|already|please|pls|plz)\b|\b(?:please|pls|plz)\s+(?:respond|reply|answer)\b|\bget\s+back\s+to\s+me\b|\btalk\s+to\s+me\b|\bsay\s+something\b|\bbump\b/
+  ],
+  // "never mind, it just arrived": a worry the client has already put to rest
+  settled:/\b(?:nvm|nevermind|never\s+mind|false\s+alarm|ignore\s+(?:that|me|what\s+i\s+said)|just\s+(?:arrived|came|landed|hit|showed\s+up|got\s+it|received\s+it)|finally\s+(?:arrived|came|got|received|landed|hit|showed\s+up)|(?:it|they|the\s+(?:money|funds|payment|crypto))\s+(?:just\s+|finally\s+)?(?:arrived|came|landed|hit|showed\s+up)\b|got\s+it\s+now|see\s+it\s+now|found\s+it|there\s+it\s+is)\b/,
+  // a short nudge on its own: "hello?", "u there?", "status?", "sent?"
+  shortAsk:/^(?:(?:hello+|hey+|hi+|yo+|bro|sir|man|dude|anyone|anybody|there|here|you|u|alive|awake|update|status|eta|sent|done|ready|wait|waiting)\s*){1,3}\?+$/,
+  // nerves, not trouble
+  worry:[
+    /(?<!\bnot\s)(?<!\bnever\s)(?<!n't\s)\b(?:nervous|scared|worried|worry|worrying|afraid|anxious|sketchy|sus|suspicious|uneasy|hesitant)\b/,
+    /\bhow\s+do\s+i\s+know\b|\bcan\s+i\s+trust\b|\bcan\s+(?:i|we)\s+(?:be\s+)?sure\b/,
+    /\b(?:is|are)\s+(?:this|it|he|she|you|u)\s+(?:legit|legitimate|safe|real|trusted|trustworthy|verified)\b/,
+    /\b(?:legit|safe|trust(?:worthy)?)\s*\?/,
+    /\bwhat\s+if\s+(?:you|u|he|it)\b/,
+    /\b(?:shady|shadey|dodgy|fishy|iffy|risky|uncomfortable|doubtful|skeptical|sceptical)\b|\bnot\s+comfortable\b/,
+    /\b(?:i'?m|im|i\s+am|a\s+bit|bit|little|kinda|kind\s+of|slightly|very|so|quite|really)\s+concerned\b/,
+    /\b(?:unsure|uncertain)\s+(?:about|of)\b|\b(?:unsure|uncertain)\s*$/,
+    /\b(?:i\s+(?:have|got)\s+(?:some\s+|my\s+)?doubts?|doubts?\s+(?:about|that))\b/,
+    /\b(?:not|don'?t|do\s+not)\s+(?:feel\s+)?sure\s+(?:about|of)\b|\b(?:don'?t|do\s+not|not)\s+feel\s+(?:safe|right)\b/,
+    /\b(?:bad|weird|funny|gut)\s+feeling\b|\bred\s+flags?\b|\btrust\s+issues\b|\b(?:don'?t|do\s+not)\s+trust\b/,
+    /\b(?:will|am|would)\s+i\s+(?:(?:really|definitely|actually|even|still)\s+)?(?:get|receive|be\s+paid)\b|\b(?:am|are)\s+i\s+(?:going\s+to|gonna)\s+(?:get|receive)\b/,
+    /\bwhat\s+(?:if|happens\s+if)\s+i\b/,
+    /\bhow\s+(?:safe|secure)\b/,
+    /\b(?:feels?|seems?|looks?)\s+(?:off|wrong|weird|odd|strange|funny|fishy|sketchy|shady|dodgy|suspicious)\b/,
+    /\b(?:a|the|any|what|no)\s+guarantee\b|\bguarantee\s*\?/,
+    /\b(?:calling|call|contact(?:ing)?)\s+(?:the\s+|my\s+)?(?:bank|paypal|cash\s*app)\b/
+  ],
+  // the client says they've sent their side
+  paid:[
+    /\b(?:i|ive|i've)\s+(?:just\s+|already\s+|now\s+|have\s+)*(?:sent|paid|payed|transferred)\b/,
+    /^(?:sent|paid|payed|done|payment\s+sent)\b[\s.!]*(?:it|already|now)?[\s.!]*$/,
+    /\b(?:sent|paid)\s+(?:it|already|just\s+now|the\s+(?:money|funds|payment))\b/
+  ],
+  // the client says it all went through
+  resolved:[
+    /\b(?:received|got\s+(?:it|them|that|the\s+\w+)|arrived|came\s+through|came\s+in|it'?s\s+here|its\s+here|all\s+good|looks?\s+good|perfect|confirmed|thank(?:s|\s+you)|thx|tysm|ty|appreciate\s+it|smooth)\b/
+  ]
+};
+// ---- Meaning layer: different words, same signal ----
+// Nobody types the exact phrases above. The same ideas are also recognised from word groups, so "didn't get it",
+// "haven't received", "not showing up", "where's my money" and "no sign of it" are all one signal ("it hasn't
+// arrived"), and every wording of a signal is worth exactly the same.
+const _W=s=>new Set(s.split(/\s+/));
+const _SLANG={u:"you",ya:"you",yu:"you",ur:"your",r:"are",wat:"what",wut:"what",wht:"what",abt:"about",bc:"because",cuz:"because",
+  pls:"please",plz:"please",plss:"please",nvr:"never",dnt:"dont",cnt:"cant",recieve:"receive",recieved:"received",recive:"receive",
+  recived:"received",recieving:"receiving",arive:"arrive",arived:"arrived",payed:"paid",wen:"when",
+  wheres:"where is",whers:"where is",theres:"there is",whats:"what is",youre:"you are",hes:"he is",shes:"she is",theyre:"they are",
+  thats:"that is",its:"it is",im:"i am",ive:"i have",ill:"i will"};
+const _GETV=_W("get gets got gotten getting receive receives received receiving see sees seen saw seeing find finds found finding deliver delivered");
+const _GETNOW=_W("get gets getting");                                     // "I don't get it" is about understanding, not about money
+const _ARRV=_W("arrive arrives arrived arriving come comes came coming land lands landed landing hit hits reach reaches reached reaching credited reflect reflects reflected reflecting appear appears appeared appearing deliver delivered");
+const _SHOWV=_W("show shows showed showing shown posted update updated process processed clear cleared go goes went going");
+const _ARRIVES=new Set([..._ARRV,..._SHOWV]);
+const _ARRV_NEXT=_W("up in yet here there through on at to into still now anything any so far again either ever for my your the me us mine our this that a an");
+const _SHOW_NEXT=_W("up in yet here there through on at to into still now anything any so far again either ever for");
+const _NEGP=_W("not never nothing none zero nowhere without cannot cant dont doesnt didnt dint dident havent hasnt hadnt isnt arent wasnt werent wont wouldnt couldnt shouldnt aint unable failed fails");
+const _NEGNOW=_W("dont doesnt wont wouldnt");
+const _NEGS=_W("not never hasnt havent hadnt isnt arent wasnt werent didnt doesnt dont wont cant couldnt wouldnt aint");
+const _LIGHT=_W("even yet still really actually ever just quite fully properly completely already the my your a an to be been being able seem seems seemed manage managed has have had did does do is are was were it am i we you they he she");
+const _LEAD=_W("still yet also ok okay hello hey bro wait and now rn it is has have");
+const _STUFF=_W("money moneys funds fund crypto coin coins btc bitcoin ltc litecoin eth ethereum sol solana usdt usdc tether bnb xrp doge payment payments transfer transfers etransfer interac paypal cashapp venmo zelle applepay cash cad usd dollars dollar bucks order orders stuff deposit deposits");
+const _NOTICE=_W("notification notifications notif alert sign signs trace confirmation");
+const _THING=new Set([..._STUFF,..._NOTICE,..._W("it them anything something everything")]);
+const _ADDR=_W("address addr details detail link links info information instructions instruction method methods option options qr code page button menu section tab screen screenshot tag cashtag handle username user name id number email phone contact key");
+const _SUBJ=new Set([..._STUFF,..._W("it they them that this those these")]);
+const _TAILMARK=_W("yet still at all either anywhere anymore ever so far from paid");
+const _PRED=_W("here there visible available present");
+const _CALM=/\b(?:no\s+(?:rush|hurry|pressure|worries|problem|problems|stress)|not\s+(?:in\s+a\s+)?(?:rush|hurry|urgent)|(?:don'?t|do\s+not)\s+(?:worry|rush|stress)|nothing\s+to\s+(?:worry|be\s+worried|be\s+nervous|fear)(?:\s+about)?|take\s+your\s+time|whenever\s+you\s+(?:can|like|want|are\s+ready)|when\s+you\s+(?:can|are\s+ready|get\s+a\s+chance)|at\s+your\s+(?:own\s+)?pace|no\s+need\s+(?:to|for)\s+(?:rush|hurry|worry|stress|panic)|(?:don'?t|do\s+not)\s+(?:need|have)\s+to\s+(?:rush|hurry)|there'?s\s+no\s+(?:need\s+to\s+)?(?:rush|hurry))\b/g;
+const _PRESS=_W("hurry asap urgent urgently quickly faster rush rushing immediately");
+const _ACCW=_W("scammer scammers scammed scamming scammin fraud fraudster fraudulent thief thieves steal stealing steals stole stolen rob robbed robbing cheat cheated cheating cheater conned conman swindle swindled swindler crook crooked criminal liar lying lied fake phony");
+const _ACCS=_W("you your he she they exchanger guy dude person man girl this that");
+const _ACCFILL=_W("a an the just really such literally actually definitely obviously clearly totally so very big dirty little stupid fucking damn is are was were am be being been to");
+const _STAT=_W("eta status update updates progress news");
+const _DET=_W("the my our your that those this these");
+// what a message looks like once slang, apostrophes and money spellings are tidied: a list of short clauses of plain words
+const _clauses=t=>String(t)
+  .replace(/(\d)[.,](\d)/g,"$1$2").replace(/'/g,"").replace(/\be[\s-]?transfer\b/g,"etransfer").replace(/\bcash\s*app\b/g,"cashapp")
+  .replace(/\bapple\s*pay\b/g,"applepay").replace(/\byet\s+to\b/g,"not").replace(/\bno\s+longer\b/g,"not")
+  .split(/[.!?;:,\n]+|\bbut\b|\bhowever\b|\bso\b/)
+  .map(c=>c.split(/[^a-z0-9$]+/).filter(Boolean).flatMap(w=>(_SLANG[w]||w.replace(/^\$/,"")).split(" ")))
+  .filter(c=>c.length);
+const _skip=(c,i)=>{while(i<c.length&&_LIGHT.has(c[i]))i++;return i;};
+// an arrival verb that really says "it didn't show up" (and not "it doesn't show the address")
+const _arrived=(c,k)=>{
+  const w=c[k],next=c[k+1];
+  if(["go","goes","went","going"].includes(w))return next==="through";
+  return next===undefined||(_SHOWV.has(w)?_SHOW_NEXT:_ARRV_NEXT).has(next);
+};
+const _nearBank=(c,k)=>c[k]==="in"&&(c[k+1]===undefined||c[k+1]==="yet"||["my","your","the","mine","account","wallet","bank"].includes(c[k+1]));
+const _notThere=(c,k)=>(_ARRIVES.has(c[k])&&_arrived(c,k))||_PRED.has(c[k])||_nearBank(c,k);
+// "it hasn't arrived": the client says what they were promised isn't there, in any of its wordings
+function _meansMissing(c,all){
+  if(all.some(w=>w==="before"||w==="until"||w==="since"))return false;            // "I've never seen this before"
+  let lead=0;while(lead<c.length&&_LEAD.has(c[lead]))lead++;
+  if(_NEGS.has(c[lead])&&_notThere(c,_skip(c,lead+1)))return true;                 // "hasn't arrived" | "still not here" | "doesn't show up"
+  for(let i=0;i<c.length;i++){
+    const w=c[i];
+    // 1. a negative, a few light words, then a receiving verb:  didn't get | haven't received it | can't see anything
+    if(_NEGP.has(w)){
+      const j=_skip(c,i+1),v=c[j];
+      if(_GETV.has(v)&&!(_GETNOW.has(v)&&_NEGNOW.has(w))){
+        const tail=c.slice(j+1,j+4);
+        if(!tail.length||_TAILMARK.has(tail[0])||(tail.length===1&&tail[0]==="any"))return true;
+        for(let k=0;k<tail.length;k++){
+          if(_THING.has(tail[k])&&!_ADDR.has(tail[k+1]||"")&&!(k>0&&_ADDR.has(tail[k-1])))return true;
+        }
+      }
+      // "nothing came through" / "nothing is showing" / "nothing here" / "nothing in my account"
+      if((w==="nothing"||w==="none")&&_notThere(c,_skip(c,i+1)))return true;
+      if(w==="nothing"&&i>0&&i===c.length-1&&["is","still","there","here","yet"].includes(c[i-1]))return true;     // "theres nothing"
+    }
+    // 2. receiving (or showing), then nothing:  received nothing | got no money | cashapp shows nothing
+    if(_GETV.has(w)||["show","shows","showing","showed"].includes(w)){
+      const a=c[i+1],b=c[i+2];
+      if(a==="nothing"||a==="none"||a==="nada"){if(!["wrong","bad","weird","suspicious","off","odd","strange","special","else","more","new","unusual"].includes(b))return true;}
+      if((a==="no"||a==="zero")&&(_STUFF.has(b)||_NOTICE.has(b)))return true;
+    }
+    // 3. something that should be there, isn't:  the money hasn't arrived | it isn't showing up | payment not here
+    if(_SUBJ.has(w)){
+      const n=_skip(c,i+1);
+      if(_NEGS.has(c[n])&&_notThere(c,_skip(c,n+1)))return true;
+    }
+    // 4. "no" + the thing, at the start of what they say:  no money yet | no sign of it | no notification
+    if(w==="no"&&(i===0||["still","yet","and","ok","okay","hello","hey","hi","yo","bro","wait","there","theres","see","saw"].includes(c[i-1]))){
+      const x=c[i+1];
+      if(_STUFF.has(x)||_NOTICE.has(x)||x==="email")return true;
+    }
+    // 5. where is it | where's my money | where did it go
+    if(w==="where"&&i<=2&&c.slice(0,i).every(p=>_W("ok so hello hey hi yo bro wait and um uh sir man dude wtf tf").has(p))){
+      let k=i+1;
+      if(["is","are","was","were","did","does"].includes(c[k]))k++;
+      if(["it","they","them","that","this","those","these"].includes(c[k])&&!["send","sending","find","see","check"].includes(c[k+1]))return true;
+      if(_DET.has(c[k])||_STUFF.has(c[k])){
+        for(let m=k;m<c.length&&m<=k+3;m++){
+          if(_STUFF.has(c[m])&&!_ADDR.has(c[m+1]||""))return true;
+          if(["address","wallet","qr","ticket","exchanger","link","tag","cashtag","email","number","info","details","instructions","screenshot","proof"].includes(c[m]))break;
+        }
+      }
+    }
+    // 6. still pending | still waiting for my money | waiting on my payment
+    if(w==="still"){
+      for(let j=i+1;j<c.length&&j<=i+2;j++){
+        if(["pending","processing","empty","zero","missing","unpaid","unsent","unreceived"].includes(c[j]))return true;
+      }
+    }
+    if((w==="waiting"||w==="waited")&&["for","on"].includes(c[i+1])){
+      for(let m=i+2;m<c.length&&m<=i+5;m++){
+        if(_STUFF.has(c[m])&&!_ADDR.has(c[m+1]||""))return true;
+        if(!_DET.has(c[m])&&!_STUFF.has(c[m]))break;
+      }
+    }
+    // 7. the balance says so:  balance is 0 | wallet is empty | account hasn't changed
+    if(["balance","wallet","account","acct","bank"].includes(w)){
+      for(let j=i+1;j<c.length&&j<=i+5;j++){
+        if(["zero","empty","unchanged","0","00","000"].includes(c[j]))return true;
+        if(c[j]==="same"&&c.slice(i+1,j).includes("still"))return true;
+        if(_NEGS.has(c[j])&&["change","changed","update","updated","increase","increased","refresh","refreshed","move","moved","budge","budged","reflect","reflected","reflecting","changing","updating"].includes(c[j+1]||""))return true;
+      }
+    }
+    // 8. gone | missing | vanished
+    if(["missing","gone","vanished","disappeared","stuck"].includes(w)){
+      for(let j=Math.max(0,i-3);j<i;j++){if(_STUFF.has(c[j]))return true;}
+    }
+  }
+  return false;
+}
+// impatience in any wording: "when will you send it", "how much longer", "hurry", "status?"
+function _meansChase(c){
+  for(let i=0;i<c.length;i++){
+    const w=c[i];
+    if(w==="when"&&i<=2){
+      const a=c[i+1],s=c[i+2],v=c.slice(i+3,i+6);
+      if(["will","are","do","does","can","could","would","is","am","gonna"].includes(a)){
+        if(["you","he","it"].includes(s)&&v.some(x=>["send","sending","sent","pay","paying","transfer","transferring","ready","done","finish","finished","arrive","arriving","come","coming","reply","respond","back","here","online"].includes(x)))return true;
+        if(s==="i"&&v.some(x=>["get","receive","see"].includes(x)))return true;
+      }
+    }
+    if(w==="how"&&(["soon","longer"].includes(c[i+1])||(c[i+1]==="much"&&c[i+2]==="longer")||(c[i+1]==="many"&&c[i+2]==="more")))return true;
+    if(_PRESS.has(w)&&!c.slice(Math.max(0,i-3),i).some(x=>["no","not","dont","never","without","nothing"].includes(x)))return true;
+    if(_STAT.has(w)&&c.length<=3)return true;
+  }
+  return false;
+}
+// the client turns on the exchanger, in any wording ("you're a liar", "he is a fraud", "they scammed me")
+function _meansAccuse(c){
+  for(let i=0;i<c.length;i++){
+    if(!_ACCW.has(c[i]))continue;
+    for(let j=i-1;j>=0&&j>=i-4;j--){
+      if(_NEGP.has(c[j])||c[j]==="no")break;
+      if(_ACCS.has(c[j])){
+        const before=c.slice(Math.max(0,j-4),j);                               // "I don't think you're a scammer"
+        if(!(before.some(x=>_NEGP.has(x))&&before.some(x=>["think","believe","say","said","feel","suppose","guess","imply"].includes(x))))return true;
+        break;
+      }
+      if(!_ACCFILL.has(c[j]))break;
+    }
+  }
+  return false;
+}
+// What the client's message says: {kind: accuse|missing|chase|worry|null, paid, resolved}
+function analyzeClientText(raw){
+  const s=String(raw||""),q=(s.match(/\?/g)||[]).length;
+  const t=_norm(s).replace(_CALM," ").replace(/\s+/g," ").replace(/^[\s,.;:!-]+/,"").trim();    // "no rush", "take your time", "don't worry" are calm, not signals
+  const out={kind:null,paid:false,resolved:false};
+  if(!t&&!q)return out;
+  const asks=q>0&&/^(?:are|r|is|am|isn'?t|aren'?t|do|does|can|could|should|would|will|what|how|why|who|where|when|which)\b/.test(t);
+  const any=list=>list.some(re=>re.test(t));
+  const cl=_clauses(t),all=cl.flat();
+  const acc=any(_C.accuseHard)||(!asks&&(any(_C.accuseSoft)||cl.some(_meansAccuse)));
+  const history=/\b(?:before|previously|in\s+the\s+past|last\s+(?:time|year|month|week)|years?\s+ago|months?\s+ago|used\s+to|once|twice)\b/.test(t)&&!/\b(?:you|u|ur|your|yours|him|her|this\s+(?:guy|dude|person|man|girl|exchanger))\b/.test(t);
+  const missing=any(_C.missing)||cl.some(c=>_meansMissing(c,all));
+  const chase=any(_C.chase)||_C.shortAsk.test(t)||cl.some(_meansChase);
+  if(acc&&!history)out.kind="accuse";
+  else if(missing)out.kind="missing";
+  else if(chase)out.kind="chase";
+  else if(acc||any(_C.worry)||/\bscamm?(?:ed|ers?|ing|s)?\b/.test(t))out.kind="worry";
+  else if(q>=2||/^[\s?!.]*\?[\s?!.]*$/.test(s))out.kind="chase";
+  if(out.kind&&out.kind!=="accuse"&&_C.settled.test(t)){out.kind=null;out.resolved=true;}   // "never mind, it just arrived"
+  if(!asks&&any(_C.paid))out.paid=true;
+  if(!out.kind&&!q&&!out.paid&&!out.resolved&&any(_C.resolved)&&!_hasNeg(t))out.resolved=true;
+  return out;
+}
+// What the exchanger's message says: {pts, why} when they steer the client away from the ticket
+const _SAFE_HOSTS=/(?:^|\.)(?:discord\.com|discordapp\.com|discordapp\.net|discord\.media|tenor\.com|giphy\.com|imgur\.com|paypal\.com|paypal\.me|cash\.app|venmo\.com|zellepay\.com|blockchair\.com|blockchain\.com|blockchain\.info|etherscan\.io|bscscan\.com|polygonscan\.com|arbiscan\.io|solscan\.io|tronscan\.org|mempool\.space|blockcypher\.com|xrpscan\.com)$/;
+const _APP_HOSTS=/(?:^|\.)(?:t\.me|telegram\.(?:me|org)|wa\.me|wa\.link|whatsapp\.com|signal\.me|snapchat\.com|instagram\.com|ig\.me|kik\.com|wickr\.com|skype\.com)$/;
+const _STEER=[    // [pattern, points, what it means, tag, ignore-if]  -- every way of moving the client off the ticket is worth the same: 40
+  [/\b(?:telegram|tele|tg|whats\s*app|wa|snap\s*chat|snapchat|instagram|insta|kik|wickr|viber|wechat|skype|facetime|imessage)\b|\b(?:my|on|add|via|use|through)\s+snap\b|\bsnap\s*(?:me|id|name|user)\b|\bon\s+signal\b|\bsignal\s+(?:app|me)\b/,40,"asked to move to another app"],
+  [/(?<!\b(?:not|never|don'?t|dont|won'?t|wont)\s)\b(?:dm|pm|dms|pms|inbox)\s+me\b|\bhit\s+(?:me|my)\s+(?:up|dms?|inbox)\b|\bslide\s+(?:in|into)\b/,40,"asked to move to DMs"],
+  [/\b(?:msg|message|text|contact|hmu|call|reach|find)\s+me\s+(?:privately|in\s+private|directly|off|outside|via|through|at|on\s+(?!here\b|the\b|this\b)\w+)/,40,"asked to move to DMs"],
+  [/\b(?:in|to|via|through|on|over)\s+(?:the\s+)?(?:dms?|pms?|private(?:ly)?|direct\s+messages?)\b/,40,"asked to move to DMs"],
+  [/\b(?:let'?s|lets|we\s+can|can\s+we|come|move|switch|go|talk|continue|chat|take\s+(?:this|it))\b[^.?!]{0,30}\b(?:dms?|pms?|privately|elsewhere|off\s+(?:the\s+)?(?:ticket|server|discord|platform))\b/,40,"asked to move to DMs"],
+  [/\b(?:add|friend|follow)\s+me\b/,40,"asked to connect outside the ticket"],
+  [/\b(?:outside|off|away\s+from)\s+(?:of\s+)?(?:the\s+|this\s+)?(?:ticket|server|discord|platform)\b|\b(?:go|move|switch|come|join|talk|chat|continue|take\s+(?:this|it)|get)\b[^.?!]{0,25}\b(?:another|other|different|separate|my)\s+(?:server|chat|group|platform)\b|\b(?:in|to|use|start|open|make|join|do|have|take)\s+(?:a\s+|the\s+|my\s+)?private\s+(?:chat|convo|conversation|group)\b|\b(?:private\s+(?:chat|convo|conversation|group)|(?:another|other|different|separate|my)\s+(?:server|chat|group|platform|app))\s+(?:is|would\s+be|will\s+be)\s+(?:better|easier|safer|best)\b/,40,"asked to deal outside the ticket"],
+  [/\b(?:skip|no\s+need\s+for|don'?t\s+need|do\s+not\s+need|forget|ignore|avoid|bypass|not\s+(?:using|use|need))\s+(?:the\s+|a\s+|an\s+|any\s+)?(?:mm|middle\s*man|escrow)\b/,40,"pushed to skip the middleman","mm"],
+  [/\b(?:mm|middle\s*man|escrow)\s+(?:(?:isn'?t|is\s+not|not|aint)\s+(?:needed|necessary|required)|(?:is\s+)?(?:unnecessary|pointless|a\s+waste))\b|\bno\s+(?:mm|middle\s*man|escrow)\s+(?:needed|necessary|required)\b/,40,"pushed to skip the middleman","mm"],
+  [/\b(?:do|doing|go|going|proceed|proceeding|trade|trading|send|sending|deal|dealing|work|working|swap|swapping)\b[^.?!]{0,25}\bwithout\s+(?:the\s+|a\s+|an\s+|any\s+)?(?:mm|middle\s*man|escrow)\b/,40,"pushed to skip the middleman","mm",/\b(?:won'?t|can'?t|cannot|never|not|don'?t|do\s+not|refuse|unless|only)\b/],
+  [/\btrust\s+me\b[^.?!]{0,40}\b(?:send|pay|first)\b/,40,"pressured the client to send first"]
+];
+// underLimit: the exchanger is within their go-first limit, so "no middleman needed" is simply true
+function analyzeExchangerText(raw,{underLimit=false}={}){
+  const s=String(raw||""),t=_norm(s);
+  let best={pts:0,why:null};
+  const take=(pts,why)=>{if(pts>best.pts)best={pts,why};};
+  for(const [re,pts,why,tag,unless] of _STEER){
+    if(tag==="mm"&&underLimit)continue;
+    if(re.test(t)&&!(unless&&unless.test(t)))take(pts,why);
+  }
+  String(s).replace(/https?:\/\/([^\s/<>)]+)([^\s<>)]*)/gi,(m,h,p)=>{
+    const host=h.toLowerCase().replace(/:\d+$/,"");
+    if(host==="discord.gg"||(/(?:^|\.)discord(?:app)?\.com$/.test(host)&&/^\/invite\b/i.test(p)))take(40,"shared a server invite");
+    else if(_APP_HOSTS.test(host))take(40,"asked to move to another app");
+    else if(!_SAFE_HOSTS.test(host))take(20,"shared an outside link");
+    return m;
+  });
+  if(/(?:^|[\s(])(?:discord\.gg|dsc\.gg|discord(?:app)?\.com\/invite)\/[\w-]+/i.test(s))take(40,"shared a server invite");
+  if(/(?:^|[\s(])(?:t\.me|telegram\.me|wa\.me)\/\S+/i.test(s))take(40,"asked to move to another app");
+  return best;
+}
+
+// ---- 2. Scoring ----
+function riskScore(by){
+  let s=0;
+  for(const [k,v] of Object.entries(by||{}))s+=Math.min(SAFETY.caps[k]||0,v||0);
+  return Math.min(100,s);
+}
+function riskLevelFor(score,adj=0){
+  const L=SAFETY.levels;
+  if(score>=L.critical+adj)return "critical";
+  if(score>=L.caution+adj)return "caution";
+  if(score>=L.watch+adj)return "watch";
+  return null;
+}
+// Adds a signal. Levels only ever rise here; returns the new level when it just went up, else null.
+function addRisk(t,cid,kind,pts,note){
+  if(!t.riskByKind)t.riskByKind={};
+  t.riskByKind[kind]=Math.min(SAFETY.caps[kind]||0,(t.riskByKind[kind]||0)+pts);
+  t.riskScore=riskScore(t.riskByKind);
+  if(note){
+    if(!t.riskNotes)t.riskNotes=[];
+    t.riskNotes.push(String(note).slice(0,110));
+    if(t.riskNotes.length>8)t.riskNotes.splice(0,t.riskNotes.length-8);
+  }
+  const h=_mem.holds&&_mem.holds[t.claimedBy];
+  const heldElsewhere=!!(h&&isOnHold(t.claimedBy)&&h.channelId!==cid);
+  const adj=(t.riskCleared?SAFETY.clearedBonus:0)-(heldElsewhere?SAFETY.heldBonus:0);
+  const lvl=riskLevelFor(t.riskScore,adj);
+  if(lvl&&SAFETY.rank[lvl]>(SAFETY.rank[t.riskLevel]||0)){t.riskLevel=lvl;return lvl;}
+  return null;
+}
+function clearTicketRisk(t,{byOwner=true}={}){
+  delete t.riskByKind;delete t.riskScore;delete t.riskLevel;delete t.riskNotes;delete t.alertedRank;
+  if(byOwner)t.riskCleared=true;
+}
+// Everything safety-related that belongs to one exchanger's claim (used when a ticket goes back to the queue)
+function resetSafetyFields(t){
+  clearTicketRisk(t,{byOwner:false});
+  delete t.riskCleared;delete t.safetyNoticeAt;delete t.siblingsNotified;delete t.clientHeld;
+  delete t.checkinPlan;delete t.checkinRolls;
+}
+function exchangerRisk(tickets,exId){
+  let m=0;
+  for(const t of Object.values(tickets||{}))if(t&&t.status==="open"&&t.claimedBy===exId&&!t.ownerClaim)m=Math.max(m,t.riskScore||0);
+  return m;
+}
+
+// ---- 3. Holds: a flagged exchanger can't take new tickets until an owner has looked ----
+function isOnHold(userId){
+  const h=_mem.holds&&_mem.holds[userId];
+  return !!h&&(!h.expiresAt||h.expiresAt>Date.now());
+}
+function placeHold(guild,cid,t,level){
+  const ex=t.claimedBy;
+  if(!ex||isOwner(ex))return false;
+  if(!_mem.holds)_mem.holds={};
+  const prev=_mem.holds[ex],now=Date.now();
+  if(prev&&SAFETY.rank[prev.level]>=SAFETY.rank[level]){   // already at least this serious: just keep it alive
+    if(prev.expiresAt)prev.expiresAt=Math.max(prev.expiresAt,now+SAFETY.holdMs);
+  }else{
+    _mem.holds[ex]={level,score:t.riskScore||0,channelId:cid,clientId:t.userId,amountUSD:parseFloat(t.amountUSD)||0,guildId:guild&&guild.id||null,
+      reason:(t.riskNotes||[]).slice(-3).join(" \u00B7 ").slice(0,300),at:now,expiresAt:level==="critical"?null:now+SAFETY.holdMs};
+  }
+  save("holds",_mem.holds);
+  return true;
+}
+// Used by /clearexchanger, $clear, /reinstate and the Clear button: lifts the freeze and the hold, wipes the risk marks and
+// anything still waiting to be counted, cancels early check-ins that only existed because of the doubt, and tells clients
+// who were asked to hold off that the review is over
+async function liftRestrictions(guild,exId){
+  const out={suspended:isSuspended(exId),held:!!(_mem.holds&&_mem.holds[exId]),restored:0,cleared:0,pending:0,checkins:0,notified:0};
+  if(out.suspended){delete _mem.suspensions[exId];save("suspensions",_mem.suspensions);}
+  if(out.held){delete _mem.holds[exId];save("holds",_mem.holds);}
+  const tk=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
+  const panels=[],told=[],replan=[];let dirty=false;
+  for(const [cid,t] of Object.entries(tk)){
+    if(!t||t.status!=="open")continue;
+    if(t.reported&&t.reportedExchanger===exId){delete t.reported;panels.push(cid);dirty=true;}
+    if(t.claimedBy!==exId)continue;
+    const S=_safety.get(cid);                                    // worries still waiting to be counted, and the waiting timers
+    if(S){out.pending+=S.pending.length;_safety.delete(cid);}
+    if(t.riskLevel||t.riskScore){clearTicketRisk(t);out.cleared++;dirty=true;}
+    if(t.checkinPlan==="forced"&&!t.checkinSentAt){delete t.checkinAt;delete t.checkinPlan;replan.push([cid,t]);out.checkins++;dirty=true;}   // an early check-in that only existed because of the doubt
+    if(t.safetyNoticeAt||t.siblingsNotified){delete t.safetyNoticeAt;delete t.siblingsNotified;dirty=true;}
+    if(t.clientHeld){delete t.clientHeld;told.push(cid);dirty=true;}
+  }
+  for(const [cid,t] of replan)planCheckin(t,cid,tk,{has:id=>guild.channels.cache.has(id)});    // back to the normal random odds
+  if(dirty){_mem.tickets=tk;save("tickets",tk);}
+  if(out.suspended)out.restored=await unlockExchangerEverywhere(guild,exId);
+  for(const cid of panels){const c=guild.channels.cache.get(cid);if(c)await refreshPanel(c,tk[cid]);}
+  for(const cid of told){                                        // the client was told to hold off, so tell them it is over
+    const c=guild.channels.cache.get(cid),t=tk[cid];
+    if(!c||!t)continue;
+    const sent=await c.send({content:`<@${t.userId}>`,allowedMentions:{users:[t.userId]},embeds:[reviewDoneEmbed(t)]}).then(()=>true).catch(()=>false);
+    if(sent)out.notified++;
+  }
+  return out;
+}
+// What a clear did, in one line (used by /clearexchanger and $clear)
+function clearSummary(exId,r){
+  const n=(k,w)=>`${k} ${w}${k===1?"":"s"}`;
+  const parts=[];
+  if(r.suspended)parts.push("freeze lifted");
+  if(r.held)parts.push("hold removed");
+  if(r.cleared)parts.push(`${n(r.cleared,"ticket")} reset`);
+  if(r.pending)parts.push(`${n(r.pending,"pending signal")} dropped`);
+  if(r.checkins)parts.push(`${n(r.checkins,"early check-in")} cancelled`);
+  if(r.notified)parts.push(`${n(r.notified,"client")} told the review is done`);
+  return parts.length?`Cleared <@${exId}> of all doubt: ${parts.join(" · ")}.`:`Nothing to clear on <@${exId}>.`;
+}
+
+// ---- 4. Random check-ins, weighted by how much attention the exchanger needs ----
+function concurrentTickets(tickets,exId,exceptCid,has){
+  let n=0;
+  for(const [cid,t] of Object.entries(tickets||{})){
+    if(cid===exceptCid||!t||t.status!=="open"||t.claimedBy!==exId||t.ownerClaim)continue;
+    if(has&&!has(cid))continue;
+    n++;
+  }
+  return n;
+}
+function checkinChance(ticket,cid,tickets,has){
+  const ex=ticket.claimedBy;
+  let p=CHECKIN_ODDS.base;
+  p+=Math.min(CHECKIN_ODDS.maxOthers,concurrentTickets(tickets,ex,cid,has)*CHECKIN_ODDS.perOther);   // juggling several tickets
+  const amt=parseFloat(ticket.amountUSD)||0;
+  for(const [min,add] of CHECKIN_ODDS.big)if(amt>=min){p+=add;break;}                                // bigger deals
+  if(isOnHold(ex)||ticket.riskLevel)p=1;                                                              // flagged: always ask
+  else if(exchangerRisk(tickets,ex)>=SAFETY.levels.watch)p+=CHECKIN_ODDS.atRisk;
+  return Math.min(1,p);
+}
+// Rolls the dice once for this ticket: schedules a check-in, or records that it won't get one
+function planCheckin(ticket,cid,tickets,{has=null,rnd=Math.random}={}){
+  if(ticket.checkinAt||ticket.checkinSentAt)return false;
+  if(ticket.ownerClaim||isOwner(ticket.claimedBy)){ticket.checkinPlan="owner";return false;}
+  ticket.checkinRolls=(ticket.checkinRolls||0)+1;
+  if(rnd()<checkinChance(ticket,cid,tickets,has)){scheduleCheckin(ticket,rnd);ticket.checkinPlan="scheduled";return true;}
+  ticket.checkinPlan="skip";
+  return false;
+}
+// A busier exchanger raises the odds for the tickets that already rolled "no check-in"
+function replanSiblings(ticket,cid,tickets,opts={}){
+  let n=0;
+  for(const [ocid,o] of Object.entries(tickets||{})){
+    if(ocid===cid||!o||o.status!=="open"||o.claimedBy!==ticket.claimedBy||o.ownerClaim)continue;
+    if(o.checkinPlan!=="skip"||o.checkinAt||o.checkinSentAt||(o.checkinRolls||0)>=3||o.mmPending||o.reported)continue;
+    if(opts.has&&!opts.has(ocid))continue;
+    if(planCheckin(o,ocid,tickets,opts))n++;
+  }
+  return n;
+}
+function planWithSiblings(ticket,cid,tickets,guild){
+  const opts={has:guild?(id=>guild.channels.cache.has(id)):null};
+  planCheckin(ticket,cid,tickets,opts);
+  replanSiblings(ticket,cid,tickets,opts);
+}
+// Asks this ticket's client within 1–3 minutes (used when the exchanger is flagged in another ticket)
+function forceCheckin(o,rnd=Math.random){
+  if(o.checkinSentAt||o.mmPending||o.reported||o.ownerClaim)return false;
+  const when=Date.now()+60*1000+Math.floor(rnd()*120*1000);
+  if(!o.checkinAt||o.checkinAt>when)o.checkinAt=when;
+  o.checkinPlan="forced";
+  return true;
+}
+function boostOtherTickets(guild,cid,t){
+  let n=0;
+  for(const [ocid,o] of Object.entries(_mem.tickets||{})){
+    if(ocid===cid||!o||o.status!=="open"||o.claimedBy!==t.claimedBy||o.ownerClaim)continue;
+    if(guild&&!guild.channels.cache.has(ocid))continue;
+    if(forceCheckin(o))n++;
+  }
+  return n;
+}
+
+// ---- 5. What the client and owners see ----
+function safetyCheckEmbed(t){
+  return new EmbedBuilder().setColor(0xf59e0b).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Safety Check")
+    .setDescription(`<@${t.userId}>, a quick safety review has started on this ticket and an owner has been notified.\nAs a precaution, **please hold off on sending any further funds** until they confirm.`)
+    .setFooter({text:"Automatic check  \u2022  Nothing is needed from you right now"}).setTimestamp();
+}
+function reviewDoneEmbed(t){
+  return new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Safety Review Complete")
+    .setDescription(`An owner has finished the review. <@${t.claimedBy}> is cleared to continue and you can carry on with your exchange.`).setTimestamp();
+}
+function riskAlertRow(exId,cid,{frozen=false}={}){
+  const row=new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`btn_riskclear__${exId}`).setLabel(frozen?"Clear & Reinstate":"Clear").setStyle(ButtonStyle.Success));
+  if(!frozen)row.addComponents(new ButtonBuilder().setCustomId(`btn_riskfreeze__${cid}`).setLabel("Freeze Exchanger").setStyle(ButtonStyle.Danger));
+  return row;
+}
+async function postSafetyCheck(ch,t){
+  if(t.safetyNoticeAt)return;
+  t.safetyNoticeAt=Date.now();                  // claimed first so two signals at once can't post it twice
+  const sent=await ch.send({content:`<@${t.userId}>`,embeds:[safetyCheckEmbed(t)],allowedMentions:{users:[t.userId]}}).catch(()=>null);
+  if(!sent)delete t.safetyNoticeAt;             // couldn't post it: try again next time
+  else t.clientHeld=true;                       // the client was told to hold off, so they hear when it is over
+  save("tickets",_mem.tickets);
+}
+async function alertOwners(guild,ch,t,level){
+  const rank=SAFETY.rank[level];
+  if((t.alertedRank||0)>=rank)return;          // one alert per ticket per level
+  t.alertedRank=rank;save("tickets",_mem.tickets);
+  const link=`https://discord.com/channels/${guild.id}/${ch.id}`;
+  const notes=(t.riskNotes||[]).slice(-5).map(n=>`\u2022 ${n}`).join("\n")||"\u2022 Several warning signs";
+  const embed=new EmbedBuilder().setColor(0xf59e0b).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Safety Alert")
+    .setDescription(`[Open ticket](${link})\n<@${t.userId}> with <@${t.claimedBy}> \u00B7 ${_money(parseFloat(t.amountUSD)||0)}\n\n${notes}`.slice(0,4000))
+    .addFields({name:"Risk",value:`${level} \u00B7 ${t.riskScore||0}/100`,inline:true},{name:"Already done",value:"New claims paused \u00B7 other clients checked in",inline:true})
+    .setTimestamp();
+  const row=riskAlertRow(t.claimedBy,ch.id);
+  for(const oid of CONFIG.OWNER_IDS)client.users.fetch(oid).then(u=>u.send({embeds:[embed],components:[row]})).catch(()=>{});
+}
+// When an exchanger is frozen, their other clients hear about it calmly
+async function noticeOtherClients(guild,cid,t){
+  if(t.siblingsNotified)return 0;
+  t.siblingsNotified=true;save("tickets",_mem.tickets);
+  let n=0;
+  for(const [ocid,o] of Object.entries(_mem.tickets||{})){
+    if(ocid===cid||!o||o.status!=="open"||o.claimedBy!==t.claimedBy||o.ownerClaim)continue;
+    const och=guild.channels.cache.get(ocid);
+    if(!och)continue;
+    await och.send({content:`<@${o.userId}>`,allowedMentions:{users:[o.userId]},embeds:[new EmbedBuilder().setColor(0xf59e0b)
+      .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Exchanger Unavailable")
+      .setDescription(`<@${o.claimedBy}> is temporarily unavailable while an owner completes a review. An owner will follow up in this ticket shortly.\nPlease hold off on sending anything until then.`).setTimestamp()]}).then(()=>{n++;o.clientHeld=true;}).catch(()=>{});
+  }
+  if(n)save("tickets",_mem.tickets);
+  return n;
+}
+
+// ---- 6. Acting on a signal ----
+async function escalate(guild,ch,t,level){
+  const cid=ch.id,why=(t.riskNotes||[]).slice(-3).join(" \u00B7 ");
+  log(guild,`SAFETY ${level.toUpperCase()}: #${ch.name} | exchanger ${t.claimedBy} | client ${t.userId} | score ${t.riskScore} | ${why.slice(0,200)}`);
+  if(level==="watch")return;
+  placeHold(guild,cid,t,level);
+  boostOtherTickets(guild,cid,t);
+  save("tickets",_mem.tickets);
+  if(level==="caution"){
+    await postSafetyCheck(ch,t);
+    await alertOwners(guild,ch,t,level);
+    return;
+  }
+  if(!t.reported){   // critical: the same outcome as a client flag, started by the system
+    await reportTicket({guild,channel:ch},t,_mem.tickets,`Automatic safety check: ${why||"several warning signs"}`,{source:"system"});
+    await noticeOtherClients(guild,cid,t);
+  }
+}
+async function riskEvent(guild,ch,t,kind,pts,note){
+  const level=addRisk(t,ch.id,kind,pts,note);
+  save("tickets",_mem.tickets);
+  // quiet until it is time to act: every counted signal goes to the log channel, nothing is said in the ticket
+  log(guild,`SAFETY signal: #${ch.name} | exchanger ${t.claimedBy} | client ${t.userId} | ${kind} +${pts} | score ${t.riskScore||0}/100 | ${String(note||"").replace(/`/g,"'").slice(0,110)}`);
+  if(level)await escalate(guild,ch,t,level);
+}
+// The client says it arrived: impatience clears itself. Accusations, steering and freezes still need an owner.
+async function easeRisk(guild,ch,t){
+  const by=t.riskByKind;
+  if(!by||!["missing","chase","worry","silent"].some(k=>by[k]))return;
+  for(const k of ["missing","chase","worry","silent"])by[k]=0;
+  t.riskScore=riskScore(by);
+  if(!t.riskNotes)t.riskNotes=[];
+  t.riskNotes.push("Client confirmed it arrived");
+  if(t.riskNotes.length>8)t.riskNotes.splice(0,t.riskNotes.length-8);
+  if(t.riskLevel==="caution"&&!by.accuse&&!by.steer){
+    t.riskLevel=null;delete t.alertedRank;delete t.clientHeld;       // if it flares up again, the owners hear about it again
+    const ex=t.claimedBy,h=_mem.holds&&_mem.holds[ex];
+    if(h&&h.level==="caution"&&h.channelId===ch.id){
+      const other=Object.entries(_mem.tickets||{}).find(([ocid,o])=>ocid!==ch.id&&o&&o.status==="open"&&o.claimedBy===ex&&(SAFETY.rank[o.riskLevel]||0)>=SAFETY.rank.caution);
+      if(other){h.channelId=other[0];}                       // another ticket still justifies it
+      else{delete _mem.holds[ex];log(guild,`SAFETY EASED: #${ch.name} | client confirmed | hold on ${ex} lifted`);}
+      save("holds",_mem.holds);
+    }
+  }
+  save("tickets",_mem.tickets);
+}
+
+// ---- 7. Watching a ticket ----
+function safetyApplies(t){
+  return !!(SAFETY.enabled&&t&&t.status==="open"&&t.claimSystem&&t.claimedBy&&!t.mmPending&&!t.reported&&!t.ownerClaim
+    &&!isSuspended(t.claimedBy)&&!isOwner(t.claimedBy)&&!isOwner(t.userId));
+}
+function safetyState(cid){
+  let S=_safety.get(cid);
+  if(!S){S={pending:[],hist:[],waitingSince:0,silentFor:0,lastExAt:0,paid:false,distress:false};_safety.set(cid,S);}
+  return S;
+}
+// Called for every message in an open ticket
+async function safetyOnMessage(message,ticket){
+  if(!safetyApplies(ticket))return;
+  const text=String(message.content||"");
+  if(!text.trim()||/^[$/!]/.test(text.trim()))return;
+  const ch=message.channel,guild=message.guild,uid=message.author.id,now=Date.now();
+  const fromClient=uid===ticket.userId,fromEx=uid===ticket.claimedBy;
+  const fromOwner=!fromClient&&!fromEx&&isOwner(uid,message.member);
+  const fromHelper=!fromClient&&!fromEx&&!fromOwner&&!!(ticket.hoppedIn&&ticket.hoppedIn[uid]);   // an exchanger who hopped in
+  if(!fromClient&&!fromEx&&!fromOwner&&!fromHelper)return;
+  const S=safetyState(ch.id);
+  if(fromEx||fromOwner||fromHelper){      // answered: whatever the client was waiting on has been addressed
+    S.lastExAt=now;S.waitingSince=0;S.distress=false;S.paid=false;
+    S.pending=S.pending.filter(p=>p.sticky);
+  }
+  if(fromEx){
+    const lim=Number(ticket.claimLimit&&ticket.claimLimit.amount)||0;
+    const a=analyzeExchangerText(text,{underLimit:!ticket.mmRequired&&lim>0&&(parseFloat(ticket.amountUSD)||0)<=lim});
+    if(a.pts)await riskEvent(guild,ch,ticket,"steer",a.pts,`Exchanger ${a.why}`);
+    return;
+  }
+  if(!fromClient)return;
+  const a=analyzeClientText(text);
+  if(a.resolved){
+    S.pending=[];S.waitingSince=0;S.paid=false;S.distress=false;
+    await easeRisk(guild,ch,ticket);
+    return;
+  }
+  if(a.paid)S.paid=true;
+  if((a.kind||a.paid||/\?/.test(text))&&!S.waitingSince)S.waitingSince=now;
+  if(!a.kind)return;
+  const note=`Client: "${text.replace(/\s+/g," ").trim().slice(0,70)}"`;
+  if(a.kind==="accuse"||a.kind==="worry"){   // never wait on these
+    if(a.kind==="accuse")S.distress=true;
+    await riskEvent(guild,ch,ticket,a.kind,SAFETY.points[a.kind],note);
+    return;
+  }
+  S.distress=true;
+  S.hist=S.hist.filter(ts=>now-ts<SAFETY.repeatMs);S.hist.push(now);
+  S.pending.push({at:now,kind:a.kind,pts:SAFETY.points[a.kind],note,sticky:S.hist.length>=3});
+}
+// Runs every 30 seconds: settles unanswered worries, notices silent exchangers (quietly), retires old holds
+async function sweepSafety(guild){
+  if(!SAFETY.enabled||_safetySweepRunning)return;
+  _safetySweepRunning=true;
+  try{
+    const now=Date.now();
+    for(const [cid,S] of [..._safety]){
+      if(_safety.get(cid)!==S)continue;       // cleared while this sweep was running
+      const t=(_mem.tickets||{})[cid],ch=guild.channels.cache.get(cid);
+      if(!t||t.status!=="open"||!ch){_safety.delete(cid);continue;}
+      if(!safetyApplies(t)){S.pending=[];S.waitingSince=0;continue;}
+      const due=S.pending.filter(p=>now-p.at>=SAFETY.confirmMs);
+      if(due.length){
+        S.pending=S.pending.filter(p=>!due.includes(p));
+        for(const p of due)await riskEvent(guild,ch,t,p.kind,p.pts,p.note);
+        if(!safetyApplies(t))continue;     // the ticket may have just been paused
+      }
+      if(S.waitingSince){
+        const waited=now-S.waitingSince;
+        if(waited>=SAFETY.silentMs&&(S.paid||S.distress)&&S.silentFor!==S.waitingSince){
+          S.silentFor=S.waitingSince;
+          await riskEvent(guild,ch,t,"silent",SAFETY.points.silent,`Exchanger silent for ${Math.round(waited/60000)} min while the client waited`);
+        }
+      }
+    }
+    let dirty=false;
+    for(const [id,h] of Object.entries(_mem.holds||{}))if(h&&h.expiresAt&&h.expiresAt<=now){delete _mem.holds[id];dirty=true;}
+    if(dirty)save("holds",_mem.holds);
+  }finally{_safetySweepRunning=false;}
+}
+
+// ---- 8. Owner buttons on the safety alert (these arrive in DMs) ----
+async function handleRiskButton(interaction){
+  const [action,arg]=String(interaction.customId).split("__");
+  const guild=interaction.guild||client.guilds.cache.get(CONFIG.GUILD_ID)||client.guilds.cache.first()||null;
+  if(!guild)return interaction.reply({content:"Couldn't find the server.",flags:64});
+  const member=await guild.members.fetch(interaction.user.id).catch(()=>null);
+  if(!isOwner(interaction.user.id,member))return interaction.reply({content:"Owners only.",flags:64});
+  await interaction.deferUpdate().catch(()=>{});
+  const finish=async note=>{    // strip the buttons and stamp who handled it
+    const base=interaction.message&&interaction.message.embeds&&interaction.message.embeds[0];
+    const e=base?EmbedBuilder.from(base):new EmbedBuilder().setColor(0xf59e0b);
+    e.setFooter({text:note});
+    await interaction.editReply({embeds:[e],components:[]}).catch(()=>{});
+  };
+  const who=interaction.user.username||interaction.user.id;
+  if(action==="btn_riskclear"){
+    const r=await liftRestrictions(guild,arg);
+    if(!r.suspended&&!r.held&&!r.cleared&&!r.pending&&!r.checkins&&!r.notified)return finish("Already handled");
+    log(guild,`SAFETY CLEARED: ${who} cleared exchanger ${arg}`);
+    return finish(`Cleared by ${who}`);
+  }
+  if(action==="btn_riskfreeze"){
+    const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
+    const t=tickets[arg],ch=guild.channels.cache.get(arg);
+    if(!t||t.status!=="open"||!ch||!t.claimedBy)return finish("This ticket is no longer open");
+    if(t.reported||isSuspended(t.claimedBy))return finish("Already paused");
+    await reportTicket({guild,channel:ch},t,tickets,"Paused by an owner after a safety alert.",{source:"owner",by:interaction.user.id});
+    return finish(`Frozen by ${who}`);
+  }
+}
+// ── end Safety system ────────────────────────────────────────
 
 function isExchanger(member){
   if(!member)return false;
   const allRoles=Object.values(CONFIG.ROLES||{}).filter(Boolean);
-  return CONFIG.OWNER_IDS.includes(member.id)||
+  return PERMANENT_OWNER_IDS.includes(member.id)||CONFIG.OWNER_IDS.includes(member.id)||
     !!(member.roles.cache.has(OWNER_ROLE))||
     !!(CONFIG.STAFF_ROLE&&member.roles.cache.has(CONFIG.STAFF_ROLE))||
     !!(CONFIG.EXCHANGER_ROLE&&member.roles.cache.has(CONFIG.EXCHANGER_ROLE))||
@@ -1043,6 +1957,26 @@ function isExchanger(member){
 }
 function calcFeeWithTag(usd,dir,isVip,hasTag){const base=calcFee(usd,dir,isVip);if(hasTag)return Math.max(base-(usd*0.002),CONFIG.MIN_FEE);return base;}
 const base=title=>new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle(title).setTimestamp();
+
+// == Compact embeds ==============================================
+// Calculators and guides are one slim, wide card: no big logo image, no title line, and short columns that sit side by side on a phone.
+const slim=name=>new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:`Konvert  \u2022  ${name}`,iconURL:IMG.LOGO});
+const _usd2=n=>"$"+Number(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});   // always cents, even for tiny amounts
+function _feeText(amt,rate,fee,short){return amt*rate/100<CONFIG.MIN_FEE?`${_usd2(CONFIG.MIN_FEE)} min fee`:`${rate}% \u00B7 ${_usd2(fee)}${short?"":" fee"}`;}
+function feeEmbed(amt,{vip=false,prices={}}={}){
+  const fS=calcFee(amt,"send",vip),rS=feeRate(amt,"send",vip),fR=calcFee(amt,"receive",vip),rR=feeRate(amt,"receive",vip);
+  const getS=Math.max(0,amt-fS),getR=Math.max(0,amt-fR);
+  let tS=_feeText(amt,rS,fS),tR=_feeText(amt,rR,fR);
+  if(Math.max(tS.length,tR.length)>15){tS=_feeText(amt,rS,fS,true);tR=_feeText(amt,rR,fR,true);}   // keep each column narrow enough to sit side by side on a phone
+  const coins=[["BTC",6],["ETH",5],["SOL",4]].filter(([c])=>prices[c]>0).map(([c,d])=>`${c} ${(getS/prices[c]).toFixed(d)}`);
+  const e=slim("Fee Calculator").setDescription(`Estimate for **${_usd2(amt)}**${vip?"  \u00B7  \u26A1 VIP rate":""}`)
+    .addFields(
+      {name:"Fiat \u2192 Crypto",value:`Get **${_usd2(getS)}**\n${tS}`,inline:true},
+      {name:"Crypto \u2192 Fiat",value:`Get **${_usd2(getR)}**\n${tR}`,inline:true});
+  if(coins.length)e.addFields({name:"\u2248 In coins",value:coins.join("\n"),inline:true});
+  return e.setFooter({text:"Konvert  \u2022  Final fee may vary slightly"});
+}
+// == end Compact embeds ==========================================
 function log(guild,msg){if(!CONFIG.LOG_CHANNEL||!guild)return;const ch=guild.channels.cache.get(CONFIG.LOG_CHANNEL);if(ch)ch.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setDescription("```"+msg+"```").setTimestamp()]}).catch(()=>{});}
 
 const BINANCE={BTC:"BTCUSDT",ETH:"ETHUSDT",SOL:"SOLUSDT",LTC:"LTCUSDT",XRP:"XRPUSDT",BNB:"BNBUSDT",ADA:"ADAUSDT",DOGE:"DOGEUSDT",MATIC:"MATICUSDT",AVAX:"AVAXUSDT",DOT:"DOTUSDT",LINK:"LINKUSDT",TRX:"TRXUSDT",UNI:"UNIUSDT",ATOM:"ATOMUSDT",NEAR:"NEARUSDT",SHIB:"SHIBUSDT",ARB:"ARBUSDT",OP:"OPUSDT",MANA:"MANAUSDT",SAND:"SANDUSDT",APE:"APEUSDT",IMX:"IMXUSDT",GALA:"GALAUSDT",AXS:"AXSUSDT",ENJ:"ENJUSDT",CHZ:"CHZUSDT",FLOW:"FLOWUSDT",ICP:"ICPUSDT",HBAR:"HBARUSDT",VET:"VETUSDT",EOS:"EOSUSDT",ZEC:"ZECUSDT",DASH:"DASHUSDT",XMR:"XMRUSDT",XLM:"XLMUSDT",ALGO:"ALGOUSDT",EGLD:"EGLDUSDT",THETA:"THETAUSDT",KLAY:"KLAYUSDT",ROSE:"ROSEUSDT",ONE:"ONEUSDT",CELO:"CELOUSDT",QTUM:"QTUMUSDT",ZIL:"ZILUSDT",ICX:"ICXUSDT",ONT:"ONTUSDT",WAVES:"WAVESUSDT",BAT:"BATUSDT",GRT:"GRTUSDT",MKR:"MKRUSDT",AAVE:"AAVEUSDT",COMP:"COMPUSDT",SNX:"SNXUSDT",YFI:"YFIUSDT",SUSHI:"SUSHIUSDT",CRV:"CRVUSDT","1INCH":"1INCHUSDT",BAL:"BALUSDT",BAND:"BANDUSDT",KNC:"KNCUSDT",ZRX:"ZRXUSDT",REN:"RENUSDT",NMR:"NMRUSDT",ANKR:"ANKRUSDT",CELR:"CELRUSDT",SKL:"SKLUSDT",STORJ:"STORJUSDT",LRC:"LRCUSDT",PERP:"PERPUSDT",DYDX:"DYDXUSDT",CAKE:"CAKEUSDT",INJ:"INJUSDT",KAVA:"KAVAUSDT",STX:"STXUSDT",RUNE:"RUNEUSDT",RAY:"RAYUSDT",RSR:"RSRUSDT",SRM:"SRMUSDT",XTZ:"XTZUSDT",QNT:"QNTUSDT",PAXG:"PAXGUSDT",ZEN:"ZENUSDT",TFUEL:"TFUELUSDT",WRX:"WRXUSDT",WAXP:"WAXPUSDT",VGX:"VGXUSDT"};
@@ -1188,6 +2122,8 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("transferstats").setDescription("[Owner] Move all stats from one account to another").addUserOption(o=>o.setName("from").setDescription("Account to move stats FROM").setRequired(true)).addUserOption(o=>o.setName("to").setDescription("Account to move stats TO").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("suspended").setDescription("[Owner] List exchangers suspended pending review").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("reinstate").setDescription("[Owner] Lift an exchanger's suspension").addUserOption(o=>o.setName("user").setDescription("The exchanger to reinstate").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("clearexchanger").setDescription("[Owner] Clear an exchanger of all doubt: lifts any freeze, hold, flag and pending check").addUserOption(o=>o.setName("user").setDescription("The exchanger to clear").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("profittest").setDescription("[Owner] Send a test profit-split notice to everyone who receives them").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("resetstats").setDescription("[Owner] Reset a user's volume adjustment back to 0").addUserOption(o=>o.setName("user").setDescription("User").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("clearleaderboard").setDescription("[Owner] Wipe all trade data from leaderboard and stats").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("wipestats").setDescription("[Owner] Completely wipe ALL stats and tickets for a single user").addUserOption(o=>o.setName("user").setDescription("User to wipe").setRequired(true)).addStringOption(o=>o.setName("confirm").setDescription('Type "CONFIRM" to proceed').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
@@ -1383,6 +2319,50 @@ async function postVouch(guild,data){
   try{await ch.send({embeds:[buildDealEmbed(data)]});}catch(e){console.error("postVouch error:",e.message);}
 }
 
+// ── Who can see a ticket ─────────────────────────────────────
+const OWNER_CHANNEL_ALLOW=[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels];
+// Every owner gets full access to every ticket channel (exchange, custom and support). An owner who isn't in the member cache is looked up instead of
+// skipped, which is how a ticket could end up invisible to them. Anyone who really isn't in the server is left out, because Discord rejects the whole
+// channel for an overwrite that points at a non-member.
+async function ownerOverwrites(guild){
+  const out=[];
+  for(const oid of CONFIG.OWNER_IDS){
+    let here=guild.members.cache.has(oid);
+    if(!here)here=!!(await guild.members.fetch(oid).catch(()=>null));
+    if(here)out.push({id:oid,allow:[...OWNER_CHANNEL_ALLOW]});
+  }
+  return out;
+}
+// Adds a permission overwrite, merging into the one already there for the same id (Discord rejects duplicates; an owner can be the client)
+function addOverwrite(perms,entry){
+  const cur=perms.find(p=>p.id===entry.id);
+  if(!cur){perms.push({id:entry.id,...(entry.allow?{allow:[...entry.allow]}:{}),...(entry.deny?{deny:[...entry.deny]}:{})});return perms;}
+  const allow=new Set([...(cur.allow||[]),...(entry.allow||[])]);
+  const deny=[...new Set([...(cur.deny||[]),...(entry.deny||[])])].filter(x=>!allow.has(x));
+  cur.allow=[...allow];
+  if(deny.length)cur.deny=deny;else delete cur.deny;
+  return perms;
+}
+// Support tickets aren't stored as exchange tickets, so the channel itself says who opened it (its topic). Channels from before that was added are
+// recognised by their name (support-xxxx) inside the ticket category; the opener is then the one non-owner member who can see the channel.
+const SUPPORT_TOPIC="Konvert support ticket | user:";
+function supportTicketOf(channel){
+  try{
+    if(!channel||!channel.id||channel.id===SUPPORT_CH||channel.id===CONFIG.EXCHANGE_CHANNEL)return null;
+    const m=String(channel.topic||"").match(/^Konvert support ticket \| user:(\d{15,25})\b/);
+    if(m)return {userId:m[1],legacy:false};
+    if(!/^support-[a-z0-9]{0,12}$/.test(String(channel.name||"")))return null;
+    if(CONFIG.TICKET_CATEGORY&&channel.parentId!==CONFIG.TICKET_CATEGORY)return null;
+    let opener=null;
+    const ows=channel.permissionOverwrites&&channel.permissionOverwrites.cache;
+    if(ows)for(const o of ows.values()){
+      if(o.type!==1||CONFIG.OWNER_IDS.includes(o.id))continue;
+      if(o.allow&&o.allow.has&&o.allow.has(PermissionFlagsBits.ViewChannel)){opener=o.id;break;}
+    }
+    return {userId:opener,legacy:true};
+  }catch{return null;}
+}
+
 async function createTicket(interaction,method,direction,amountUSD,coin,walletInfo,notes,recvCoin){
   const guild=interaction.guild,user=interaction.user,m=getMethod(method);
   const tickets=load("tickets");
@@ -1416,8 +2396,10 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   if(CONFIG.STAFF_ROLE&&guild.roles.cache.has(CONFIG.STAFF_ROLE))perms.push({id:CONFIG.STAFF_ROLE,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]});
   const mRoleId=CONFIG.ROLES?CONFIG.ROLES[m.value]:null;
   if(mRoleId&&mRoleId!==CONFIG.STAFF_ROLE&&guild.roles.cache.has(mRoleId))perms.push({id:mRoleId,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.ReadMessageHistory],deny:[PermissionFlagsBits.SendMessages]});
-  for(const oid of CONFIG.OWNER_IDS){if(guild.members.cache.has(oid))perms.push({id:oid,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]});}
-  if(guild.roles.cache.has(OWNER_ROLE)&&OWNER_ROLE!==CONFIG.STAFF_ROLE&&OWNER_ROLE!==mRoleId)perms.push({id:OWNER_ROLE,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]});
+  // Helpers take custom / buy-for-you orders (the embed pings them), so they have to be able to see the channel
+  if((method==="custom"||method==="buyforyou")&&CONFIG.HELPER_ROLE&&guild.roles.cache.has(CONFIG.HELPER_ROLE))addOverwrite(perms,{id:CONFIG.HELPER_ROLE,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]});
+  for(const o of await ownerOverwrites(guild))addOverwrite(perms,o);        // owners see and talk in every ticket
+  if(guild.roles.cache.has(OWNER_ROLE)&&OWNER_ROLE!==CONFIG.STAFF_ROLE&&OWNER_ROLE!==mRoleId)addOverwrite(perms,{id:OWNER_ROLE,allow:[...OWNER_CHANNEL_ALLOW]});
   let ch;
   try{ch=await guild.channels.create({name:`${m.value}-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,4)}`,type:ChannelType.GuildText,parent:CONFIG.TICKET_CATEGORY||null,permissionOverwrites:perms});}
   catch(err){await interaction.editReply({content:`Failed to create ticket: ${err.message}`,embeds:[],components:[]});return null;}
@@ -1471,7 +2453,8 @@ async function doCloseTicket(channel,guild,closedBy,reason){
     const fname=`transcript-${channel.name}-${Date.now()}.txt`,fpath=`./${fname}`;
     fs.writeFileSync(fpath,lines);
     if(CONFIG.LOG_CHANNEL){const lch=guild.channels.cache.get(CONFIG.LOG_CHANNEL);if(lch)await lch.send({content:`Transcript: **#${channel.name}** closed by ${closedBy.tag}. Reason: ${reason}`,files:[{attachment:fpath,name:fname}]});}
-    if(tickets[channel.id]){try{const mem=await guild.members.fetch(tickets[channel.id].userId).catch(()=>null);if(mem){const f2=`tr-dm-${channel.name}.txt`;fs.writeFileSync("./"+f2,lines);await mem.send({content:"Your Konvert ticket has been closed. Transcript attached:",files:[{attachment:"./"+f2,name:f2}]}).catch(()=>{});fs.unlinkSync("./"+f2);}}catch{}}
+    const _openerId=tickets[channel.id]?tickets[channel.id].userId:((supportTicketOf(channel)||{}).userId||null);
+    if(_openerId){try{const mem=await guild.members.fetch(_openerId).catch(()=>null);if(mem){const f2=`tr-dm-${channel.name}.txt`;fs.writeFileSync("./"+f2,lines);await mem.send({content:"Your Konvert ticket has been closed. Transcript attached:",files:[{attachment:"./"+f2,name:f2}]}).catch(()=>{});fs.unlinkSync("./"+f2);}}catch{}}
     for(const oid of CONFIG.OWNER_IDS){try{const o=await guild.members.fetch(oid).then(m=>m.user).catch(()=>null);if(o&&o.id!==closedBy.id){const f3=`tr-owner-${channel.name}.txt`;fs.writeFileSync("./"+f3,lines);await o.send({content:`Transcript: **#${channel.name}** | Closed by: ${closedBy.tag}`,files:[{attachment:"./"+f3,name:f3}]}).catch(()=>{});fs.unlinkSync("./"+f3);}}catch{}}
     fs.unlinkSync(fpath);
   }catch{}
@@ -1586,6 +2569,7 @@ client.on(Events.MessageCreate,async message=>{
   if(message.channel.type!==undefined){
     const tickets=Object.keys(_mem.tickets||{}).length?_mem.tickets:load("tickets");
     const ticket=tickets[message.channel.id];
+    const _sup=ticket?null:supportTicketOf(message.channel);   // a support ticket has no exchange record: the channel says who opened it
     // Suspended exchangers can't speak in any ticket they aren't the client of
     if(ticket&&ticket.status==="open"&&ticket.userId!==message.author.id&&isSuspended(message.author.id)&&!isOwner(message.author.id,message.member)){
       await message.delete().catch(()=>{});
@@ -1615,11 +2599,42 @@ client.on(Events.MessageCreate,async message=>{
       await message.delete().catch(()=>{});
       return;
     }
+    // $clear [@exchanger] — owners: clear an exchanger of all doubt (the ticket's exchanger when nobody is mentioned). Nothing is said in the ticket.
+    const _clCmd=message.content.trim().match(/^\$clear(?:\s+<@!?(\d+)>)?$/i);
+    if(_clCmd&&isOwner(message.author.id,message.member)){
+      const _clId=_clCmd[1]||(ticket&&ticket.claimedBy)||null;
+      await message.delete().catch(()=>{});
+      let _clMsg="No exchanger on this ticket. Use `$clear @user`.";
+      if(_clId){
+        _clMsg=clearSummary(_clId,await liftRestrictions(message.guild,_clId));
+        log(message.guild,`CLEARED: ${message.author.tag} cleared ${_clId} of all doubt`);
+      }
+      const _clDm=await message.author.send({content:_clMsg}).then(()=>true).catch(()=>false);
+      if(!_clDm){const _clNote=await message.channel.send({content:_clMsg,allowedMentions:{parse:[]}}).catch(()=>null);if(_clNote)setTimeout(()=>_clNote.delete().catch(()=>{}),6000);}
+      return;
+    }
     // $open — ping exchangers
     if(message.content.trim()==="$unclaim"&&ticket&&ticket.status==="open"&&ticket.claimedBy&&(message.author.id===ticket.claimedBy||isOwner(message.author.id,message.member))){
       const _tks=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
       _tks[message.channel.id]=ticket;
       await releaseClaim(message.channel,ticket,_tks,{by:message.author.id});
+      return;
+    }
+    // $all — open the ticket to every exchanger (any payment method): they can all see it and claim it, or hop into a claimed one
+    if(/^\$all$/i.test(message.content.trim())&&ticket&&ticket.status==="open"&&(isExchanger(message.member)||isOwner(message.author.id,message.member))){
+      const _staffAll=!!(CONFIG.STAFF_ROLE&&message.member?.roles.cache.has(CONFIG.STAFF_ROLE));
+      if(ticket.claimedBy&&message.author.id!==ticket.claimedBy&&!isOwner(message.author.id,message.member)&&!_staffAll){
+        const _no=await message.reply("Only the exchanger on this ticket or staff can open it to everyone.").catch(()=>null);
+        if(_no)setTimeout(()=>_no.delete().catch(()=>{}),5000);
+        return;
+      }
+      const _tksAll=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
+      _tksAll[message.channel.id]=ticket;
+      const _resAll=await openToAllExchangers(message.channel,ticket,_tksAll,{by:message.author.id});
+      if(!_resAll.ok){
+        const _wait=await message.reply(`Already sent a moment ago. Try again in ${_resAll.wait}s.`).catch(()=>null);
+        if(_wait)setTimeout(()=>_wait.delete().catch(()=>{}),5000);
+      }
       return;
     }
     if(message.content.trim()==="$open"&&ticket&&ticket.status==="open"&&(isExchanger(message.member)||isOwner(message.author.id,message.member))){
@@ -1685,8 +2700,8 @@ client.on(Events.MessageCreate,async message=>{
         if(ticket.mmPending&&!isOwner(message.author.id,message.member)){await message.reply("Waiting for the client to confirm the middleman.").catch(()=>{});return;}
         if(ticket.claimSystem&&!ticket.claimedBy){await message.reply("Claim this ticket before completing it.").catch(()=>{});return;}
         if(ticket.claimSystem&&message.author.id!==ticket.claimedBy&&!isOwner(message.author.id,message.member)){await message.reply(`Only <@${ticket.claimedBy}> can complete this ticket.`).catch(()=>{});return;}
-        if(ticket.claimSystem){
-          // The client confirms before anything is finalized
+        if(ticket.claimSystem&&!isOwner(message.author.id,message.member)){
+          // The client confirms before anything is finalized (owners finalize directly)
           if(ticket.completionPending){await message.reply("Already waiting for the client to confirm.").catch(()=>{});return;}
           const _tk=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
           const _ok=await requestCompletion(message.channel,ticket,_tk);
@@ -1694,6 +2709,7 @@ client.on(Events.MessageCreate,async message=>{
           return;
         }
         const _allT=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
+        if(ticket.claimSystem)ticket.completionPending=false;   // an owner finalizes without waiting on the client
         ticket._overrideExchangerId=ticket.claimedBy||message.author.id;
         // Create a fake interaction-like object for completeTrade
         const _fakeInt={_fake:true,guild:message.guild,channel:message.channel,user:message.author,member:message.member,deferred:true,replied:false,editReply:async(d)=>message.channel.send(typeof d==="string"?{content:d}:d).catch(()=>{}),followUp:async(d)=>message.channel.send(typeof d==="string"?{content:d}:d).catch(()=>{})};
@@ -1704,7 +2720,8 @@ client.on(Events.MessageCreate,async message=>{
     // $ban — blacklist a user (reply to their message or mention)
     if(message.content.trim().startsWith("$ban ")&&isOwner(message.author.id,message.member)){
       const _banId=message.mentions.users.first()?.id||message.content.trim().split(" ")[1];
-      if(_banId){const bl=load("blacklist");bl[_banId]=true;save("blacklist",bl);await message.reply(`Banned <@${_banId}> from Konvert.`).catch(()=>{});}
+      if(_banId&&isOwner(_banId)){await message.reply("Owners can't be banned.").catch(()=>{});}
+      else if(_banId){const bl=load("blacklist");bl[_banId]=true;save("blacklist",bl);await message.reply(`Banned <@${_banId}> from Konvert.`).catch(()=>{});}
       return;
     }
     // $unban — remove from blacklist
@@ -1722,7 +2739,7 @@ client.on(Events.MessageCreate,async message=>{
       return;
     }
     // $close — auto close ticket
-    if(message.content.trim()==="$close"&&ticket&&ticket.status==="open"){
+    if(/^\$close$/i.test(message.content.trim())&&(ticket?(ticket.status==="open"||isOwner(message.author.id,message.member)):!!_sup)){   // owners can close any ticket whatever its state; support tickets have no record
       const _isExRoles2=Object.values(CONFIG.ROLES).filter(Boolean);
       const _canClose=isOwner(message.author.id,message.member)||(CONFIG.STAFF_ROLE&&message.member?.roles.cache.has(CONFIG.STAFF_ROLE))||(CONFIG.EXCHANGER_ROLE&&message.member?.roles.cache.has(CONFIG.EXCHANGER_ROLE))||_isExRoles2.some(r=>message.member?.roles.cache.has(r));
       if(_canClose){
@@ -1733,11 +2750,12 @@ client.on(Events.MessageCreate,async message=>{
       }
     }
     // $remind — remind client and start 12h auto-close countdown
-    if(message.content.trim()==="$remind"&&ticket&&ticket.status==="open"){
+    if(/^\$remind$/i.test(message.content.trim())&&(ticket?ticket.status==="open":!!_sup)){
       const _isExRoles3=Object.values(CONFIG.ROLES).filter(Boolean);
       const _canRemind=isOwner(message.author.id,message.member)||(CONFIG.STAFF_ROLE&&message.member?.roles.cache.has(CONFIG.STAFF_ROLE))||(CONFIG.EXCHANGER_ROLE&&message.member?.roles.cache.has(CONFIG.EXCHANGER_ROLE))||_isExRoles3.some(r=>message.member?.roles.cache.has(r));
       if(_canRemind){
-        const _clientId=ticket.userId;
+        const _clientId=(ticket||_sup).userId;
+        if(!_clientId){await message.reply("I can't tell who opened this ticket, so there is nobody to remind.").catch(()=>{});return;}
         await message.channel.send({content:`<@${_clientId}> You have **12 hours** to respond to this ticket or it will be automatically closed.`}).catch(()=>{});
         // Track last reply time for auto-close
         if(!state._reminderTimers)state._reminderTimers={};
@@ -1773,7 +2791,7 @@ client.on(Events.MessageCreate,async message=>{
       state._ticketPeople[message.channel.id].add(message.author.id);
     }
     // Security reminder — once per ticket, after 10-15 messages
-    if(ticket&&ticket.status==="open"){
+    if(ticket&&ticket.status==="open"&&(!ticket.claimSystem||ticket.claimedBy)){   // nothing to warn about while the ticket is unclaimed
       if(!state._ticketMsgCount)state._ticketMsgCount={};
       if(!state._ticketWarnSent)state._ticketWarnSent={};
       const _chId=message.channel.id;
@@ -1785,6 +2803,8 @@ client.on(Events.MessageCreate,async message=>{
         await message.channel.send({content:`\u26A0\uFE0F **@3uce will NOT DM you first. @jswaps will NOT DM you first.** If you received a random DM from anyone claiming to be Konvert staff or an owner \u2014 it is an impersonator. Block and report them immediately. All communication happens inside this ticket only.`}).catch(()=>{});
       }
     }
+    // Safety system: reads the conversation for signs a client needs help (owners are never analysed)
+    if(ticket&&ticket.status==="open")await safetyOnMessage(message,ticket).catch(e=>console.error("[safety]",e.message));
     if(ticket&&ticket.status==="open"&&ticket.userId===message.author.id){
       const typed=message.content.trim().toLowerCase();
       const activeCodes=Object.entries(state.promos||{}).filter(([,p])=>p.active).map(([c])=>c);
@@ -1959,6 +2979,7 @@ async function alertNameChange(guild,userId,kind,before,after){
   try{
     if(!before||!after||before===after)return;
     if(userId===client.user?.id)return;
+    if(isOwner(userId,guild&&guild.members&&guild.members.cache.get(userId)))return;   // owners are exempt
     const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
     for(const [chId,t] of Object.entries(tickets)){
       if(!t||t.status!=="open")continue;
@@ -2050,7 +3071,7 @@ client.on(Events.InteractionCreate,async interaction=>{
   try{
     if(interaction.isChatInputCommand()){
       // Owner-only commands: check OWNER_IDS regardless of Discord permissions
-      const OWNER_ONLY_CMDS=["grantowner","revokeowner","listowners","wipestats","clearleaderboard","adjuststats","resetstats","transferstats","suspended","reinstate","broadcast","setfeemode","postleaderboard","serverinfo","clientinfo","receipt"];
+      const OWNER_ONLY_CMDS=["grantowner","revokeowner","listowners","wipestats","clearleaderboard","adjuststats","resetstats","transferstats","suspended","reinstate","clearexchanger","profittest","broadcast","setfeemode","postleaderboard","serverinfo","clientinfo","receipt"];
       if(OWNER_ONLY_CMDS.includes(interaction.commandName)&&!isOwner(interaction.user.id,interaction.member)){
         return interaction.reply({content:"❌ You don\'t have permission to use this command.",flags:64});
       }
@@ -2070,13 +3091,8 @@ client.on(Events.InteractionCreate,async interaction=>{
         if(!amt||amt<=0)return interaction.reply({content:"Please enter a valid amount greater than $0.",flags:64});
         await interaction.deferReply({flags:64});
         const _feeVol=getUserVolume(interaction.user.id),_feeVip=isVipVolume(_feeVol);
-        const fS=calcFee(amt,"send",_feeVip),rS=feeRate(amt,"send",_feeVip),fR=calcFee(amt,"receive",_feeVip),rR=feeRate(amt,"receive",_feeVip);
         const [btcP,ethP,solP]=await Promise.all([getPrice("BTC"),getPrice("ETH"),getPrice("SOL")]);
-        const recvS=amt-fS,coinLines=[];
-        if(btcP)coinLines.push(`BTC: **${(recvS/btcP).toFixed(6)}** (\u2248${fmtUSD(recvS)})`);
-        if(ethP)coinLines.push(`ETH: **${(recvS/ethP).toFixed(5)}** (\u2248${fmtUSD(recvS)})`);
-        if(solP)coinLines.push(`SOL: **${(recvS/solP).toFixed(4)}** (\u2248${fmtUSD(recvS)})`);
-        return interaction.editReply({embeds:[base("Fee Calculator").setThumbnail(IMG.LOGO).setDescription(`Estimate for **${fmtUSD(amt)}**\n*Final fee may vary slightly.*\n\u200b`).addFields({name:"Fiat \u2192 Crypto",value:`Rate: **${rS}%**${_feeVip?" \u26A1":""} \nFee: **${fmtUSD(fS)}**\nYou receive: **${fmtUSD(recvS)}**`,inline:true},{name:"Crypto \u2192 Fiat",value:`Rate: **${rR}%**${_feeVip?" \u26A1":""} \nFee: **${fmtUSD(fR)}**\nYou receive: **${fmtUSD(amt-fR)}**`,inline:true},{name:"\uD83E\uDE99 If Buying Crypto",value:coinLines.length?coinLines.join("\n"):"--",inline:false}).setImage(IMG.FEE).setFooter({text:`Konvert  \u2022 ${_feeVip?"\u26A1 VIP rate active  \u00b7  ":""}Rate shown is for the amount entered`})]});
+        return interaction.editReply({embeds:[feeEmbed(amt,{vip:_feeVip,prices:{BTC:btcP,ETH:ethP,SOL:solP}})]});
       }
 
       if(cmd==="price"){
@@ -2117,7 +3133,9 @@ client.on(Events.InteractionCreate,async interaction=>{
         const isToFiat=!!FIAT[toNorm],receiveUSD=isToFiat?youGet:youGet*toPrice;
         const youGetDisplay=isToFiat?fmtUSD(youGet):`${youGet.toFixed(6)} ${toNorm}`;
         const usdDisplay=isToFiat?fmtUSD(youGet):`\u2248${fmtUSD(receiveUSD)}`;
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange  \u2022  Conversion",iconURL:IMG.LOGO}).setTitle(`${fromNorm} \u2192 ${toNorm}`).setThumbnail(COIN_LOGO[fromNorm]||COIN_LOGO[toNorm]||IMG.LOGO).setDescription(`Estimated conversion for **${amount} ${fromNorm}** to **${toNorm}**\n\u200b`).addFields({name:"\uD83D\uDCE4  You Send",value:`**${amount} ${fromNorm}**`,inline:true},{name:"\uD83D\uDCB8  Est. Fee",value:`**${fmtUSD(fee)}**`,inline:true},{name:"\uD83D\uDCE5  You Receive",value:`**${youGetDisplay}**`,inline:true},{name:"\uD83D\uDCB5  USD Value",value:`**${usdDisplay}**`,inline:true}).setImage(IMG.BANNER).setFooter({text:"Estimate only  \u2022  Konvert Exchange  \u2022  Open a ticket to begin"}).setTimestamp()]});
+        return interaction.editReply({embeds:[slim("Conversion").setDescription(`**${amount} ${fromNorm}** \u2192 **${toNorm}**`)
+          .addFields({name:"You send",value:`**${amount} ${fromNorm}**`,inline:true},{name:"Est. fee",value:`**${fmtUSD(fee)}**`,inline:true},{name:"You receive",value:isToFiat?`**${youGetDisplay}**`:`**${youGetDisplay}**\n${usdDisplay}`,inline:true})
+          .setFooter({text:"Konvert  \u2022  Estimate only"})]});
       }
 
       if(cmd==="stats"){
@@ -2192,11 +3210,11 @@ client.on(Events.InteractionCreate,async interaction=>{
         const gainers=[...rows].sort((a,b)=>b.change-a.change).slice(0,3),losers=[...rows].sort((a,b)=>a.change-b.change).slice(0,3);
         const avg=(rows.reduce((s,r)=>s+r.change,0)/rows.length).toFixed(2);
         const fmt2=n=>n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
-        return interaction.editReply({embeds:[base("Market Summary").setThumbnail(IMG.LOGO).addFields({name:"Market Sentiment",value:`**${parseFloat(avg)>=0?"Bullish \u25B2":"Bearish \u25BC"}**  \u00b7  Avg 24h: **${avg}%**`,inline:false},{name:"Top Gainers",value:gainers.map(r=>`\`${r.coin.padEnd(5)}\` **\u25B2 ${r.change.toFixed(2)}%**  $${fmt2(r.price)}`).join("\n"),inline:true},{name:"Top Losers",value:losers.map(r=>`\`${r.coin.padEnd(5)}\` **\u25BC ${Math.abs(r.change).toFixed(2)}%**  $${fmt2(r.price)}`).join("\n"),inline:true}).setImage(IMG.RATES).setFooter({text:"Live market data  \u2022  Konvert"})]});
+        return interaction.editReply({embeds:[slim("Market Summary").addFields({name:"Market Sentiment",value:`**${parseFloat(avg)>=0?"Bullish \u25B2":"Bearish \u25BC"}**  \u00b7  Avg 24h: **${avg}%**`,inline:false},{name:"Top Gainers",value:gainers.map(r=>`\`${r.coin.padEnd(5)}\` **\u25B2 ${r.change.toFixed(2)}%**  $${fmt2(r.price)}`).join("\n"),inline:true},{name:"Top Losers",value:losers.map(r=>`\`${r.coin.padEnd(5)}\` **\u25BC ${Math.abs(r.change).toFixed(2)}%**  $${fmt2(r.price)}`).join("\n"),inline:true}).setFooter({text:"Live market data  \u2022  Konvert"})]});
       }
 
       if(cmd==="wallets"){const w=load("wallets"),fields=Object.entries(w).length?Object.entries(w).map(([coin,addr])=>({name:coin,value:`\`${addr}\``,inline:true})):[{name:"No wallets set",value:"Owner: use /setwallet to add addresses.",inline:false}];return interaction.reply({embeds:[base("Deposit Wallets").setThumbnail(IMG.LOGO).setDescription("Send funds **only** to addresses confirmed by staff **inside your ticket**.\n__Never send to any address given outside of your ticket.__\n\u200b").addFields(fields).setFooter({text:"Always verify with staff before sending  \u2022  Konvert"})],flags:64});}
-      if(cmd==="mm"){return interaction.reply({embeds:[base("Middleman Guide").setDescription("A **middleman (MM)** holds crypto between both parties during a trade -- protecting everyone from scams.\n\u200b").addFields({name:"How to Pick an MM",value:"Agree with your exchanger on a trusted MM you both know.",inline:false},{name:"Owner Override Only",value:"The **only** time you skip an MM is if **@jswaps** or **@3uce** explicitly says so in your ticket.",inline:false},{name:"Stay Safe",value:"**Staff will never DM you first.** All MM arrangements happen in your ticket only.",inline:false}).setImage(IMG.RULES).setFooter({text:"Konvert  \u2022  Trade safely, always"})]});}
+      if(cmd==="mm"){return interaction.reply({embeds:[slim("Middleman Guide").setDescription("A **middleman (MM)** holds crypto between both parties during a trade, protecting everyone from scams.").addFields({name:"How to Pick an MM",value:"Agree with your exchanger on a trusted MM you both know.",inline:false},{name:"Owner Override Only",value:"The **only** time you skip an MM is if **@jswaps** or **@3uce** explicitly says so in your ticket.",inline:false},{name:"Stay Safe",value:"**Staff will never DM you first.** All MM arrangements happen in your ticket only.",inline:false}).setFooter({text:"Konvert  \u2022  Trade safely, always"})]});}
 
       if(cmd==="mine"){
         const userId=interaction.user.id,cooldownMs=3*60*60*1000,remaining=cooldownMs-(Date.now()-(state.cooldowns[userId]||0));
@@ -2230,7 +3248,7 @@ client.on(Events.InteractionCreate,async interaction=>{
       if(cmd==="calc"){await interaction.deferReply({flags:64});if(!CONFIG.RATES_CHANNEL)return interaction.editReply("RATES_CHANNEL_ID not configured.");const ch=interaction.guild.channels.cache.get(CONFIG.RATES_CHANNEL);if(!ch)return interaction.editReply("Rates channel not found.");const embed=await buildRatesEmbed();if(ratesMsgId){const msg=await ch.messages.fetch(ratesMsgId).catch(()=>null);if(msg){await msg.edit({embeds:[embed]});}else{const s=await ch.send({embeds:[embed]});ratesMsgId=s.id;}}else{const s=await ch.send({embeds:[embed]});ratesMsgId=s.id;}return interaction.editReply("Rates posted.");}
       if(cmd==="setwallet"){const coin=interaction.options.getString("coin").toUpperCase(),addr=interaction.options.getString("address");const w=load("wallets");w[coin]=addr;save("wallets",w);log(interaction.guild,`WALLET: ${interaction.user.tag} set ${coin} to ${addr}`);return interaction.reply({content:`**${coin}** deposit address updated to \`${addr}\``,flags:64});}
       if(cmd==="announce"){const message=interaction.options.getString("message"),channelId=interaction.options.getString("channel"),ping=interaction.options.getString("ping")||"none",ch=interaction.guild.channels.cache.get(channelId);if(!ch)return interaction.reply({content:"Channel not found.",flags:64});const pingStr=ping==="everyone"?"@everyone ":ping==="here"?"@here ":"";await ch.send({content:pingStr||undefined,embeds:[base("Konvert Announcement").setThumbnail(IMG.LOGO).setDescription(message).setFooter({text:`Announced by ${interaction.user.tag}  \u2022  Konvert`})]});return interaction.reply({content:"Announced.",flags:64});}
-      if(cmd==="blacklist"){const target=interaction.options.getUser("user"),reason=interaction.options.getString("reason")||"No reason given";const bl=load("blacklist");bl[target.id]={tag:target.tag,reason,by:interaction.user.tag,at:Date.now()};save("blacklist",bl);log(interaction.guild,`BLACKLIST: ${target.tag} -- ${reason}`);return interaction.reply({content:`**${target.tag}** blacklisted. Reason: ${reason}`,flags:64});}
+      if(cmd==="blacklist"){const target=interaction.options.getUser("user"),reason=interaction.options.getString("reason")||"No reason given";if(isOwner(target.id))return interaction.reply({content:"Owners can't be blacklisted.",flags:64});const bl=load("blacklist");bl[target.id]={tag:target.tag,reason,by:interaction.user.tag,at:Date.now()};save("blacklist",bl);log(interaction.guild,`BLACKLIST: ${target.tag} -- ${reason}`);return interaction.reply({content:`**${target.tag}** blacklisted. Reason: ${reason}`,flags:64});}
       if(cmd==="unblacklist"){const target=interaction.options.getUser("user");const bl=load("blacklist");delete bl[target.id];save("blacklist",bl);return interaction.reply({content:`**${target.tag}** removed from blacklist.`,flags:64});}
       if(cmd==="closeticket"){
         const reason=interaction.options.getString("reason")||"Deal complete";
@@ -2353,26 +3371,35 @@ Deleting in 10 seconds.`)
 
       if(cmd==="suspended"){
         const entries=Object.entries(_mem.suspensions||{});
-        if(!entries.length)return interaction.reply({content:"No exchangers are currently suspended.",flags:64});
-        const lines=entries.map(([id,s])=>`<@${id}> \u00b7 client <@${s.clientId}> \u00b7 ${s.amountUSD?fmtUSD(s.amountUSD):"--"} \u00b7 <t:${Math.floor((s.at||Date.now())/1000)}:R>\n> ${String(s.reason||"").slice(0,160)}\n> https://discord.com/channels/${interaction.guild.id}/${s.channelId}`).join("\n\n");
-        return interaction.reply({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange  \u00b7  Suspended Exchangers",iconURL:IMG.LOGO}).setDescription(lines.slice(0,4000)).setFooter({text:`${entries.length} pending review  \u2022  /reinstate to lift`}).setTimestamp()],flags:64});
+        const holds=Object.entries(_mem.holds||{}).filter(([id])=>!isSuspended(id)&&isOnHold(id));
+        if(!entries.length&&!holds.length)return interaction.reply({content:"No exchangers are currently suspended or on hold.",flags:64});
+        const _row=(id,s,tag)=>`<@${id}> \u00B7 ${tag}client <@${s.clientId}> \u00B7 ${s.amountUSD?fmtUSD(s.amountUSD):"--"} \u00B7 <t:${Math.floor((s.at||Date.now())/1000)}:R>\n> ${String(s.reason||"").slice(0,160)}\n> https://discord.com/channels/${interaction.guild.id}/${s.channelId}`;
+        const lines=[...entries.map(([id,s])=>_row(id,s,"")),...holds.map(([id,h])=>_row(id,h,`on hold (${h.level}) \u00B7 `))].join("\n\n");
+        return interaction.reply({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange  \u00B7  Suspended Exchangers",iconURL:IMG.LOGO}).setDescription(lines.slice(0,4000)).setFooter({text:`${entries.length} suspended  \u2022  ${holds.length} on hold  \u2022  /reinstate to lift`}).setTimestamp()],flags:64});
       }
 
       if(cmd==="reinstate"){
         await interaction.deferReply({flags:64});
         const target=interaction.options.getUser("user");
-        if(!isSuspended(target.id))return interaction.editReply({content:`**${target.username}** isn't suspended.`});
-        delete _mem.suspensions[target.id];
-        save("suspensions",_mem.suspensions);
-        // Clear the pending-report flags they were blocking, then give their typing access back
-        const _tk=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
-        const _clearedIds=[];
-        for(const [cid,t] of Object.entries(_tk)){if(t&&t.status==="open"&&t.reported&&t.reportedExchanger===target.id){delete t.reported;_clearedIds.push(cid);}}
-        if(_clearedIds.length){_mem.tickets=_tk;save("tickets",_tk);}
-        const _restored=await unlockExchangerEverywhere(interaction.guild,target.id);
-        for(const cid of _clearedIds){const _c=interaction.guild.channels.cache.get(cid);if(_c)await refreshPanel(_c,_tk[cid]);}
+        if(!isSuspended(target.id)&&!isOnHold(target.id))return interaction.editReply({content:`**${target.username}** isn't suspended or on hold.`});
+        const _r=await liftRestrictions(interaction.guild,target.id);
         log(interaction.guild,`REINSTATE: ${interaction.user.tag} reinstated ${target.tag||target.username}`);
-        return interaction.editReply({content:`Reinstated <@${target.id}>. Typing access restored in ${_restored} open ticket${_restored!==1?"s":""}.`});
+        return interaction.editReply({content:`Reinstated <@${target.id}>.`+(_r.suspended?` Typing access restored in ${_r.restored} open ticket${_r.restored!==1?"s":""}.`:" New claims are open again.")});
+      }
+
+      if(cmd==="clearexchanger"){
+        await interaction.deferReply({flags:64});
+        const target=interaction.options.getUser("user");
+        const _r=await liftRestrictions(interaction.guild,target.id);
+        log(interaction.guild,`CLEARED: ${interaction.user.tag} cleared ${target.tag||target.username} of all doubt`);
+        return interaction.editReply({content:clearSummary(target.id,_r)});
+      }
+      if(cmd==="profittest"){
+        await interaction.deferReply({flags:64});
+        const _pt=await notifyProfitOwners(profitTestEmbed(),{test:true});
+        const _lines=[..._pt.sent.map(id=>`✅ <@${id}> received it`),..._pt.failed.map(f=>`❌ <@${f.id}> — ${f.reason}`)];
+        const _tip=_pt.failed.length?"\n\nThat person can't be DMed. Fix: Server Settings → Privacy → allow direct messages from server members. Until then their real notices are posted in the log channel.":"";
+        return interaction.editReply({content:`Test notice sent to ${PROFIT_DM_IDS.length} recipient${PROFIT_DM_IDS.length===1?"":"s"}:\n${_lines.join("\n")}${_tip}`,allowedMentions:{parse:[]}});
       }
 
       if(cmd==="transferstats"){
@@ -2815,6 +3842,7 @@ This is active immediately and persists until revoked or the bot restarts.
       if(cmd==="revokeowner"){
         const target=interaction.options.getUser("user");
         if(!CONFIG.OWNER_IDS.includes(target.id))return interaction.reply({content:`**${target.username}** is not a bot owner.`,flags:64});
+        if(PERMANENT_OWNER_IDS.includes(target.id))return interaction.reply({content:`**${target.username}** is a permanent owner and can't be removed.`,flags:64});
         CONFIG.OWNER_IDS=CONFIG.OWNER_IDS.filter(id=>id!==target.id);
         return interaction.reply({content:`✅ Owner access removed from **${target.username}**.`,flags:64});
       }
@@ -3156,7 +4184,7 @@ This is active immediately and persists until revoked or the bot restarts.
     }
 
     if(interaction.isButton()){
-      if(interaction.customId==="btn_exchange_now"){await interaction.deferReply({flags:64}).catch(()=>{});const bl=load("blacklist");if(bl[interaction.user.id])return interaction.editReply({content:"You are blacklisted from Konvert."});return interaction.editReply({embeds:[step1Embed()],components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("select_method").setPlaceholder("Select your payment method...").addOptions(METHODS.map(m=>new StringSelectMenuOptionBuilder().setLabel(m.label).setValue(m.value).setDescription(`Exchange crypto with ${m.label}`))))],flags:64});}
+      if(interaction.customId==="btn_exchange_now"){await interaction.deferReply({flags:64}).catch(()=>{});const bl=load("blacklist");if(bl[interaction.user.id]&&!isOwner(interaction.user.id,interaction.member))return interaction.editReply({content:"You are blacklisted from Konvert."});return interaction.editReply({embeds:[step1Embed()],components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("select_method").setPlaceholder("Select your payment method...").addOptions(METHODS.map(m=>new StringSelectMenuOptionBuilder().setLabel(m.label).setValue(m.value).setDescription(`Exchange crypto with ${m.label}`))))],flags:64});}
       if(interaction.customId==="btn_fee_calc"){const modal=new ModalBuilder().setCustomId("modal_fee").setTitle("Fee Calculator");modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("fee_amt").setLabel("Amount in USD").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 250").setRequired(true)));return interaction.showModal(modal);}
       if(interaction.customId==="btn_rates_quick"){await interaction.deferReply({flags:64});try{return interaction.editReply({embeds:[await buildRatesEmbed()]});}catch(e){return interaction.editReply("Could not fetch rates right now. Try again in a moment.");}}
       if(interaction.customId==="btn_refresh_rates"){await interaction.deferUpdate();try{const _re=await buildRatesEmbed();return interaction.editReply({embeds:[_re],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_refresh_rates").setLabel("Refresh").setStyle(ButtonStyle.Secondary))]});}catch(e){return interaction.editReply({content:"Could not fetch rates right now."});} return;}
@@ -3268,7 +4296,9 @@ This is active immediately and persists until revoked or the bot restarts.
       if(interaction.customId==="btn_mmconfirm"){await confirmMiddleman(interaction);return;}
       if(interaction.customId==="btn_confirmdone"){await confirmCompletion(interaction);return;}
       if(interaction.customId==="btn_remind"){await remindClient(interaction);return;}
+      if(interaction.customId==="btn_hopin"){await hopIn(interaction);return;}
       if(interaction.customId==="btn_checkin_ok"){await answerCheckin(interaction);return;}
+      if(interaction.customId.startsWith("btn_riskclear__")||interaction.customId.startsWith("btn_riskfreeze__")){await handleRiskButton(interaction);return;}
       if(interaction.customId.startsWith("btn_profitok__")){await confirmProfitSplit(interaction);return;}
       if(interaction.customId.startsWith("btn_profit__")){await openProfitModal(interaction);return;}
       if(interaction.customId==="btn_done"){
@@ -3284,14 +4314,15 @@ This is active immediately and persists until revoked or the bot restarts.
           if(!ticket.claimedBy)return interaction.reply({content:"Claim this ticket before completing it.",flags:64});
           if(interaction.user.id!==ticket.claimedBy&&!isOwner(interaction.user.id,interaction.member))return interaction.reply({content:`Only <@${ticket.claimedBy}> can complete this ticket.`,flags:64});
         }
-        if(ticket.claimSystem){
-          // The client confirms before anything is finalized
+        if(ticket.claimSystem&&!isOwner(interaction.user.id,interaction.member)){
+          // The client confirms before anything is finalized (owners finalize directly)
           if(ticket.completionPending)return interaction.reply({content:"Already waiting for the client to confirm.",flags:64});
           await interaction.deferReply({flags:64});
           const _sent=await requestCompletion(interaction.channel,ticket,tickets);
           return interaction.editReply({content:_sent?"Sent to the client for confirmation.":"Couldn't send the confirmation. Try again."});
         }
         await interaction.deferReply({flags:64});
+        if(ticket.claimSystem)ticket.completionPending=false;   // an owner finalizes without waiting on the client
         ticket._overrideExchangerId=ticket.claimedBy||interaction.user.id;
         await completeTrade(interaction,ticket,tickets);
         return;
@@ -3301,7 +4332,8 @@ This is active immediately and persists until revoked or the bot restarts.
         const _ct=_cts[interaction.channel.id];
         const _isOwnerClose=isOwner(interaction.user.id,interaction.member);
         const _isStaffClose=CONFIG.STAFF_ROLE?interaction.member.roles.cache.has(CONFIG.STAFF_ROLE):false;
-        const _isClientClose=!!(_ct&&interaction.user.id===_ct.userId);
+        const _supClose=_ct?null:supportTicketOf(interaction.channel);     // support tickets: the opener is named in the channel topic
+        const _isClientClose=!!((_ct&&interaction.user.id===_ct.userId)||(_supClose&&_supClose.userId===interaction.user.id));
         let _canClose=_isOwnerClose||_isStaffClose||_isClientClose;
         if(!_canClose&&isExchanger(interaction.member)){
           // Once claimed, only the claiming exchanger can close it (client, staff and owners always can)
@@ -3375,7 +4407,11 @@ This is active immediately and persists until revoked or the bot restarts.
       if(interaction.customId==="modal_support"){
         const issue=interaction.fields.getTextInputValue("sup_issue"),tried=interaction.fields.getTextInputValue("sup_tried")||"Not specified",user=interaction.user,guild=interaction.guild;
         let ch;
-        try{ch=await guild.channels.create({name:`support-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,12)}`,type:ChannelType.GuildText,parent:CONFIG.TICKET_CATEGORY||null,permissionOverwrites:[{id:guild.roles.everyone,deny:[PermissionFlagsBits.ViewChannel]},{id:user.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]},...(CONFIG.STAFF_ROLE?[{id:CONFIG.STAFF_ROLE,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]}]:[]),...CONFIG.OWNER_IDS.map(id=>({id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]}))]});}catch{return interaction.reply({content:"Failed to create support channel.",flags:64});}
+        const _sPerms=[{id:guild.roles.everyone,deny:[PermissionFlagsBits.ViewChannel]},{id:user.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]}];
+        if(CONFIG.STAFF_ROLE&&guild.roles.cache.has(CONFIG.STAFF_ROLE))addOverwrite(_sPerms,{id:CONFIG.STAFF_ROLE,allow:[...OWNER_CHANNEL_ALLOW]});
+        for(const o of await ownerOverwrites(guild))addOverwrite(_sPerms,o);
+        if(guild.roles.cache.has(OWNER_ROLE))addOverwrite(_sPerms,{id:OWNER_ROLE,allow:[...OWNER_CHANNEL_ALLOW]});
+        try{ch=await guild.channels.create({name:`support-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,12)}`,type:ChannelType.GuildText,parent:CONFIG.TICKET_CATEGORY||null,topic:`${SUPPORT_TOPIC}${user.id}`,permissionOverwrites:_sPerms});}catch(e){console.error("[support] couldn't create the channel:",e.message);return interaction.reply({content:"Failed to create support channel.",flags:64});}
         await ch.send({content:`<@${user.id}>`,embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert  \u2022  Support",iconURL:IMG.LOGO}).setTitle("Support Ticket").setThumbnail(IMG.LOGO).setDescription(`**Welcome, <@${user.id}>**\n\nStaff will assist you shortly. Please be patient.\n\u200b`).addFields({name:"Issue",value:issue,inline:false},{name:"What Tried",value:tried,inline:false}).setTimestamp().setFooter({text:"Konvert  \u2022  Support Ticket"})],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_close").setLabel("Close Ticket").setStyle(ButtonStyle.Danger))]});
         if(CONFIG.STAFF_ROLE)await ch.send(`<@&${CONFIG.STAFF_ROLE}> -- New support ticket from <@${user.id}>`);
         log(guild,`SUPPORT: #${ch.name} opened by ${user.tag}`);
@@ -3388,11 +4424,9 @@ This is active immediately and persists until revoked or the bot restarts.
         const raw=parseFloat(interaction.fields.getTextInputValue("fee_amt"));
         if(isNaN(raw)||raw<=0)return interaction.reply({content:"Please enter a valid amount.",flags:64});
         await interaction.deferReply({flags:64});
-        const fS=calcFee(raw,"send"),rS=feeRate(raw,"send"),fR=calcFee(raw,"receive"),rR=feeRate(raw,"receive");
+        const _mvip=isVipVolume(getUserVolume(interaction.user.id));   // same VIP rate as /fee
         const [btcP,ethP,solP]=await Promise.all([getPrice("BTC"),getPrice("ETH"),getPrice("SOL")]);
-        const recvS=raw-fS,coinLines=[];
-        if(btcP)coinLines.push(`BTC: **${(recvS/btcP).toFixed(6)}**`);if(ethP)coinLines.push(`ETH: **${(recvS/ethP).toFixed(5)}**`);if(solP)coinLines.push(`SOL: **${(recvS/solP).toFixed(4)}**`);
-        return interaction.editReply({embeds:[base("Fee Calculator").setThumbnail(IMG.LOGO).setDescription(`Estimate for **${fmtUSD(raw)}**\n*Final fee may vary slightly.*\n\u200b`).addFields({name:"Fiat \u2192 Crypto",value:`Rate: **${rS}%**\nFee: **${fmtUSD(fS)}**\nYou receive: **${fmtUSD(recvS)}**`,inline:true},{name:"Crypto \u2192 Fiat",value:`Rate: **${rR}%**\nFee: **${fmtUSD(fR)}**\nYou receive: **${fmtUSD(raw-fR)}**`,inline:true},{name:"\uD83E\uDE99 Coin Amounts",value:coinLines.length?coinLines.join("  \u00b7  "):"--",inline:false}).setImage(IMG.FEE).setFooter({text:"Konvert  \u2022  Open a ticket to begin"})]});
+        return interaction.editReply({embeds:[feeEmbed(raw,{vip:_mvip,prices:{BTC:btcP,ETH:ethP,SOL:solP}})]});
       }
 
       if(interaction.customId.startsWith("modal_c2c__")){
@@ -3741,6 +4775,13 @@ client.once(Events.ClientReady,async()=>{
     _mem.suspensions=pgSusp;
     console.log(`[startup] suspensions loaded from Postgres: ${Object.keys(pgSusp).length}`);
   }
+  const pgHolds=await dbGet("konvert_holds");
+  if(pgHolds&&Object.keys(pgHolds).length>0){
+    _mem.holds=pgHolds;
+    console.log(`[startup] safety holds loaded from Postgres: ${Object.keys(pgHolds).length}`);
+  }else{
+    try{const d=JSON.parse(fs.readFileSync(DB.holds,"utf8"));if(d&&Object.keys(d).length>0)_mem.holds=d;}catch{}
+  }
   const pgPromos=await dbGet("konvert_promos");
   if(pgPromos&&Object.keys(pgPromos).length>0){
     state.promos=pgPromos;
@@ -3805,6 +4846,9 @@ client.once(Events.ClientReady,async()=>{
     // Random "Is everything okay?" check-ins (every minute; survives restarts)
     setInterval(()=>sweepCheckins(guild).catch(e=>console.error("[checkin]",e.message)),60*1000);
     setTimeout(()=>sweepCheckins(guild).catch(()=>{}),25*1000);
+    // Safety system: settles unanswered worries, notices silent exchangers (quietly), retires old holds (every 30 seconds)
+    setInterval(()=>sweepSafety(guild).catch(e=>console.error("[safety]",e.message)),30*1000);
+    setTimeout(()=>sweepSafety(guild).catch(()=>{}),20*1000);
     // Show who profit DMs go to, so a wrong ID is obvious in the logs
     for(const _pid of PROFIT_DM_IDS)client.users.fetch(_pid).then(u=>console.log(`[profit] profit DMs go to ${u.username} (${_pid})`)).catch(()=>console.log(`[profit] WARNING: can't find profit DM recipient ${_pid}`));
     // Price alert checker — every 2 minutes
