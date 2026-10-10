@@ -896,8 +896,6 @@ async function claimTicket(interaction,opts={}){
       return interaction.followUp({content:"Couldn't claim this ticket (permission update failed). Try again.",flags:64}).catch(()=>{});
     }
   }
-  // middleman claims: the exchanger stays view-only until the client confirms
-  if(!needsMm&&!owner)planWithSiblings(ticket,ch.id,tickets,interaction.guild);
   _mem.tickets=tickets;save("tickets",tickets);
   await refreshPanel(ch,ticket);
 
@@ -932,7 +930,6 @@ async function confirmMiddleman(interaction){
     console.error("[mm] unlock failed:",e.message);
     return interaction.followUp({content:"Couldn't unlock the exchanger (permission update failed). Press the button again.",flags:64}).catch(()=>{});
   }
-  planWithSiblings(ticket,ch.id,tickets,interaction.guild);
   _mem.tickets=tickets;save("tickets",tickets);
   await interaction.editReply({embeds:[buildClaimEmbed(ticket,"mmConfirmed")],components:[]}).catch(()=>{});
   await refreshPanel(ch,ticket);
@@ -1002,13 +999,9 @@ async function remindClient(interaction){
   await ch.send({content:`<@${ticket.userId}> <@${ticket.claimedBy}> is waiting for you to ${link?`[${what}](${link})`:what}.`,allowedMentions:{users:[ticket.userId]}}).catch(()=>{});
 }
 
-// ---- Random "Is everything okay?" check-in: one per ticket, at an unpredictable time ----
-const CHECKIN_MIN_MS=5*60*1000, CHECKIN_MAX_MS=15*60*1000;   // after the exchanger is able to talk
+// ---- "Is everything okay?" check-in: ONLY for the other clients of an exchanger the safety system really suspects ----
+// There is no routine or random check-in. forceCheckin() (safety section) books one 1-3 minutes out; this sweep delivers it.
 let _checkinSweepRunning=false;
-function scheduleCheckin(ticket,rnd=Math.random){
-  if(ticket.checkinAt||ticket.checkinSentAt)return;
-  ticket.checkinAt=Date.now()+CHECKIN_MIN_MS+Math.floor(rnd()*(CHECKIN_MAX_MS-CHECKIN_MIN_MS));
-}
 function checkinEmbed(t){
   return new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
     .setTitle("Is everything okay?")
@@ -1020,22 +1013,22 @@ function checkinRow(){
     new ButtonBuilder().setCustomId("btn_checkin_ok").setLabel("Yes, all good").setStyle(ButtonStyle.Success),
     issueButton("No, report issue"));
 }
-// Runs every minute (and once at startup): posts the check-in when a ticket's random time arrives
+// Runs every minute (and once at startup): posts a booked check-in when its time arrives.
+// A check-in time that was not booked by the safety system (tickets saved by an earlier version, which asked everyone at random) is dropped, never sent.
 async function sweepCheckins(guild){
   if(_checkinSweepRunning)return;
   _checkinSweepRunning=true;
   try{
     const now=Date.now(),due=[];let changed=false;
     for(const [cid,t] of Object.entries(_mem.tickets||{})){
-      if(!t||t.status!=="open"||!t.claimSystem||!t.claimedBy||t.checkinSentAt)continue;
+      if(!t||t.checkinSentAt)continue;
+      if(t.checkinAt&&t.checkinPlan!=="forced"){delete t.checkinAt;changed=true;continue;}     // an old routine check-in
+      if(t.checkinPlan!=="forced"||!t.checkinAt)continue;
+      if(t.status!=="open"||!t.claimSystem||!t.claimedBy)continue;
       if(t.mmPending||t.completionPending||t.reported)continue;          // already waiting on the client, or frozen
       if(t.ownerClaim||isOwner(t.claimedBy))continue;                // owners are trusted
-      if(!t.checkinAt){                                                   // nothing scheduled: roll once whether this ticket gets a check-in at all
-        if(!t.checkinPlan){planCheckin(t,cid,_mem.tickets,{has:id=>guild.channels.cache.has(id)});changed=true;}
-        continue;
-      }
       if(t.checkinAt>now)continue;
-      if(isSuspended(t.claimedBy)){delete t.checkinAt;scheduleCheckin(t);changed=true;continue;}   // frozen: nothing to ask, look again later
+      if(isSuspended(t.claimedBy)){delete t.checkinAt;delete t.checkinPlan;changed=true;continue;}   // frozen: the owners and the clients already know
       const ch=guild.channels.cache.get(cid);
       if(!ch)continue;
       t.checkinSentAt=now;changed=true;due.push([ch,t]);                  // mark first so overlapping runs can't double-post
@@ -1093,9 +1086,9 @@ async function releaseClaim(channel,ticket,tickets,{by=null}={}){
 }
 // A fresh panel for a ticket that needs an exchanger: an embed plus the buttons for its current state. It pings the roles that can take the
 // ticket and becomes the ticket's panel, so later claims / completions keep its buttons up to date.
-async function postOpenPanel(channel,ticket,{title,lead}){
+async function postOpenPanel(channel,ticket,{title,lead,known}){
   const m=getMethod(ticket.method);
-  const roles=ticketPingRoles(channel,ticket);
+  const roles=ticketPingRoles(channel,ticket,known);
   const row=panelRow(ticket);
   const embed=new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle(title)
     .setDescription(`${lead}\n\n**${(m&&m.label)||ticket.method||"Exchange"}** · ${fmtUSD(parseFloat(ticket.amountUSD)||0)} · client <@${ticket.userId}>`)
@@ -1109,10 +1102,12 @@ async function postOpenPanel(channel,ticket,{title,lead}){
 function exchangerRoleIds(){
   return [...new Set([...Object.values(CONFIG.ROLES||{}),CONFIG.EXCHANGER_ROLE].filter(Boolean))];
 }
-// Which of these roles can actually see the channel
-function _rolesThatSee(channel,ids){
+// Which of these roles can actually see the channel. `known` = roles that were only just given access: discord.js learns of an overwrite change when
+// Discord's update event arrives, a moment AFTER the edit succeeds, so the cached permissions can't be trusted for them yet.
+function _rolesThatSee(channel,ids,known){
   const guild=channel.guild;
   return ids.filter(rid=>{
+    if(known&&known.has(rid))return true;
     const role=guild&&guild.roles&&guild.roles.cache.get(rid);
     if(!role)return false;
     try{const p=channel.permissionsFor(role);return !!(p&&p.has(PermissionFlagsBits.ViewChannel));}catch{return false;}
@@ -1120,14 +1115,14 @@ function _rolesThatSee(channel,ids){
 }
 // Who hears about a ticket that needs an exchanger: its payment method's role, staff, the helper role for custom orders, and every exchanger
 // role once it has been opened to all. Only roles that can see the channel are pinged (Discord notifies nobody else anyway).
-function ticketPingRoles(channel,ticket){
+function ticketPingRoles(channel,ticket,known){
   const want=[];
   const mr=CONFIG.ROLES&&CONFIG.ROLES[ticket.method];
   if(mr)want.push(mr);
   if(CONFIG.STAFF_ROLE)want.push(CONFIG.STAFF_ROLE);
   if((ticket.method==="custom"||ticket.method==="buyforyou")&&CONFIG.HELPER_ROLE)want.push(CONFIG.HELPER_ROLE);
   if(ticket.openToAll)want.push(...exchangerRoleIds());
-  return _rolesThatSee(channel,[...new Set(want)]);
+  return _rolesThatSee(channel,[...new Set(want)],known);
 }
 // $all: every exchanger role (whatever the payment method) can see the ticket, and a fresh panel pings them all.
 // Unclaimed: anyone can press Claim Ticket. Claimed: anyone can press Hop In and talk alongside the exchanger.
@@ -1138,24 +1133,25 @@ async function openToAllExchangers(channel,ticket,tickets,{by=null}={}){
   if(Date.now()-last<ALL_COOLDOWN_MS)return {ok:false,wait:Math.ceil((ALL_COOLDOWN_MS-(Date.now()-last))/1000)};
   _allAt.set(channel.id,Date.now());
   const guild=channel.guild;
-  let opened=0;
+  const granted=new Set(),failed=[];                                  // roles opened just now / roles that could not be
   for(const rid of exchangerRoleIds()){
     const role=guild&&guild.roles&&guild.roles.cache.get(rid);
     if(!role||_rolesThatSee(channel,[rid]).length)continue;          // no such role, or it can already see the ticket
-    try{await channel.permissionOverwrites.edit(role,{ViewChannel:true,ReadMessageHistory:true,SendMessages:false});opened++;}
-    catch(e){console.error("[all] couldn't open the ticket to role",rid+":",e.message);}
+    try{await channel.permissionOverwrites.edit(role,{ViewChannel:true,ReadMessageHistory:true,SendMessages:false});granted.add(rid);}
+    catch(e){failed.push(rid);console.error("[all] couldn't open the ticket to role",rid+":",e.message);}
   }
+  const opened=granted.size;
   ticket.openToAll=true;ticket.openToAllAt=Date.now();ticket.openToAllBy=by;
   tickets[channel.id]=ticket;_mem.tickets=tickets;save("tickets",tickets);
   const lead=ticket.claimedBy
     ?`This ticket is open to **all exchangers**. <@${ticket.claimedBy}> is handling it — anyone else can press **Hop In** to join.`
     :`This ticket is open to **all exchangers**, whatever their payment method. Press **Claim Ticket** to take it.`;
   const oldPanel=await findPanelMessage(channel,ticket);
-  const fresh=await postOpenPanel(channel,ticket,{title:"Open to All Exchangers",lead});
+  const fresh=await postOpenPanel(channel,ticket,{title:"Open to All Exchangers",lead,known:granted});   // the roles opened a moment ago are pinged too
   if(fresh){if(oldPanel&&oldPanel.id!==fresh.id)await oldPanel.edit({components:[]}).catch(()=>{});}
   else await refreshPanel(channel,ticket);
-  log(guild,`OPEN TO ALL: #${channel.name} | by ${by} | ${opened} role(s) can now see it`);
-  return {ok:true,opened,posted:!!fresh};
+  log(guild,`OPEN TO ALL: #${channel.name} | by ${by} | ${opened} role(s) can now see it${failed.length?` | COULDN'T OPEN TO ${failed.join(", ")}`:""}`);
+  return {ok:true,opened,failed,posted:!!fresh};
 }
 // "Hop In": an exchanger joins a ticket someone else has claimed (only once it has been opened to all with $all)
 async function hopIn(interaction){
@@ -1184,30 +1180,31 @@ async function hopIn(interaction){
 }
 
 // ── Safety system ────────────────────────────────────────────
-// Reads each claimed ticket for signs a client may need help, and answers in proportion. Nothing is said in the ticket
-// until it is time to act: every signal below caution is only written to the log channel.
-//   watch    (25+)  logged for the owners; nothing visible in the ticket
-//   caution  (50+)  the exchanger can't claim new tickets · the client gets a calm "Safety Check" · owners are
-//                   alerted (Clear / Freeze) · the exchanger's other clients are checked in on sooner
-//   critical (80+)  the ticket is paused and the exchanger frozen, exactly like a client flag
+// Reads each claimed ticket for signs a client is being scammed, and says nothing in the ticket until it really thinks so.
+// Impatience ("where is it?", "did you send?"), nerves and a slow reply can never trigger anything, however many pile up: only
+// real evidence can (the client accuses the exchanger, or the exchanger tries to take the client off the ticket), and even then
+// something must back it up before the system acts.
+//   watch    (25+)  real evidence seen: written to the log channel only; nothing visible in the ticket
+//   caution  (70+)  the exchanger can't claim new tickets · the client gets a calm "Safety Check" (with the "we never DM first"
+//                   warning) · owners are alerted (Clear / Freeze) · the exchanger's other clients get a quick check-in
+//   critical (100)  the ticket is paused and the exchanger frozen, exactly like a client flag
 // Owners, and any ticket an owner claims or opens, are never analysed, held or frozen.
 // Owners clear an exchanger of all doubt with /clearexchanger, $clear, /reinstate or the alert's Clear button (liftRestrictions).
 // Turn the whole thing off with the environment variable SAFETY_SYSTEM=off.
 const SAFETY={
   enabled:process.env.SAFETY_SYSTEM!=="off",
-  levels:{watch:25,caution:50,critical:80},
+  levels:{watch:25,caution:70,critical:100},
   rank:{watch:1,caution:2,critical:3},
-  caps:{accuse:100,missing:40,chase:36,worry:16,steer:70,silent:25},   // most one kind of signal can add
-  points:{accuse:50,missing:20,chase:12,worry:8,silent:20},
+  caps:{accuse:60,missing:20,chase:10,worry:6,steer:40,silent:10},   // most one kind of signal can add (everything but accusations and steering is weak: 46 together)
+  points:{accuse:50,missing:10,chase:5,worry:3,silent:10},
+  realSteer:40,                // a steer worth this much (asking to move to DMs / another app, skipping the middleman) is real evidence; a stray outside link (20) is not
   confirmMs:90*1000,           // "did you send?" only counts if nobody answered it by then
   repeatMs:20*60*1000,         // ...unless it's the 3rd+ in this window (stalling replies can't reset it)
   silentMs:10*60*1000,         // a client waiting this long after paying or complaining = silent exchanger
   holdMs:6*60*60*1000,         // a caution hold lifts by itself after this, unless an owner acts sooner
-  clearedBonus:25,             // a ticket an owner cleared needs stronger evidence to be flagged again
+  clearedBonus:15,             // a ticket an owner cleared needs stronger evidence to be flagged again
   heldBonus:10                 // an exchanger already on hold is judged a little stricter in their other tickets
 };
-// Random check-ins: each ticket rolls once, when the exchanger can talk, and these odds decide whether it gets one
-const CHECKIN_ODDS={base:0.30,perOther:0.15,maxOthers:0.45,big:[[250,0.20],[100,0.10]],atRisk:0.30};
 const _safety=new Map();       // channelId -> live conversation state (not saved; it rebuilds as people talk)
 let _safetySweepRunning=false;
 
@@ -1564,6 +1561,9 @@ function riskScore(by){
   for(const [k,v] of Object.entries(by||{}))s+=Math.min(SAFETY.caps[k]||0,v||0);
   return Math.min(100,s);
 }
+// Real evidence = the client accuses the exchanger, or the exchanger tries to take the client off the ticket.
+// Without it a ticket never gets a level, however impatient the client is; with it, the other signs add weight.
+function hasRealEvidence(by){return !!by&&((by.accuse||0)>0||(by.steer||0)>=SAFETY.realSteer);}
 function riskLevelFor(score,adj=0){
   const L=SAFETY.levels;
   if(score>=L.critical+adj)return "critical";
@@ -1584,7 +1584,7 @@ function addRisk(t,cid,kind,pts,note){
   const h=_mem.holds&&_mem.holds[t.claimedBy];
   const heldElsewhere=!!(h&&isOnHold(t.claimedBy)&&h.channelId!==cid);
   const adj=(t.riskCleared?SAFETY.clearedBonus:0)-(heldElsewhere?SAFETY.heldBonus:0);
-  const lvl=riskLevelFor(t.riskScore,adj);
+  const lvl=hasRealEvidence(t.riskByKind)?riskLevelFor(t.riskScore,adj):null;
   if(lvl&&SAFETY.rank[lvl]>(SAFETY.rank[t.riskLevel]||0)){t.riskLevel=lvl;return lvl;}
   return null;
 }
@@ -1597,11 +1597,6 @@ function resetSafetyFields(t){
   clearTicketRisk(t,{byOwner:false});
   delete t.riskCleared;delete t.safetyNoticeAt;delete t.siblingsNotified;delete t.clientHeld;
   delete t.checkinPlan;delete t.checkinRolls;
-}
-function exchangerRisk(tickets,exId){
-  let m=0;
-  for(const t of Object.values(tickets||{}))if(t&&t.status==="open"&&t.claimedBy===exId&&!t.ownerClaim)m=Math.max(m,t.riskScore||0);
-  return m;
 }
 
 // ---- 3. Holds: a flagged exchanger can't take new tickets until an owner has looked ----
@@ -1624,14 +1619,14 @@ function placeHold(guild,cid,t,level){
   return true;
 }
 // Used by /clearexchanger, $clear, /reinstate and the Clear button: lifts the freeze and the hold, wipes the risk marks and
-// anything still waiting to be counted, cancels early check-ins that only existed because of the doubt, and tells clients
+// anything still waiting to be counted, cancels quick check-ins that only existed because of the doubt, and tells clients
 // who were asked to hold off that the review is over
 async function liftRestrictions(guild,exId){
   const out={suspended:isSuspended(exId),held:!!(_mem.holds&&_mem.holds[exId]),restored:0,cleared:0,pending:0,checkins:0,notified:0};
   if(out.suspended){delete _mem.suspensions[exId];save("suspensions",_mem.suspensions);}
   if(out.held){delete _mem.holds[exId];save("holds",_mem.holds);}
   const tk=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
-  const panels=[],told=[],replan=[];let dirty=false;
+  const panels=[],told=[];let dirty=false;
   for(const [cid,t] of Object.entries(tk)){
     if(!t||t.status!=="open")continue;
     if(t.reported&&t.reportedExchanger===exId){delete t.reported;panels.push(cid);dirty=true;}
@@ -1639,11 +1634,10 @@ async function liftRestrictions(guild,exId){
     const S=_safety.get(cid);                                    // worries still waiting to be counted, and the waiting timers
     if(S){out.pending+=S.pending.length;_safety.delete(cid);}
     if(t.riskLevel||t.riskScore){clearTicketRisk(t);out.cleared++;dirty=true;}
-    if(t.checkinPlan==="forced"&&!t.checkinSentAt){delete t.checkinAt;delete t.checkinPlan;replan.push([cid,t]);out.checkins++;dirty=true;}   // an early check-in that only existed because of the doubt
+    if(t.checkinPlan==="forced"&&!t.checkinSentAt){delete t.checkinAt;delete t.checkinPlan;out.checkins++;dirty=true;}   // a quick check-in that only existed because of the doubt
     if(t.safetyNoticeAt||t.siblingsNotified){delete t.safetyNoticeAt;delete t.siblingsNotified;dirty=true;}
     if(t.clientHeld){delete t.clientHeld;told.push(cid);dirty=true;}
   }
-  for(const [cid,t] of replan)planCheckin(t,cid,tk,{has:id=>guild.channels.cache.has(id)});    // back to the normal random odds
   if(dirty){_mem.tickets=tk;save("tickets",tk);}
   if(out.suspended)out.restored=await unlockExchangerEverywhere(guild,exId);
   for(const cid of panels){const c=guild.channels.cache.get(cid);if(c)await refreshPanel(c,tk[cid]);}
@@ -1668,52 +1662,8 @@ function clearSummary(exId,r){
   return parts.length?`Cleared <@${exId}> of all doubt: ${parts.join(" · ")}.`:`Nothing to clear on <@${exId}>.`;
 }
 
-// ---- 4. Random check-ins, weighted by how much attention the exchanger needs ----
-function concurrentTickets(tickets,exId,exceptCid,has){
-  let n=0;
-  for(const [cid,t] of Object.entries(tickets||{})){
-    if(cid===exceptCid||!t||t.status!=="open"||t.claimedBy!==exId||t.ownerClaim)continue;
-    if(has&&!has(cid))continue;
-    n++;
-  }
-  return n;
-}
-function checkinChance(ticket,cid,tickets,has){
-  const ex=ticket.claimedBy;
-  let p=CHECKIN_ODDS.base;
-  p+=Math.min(CHECKIN_ODDS.maxOthers,concurrentTickets(tickets,ex,cid,has)*CHECKIN_ODDS.perOther);   // juggling several tickets
-  const amt=parseFloat(ticket.amountUSD)||0;
-  for(const [min,add] of CHECKIN_ODDS.big)if(amt>=min){p+=add;break;}                                // bigger deals
-  if(isOnHold(ex)||ticket.riskLevel)p=1;                                                              // flagged: always ask
-  else if(exchangerRisk(tickets,ex)>=SAFETY.levels.watch)p+=CHECKIN_ODDS.atRisk;
-  return Math.min(1,p);
-}
-// Rolls the dice once for this ticket: schedules a check-in, or records that it won't get one
-function planCheckin(ticket,cid,tickets,{has=null,rnd=Math.random}={}){
-  if(ticket.checkinAt||ticket.checkinSentAt)return false;
-  if(ticket.ownerClaim||isOwner(ticket.claimedBy)){ticket.checkinPlan="owner";return false;}
-  ticket.checkinRolls=(ticket.checkinRolls||0)+1;
-  if(rnd()<checkinChance(ticket,cid,tickets,has)){scheduleCheckin(ticket,rnd);ticket.checkinPlan="scheduled";return true;}
-  ticket.checkinPlan="skip";
-  return false;
-}
-// A busier exchanger raises the odds for the tickets that already rolled "no check-in"
-function replanSiblings(ticket,cid,tickets,opts={}){
-  let n=0;
-  for(const [ocid,o] of Object.entries(tickets||{})){
-    if(ocid===cid||!o||o.status!=="open"||o.claimedBy!==ticket.claimedBy||o.ownerClaim)continue;
-    if(o.checkinPlan!=="skip"||o.checkinAt||o.checkinSentAt||(o.checkinRolls||0)>=3||o.mmPending||o.reported)continue;
-    if(opts.has&&!opts.has(ocid))continue;
-    if(planCheckin(o,ocid,tickets,opts))n++;
-  }
-  return n;
-}
-function planWithSiblings(ticket,cid,tickets,guild){
-  const opts={has:guild?(id=>guild.channels.cache.has(id)):null};
-  planCheckin(ticket,cid,tickets,opts);
-  replanSiblings(ticket,cid,tickets,opts);
-}
-// Asks this ticket's client within 1–3 minutes (used when the exchanger is flagged in another ticket)
+// ---- 4. Quick check-ins on the OTHER clients of an exchanger the system really suspects (never routine, never random) ----
+// Asks this ticket's client within 1-3 minutes (used when the exchanger reaches caution in another ticket)
 function forceCheckin(o,rnd=Math.random){
   if(o.checkinSentAt||o.mmPending||o.reported||o.ownerClaim)return false;
   const when=Date.now()+60*1000+Math.floor(rnd()*120*1000);
@@ -1732,9 +1682,11 @@ function boostOtherTickets(guild,cid,t){
 }
 
 // ---- 5. What the client and owners see ----
+// Only ever said when the system really suspects a scam (it is part of the Safety Check), never on a timer
+const IMPERSONATOR_NOTICE="\u26A0\uFE0F **@3uce will NOT DM you first. @jswaps will NOT DM you first.** If you received a random DM from anyone claiming to be Konvert staff or an owner \u2014 it is an impersonator. Block and report them immediately. All communication happens inside this ticket only.";
 function safetyCheckEmbed(t){
   return new EmbedBuilder().setColor(0xf59e0b).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Safety Check")
-    .setDescription(`<@${t.userId}>, a quick safety review has started on this ticket and an owner has been notified.\nAs a precaution, **please hold off on sending any further funds** until they confirm.`)
+    .setDescription(`<@${t.userId}>, a quick safety review has started on this ticket and an owner has been notified.\nAs a precaution, **please hold off on sending any further funds** until they confirm.\n\n${IMPERSONATOR_NOTICE}`)
     .setFooter({text:"Automatic check  \u2022  Nothing is needed from you right now"}).setTimestamp();
 }
 function reviewDoneEmbed(t){
@@ -1787,7 +1739,7 @@ async function noticeOtherClients(guild,cid,t){
 
 // ---- 6. Acting on a signal ----
 async function escalate(guild,ch,t,level){
-  const cid=ch.id,why=(t.riskNotes||[]).slice(-3).join(" \u00B7 ");
+  const cid=ch.id,why=(t.riskNotes||[]).slice(-3).join(" \u00B7 ").replace(/`/g,"'");
   log(guild,`SAFETY ${level.toUpperCase()}: #${ch.name} | exchanger ${t.claimedBy} | client ${t.userId} | score ${t.riskScore} | ${why.slice(0,200)}`);
   if(level==="watch")return;
   placeHold(guild,cid,t,level);
@@ -1806,9 +1758,10 @@ async function escalate(guild,ch,t,level){
 async function riskEvent(guild,ch,t,kind,pts,note){
   const level=addRisk(t,ch.id,kind,pts,note);
   save("tickets",_mem.tickets);
-  // quiet until it is time to act: every counted signal goes to the log channel, nothing is said in the ticket
-  log(guild,`SAFETY signal: #${ch.name} | exchanger ${t.claimedBy} | client ${t.userId} | ${kind} +${pts} | score ${t.riskScore||0}/100 | ${String(note||"").replace(/`/g,"'").slice(0,110)}`);
+  // quiet until it is time to act: nothing is ever said in the ticket here. Impatience and worry are only counted; once there is real
+  // evidence (an accusation or steering) the signals are written to the log channel too. A new level has its own, fuller log line.
   if(level)await escalate(guild,ch,t,level);
+  else if(hasRealEvidence(t.riskByKind))log(guild,`SAFETY signal: #${ch.name} | exchanger ${t.claimedBy} | client ${t.userId} | ${kind} +${pts} | score ${t.riskScore||0}/100 | ${String(note||"").replace(/`/g,"'").slice(0,110)}`);
 }
 // The client says it arrived: impatience clears itself. Accusations, steering and freezes still need an owner.
 async function easeRisk(guild,ch,t){
@@ -1819,7 +1772,7 @@ async function easeRisk(guild,ch,t){
   if(!t.riskNotes)t.riskNotes=[];
   t.riskNotes.push("Client confirmed it arrived");
   if(t.riskNotes.length>8)t.riskNotes.splice(0,t.riskNotes.length-8);
-  if(t.riskLevel==="caution"&&!by.accuse&&!by.steer){
+  if(t.riskLevel==="caution"&&!hasRealEvidence(by)){
     t.riskLevel=null;delete t.alertedRank;delete t.clientHeld;       // if it flares up again, the owners hear about it again
     const ex=t.claimedBy,h=_mem.holds&&_mem.holds[ex];
     if(h&&h.level==="caution"&&h.channelId===ch.id){
@@ -2634,6 +2587,9 @@ client.on(Events.MessageCreate,async message=>{
       if(!_resAll.ok){
         const _wait=await message.reply(`Already sent a moment ago. Try again in ${_resAll.wait}s.`).catch(()=>null);
         if(_wait)setTimeout(()=>_wait.delete().catch(()=>{}),5000);
+      }else if(_resAll.failed&&_resAll.failed.length){
+        const _blind=await message.channel.send({content:`I couldn't give ${_resAll.failed.map(r=>`<@&${r}>`).join(" ")} access to this ticket, so they can't see it. Check that I have **Manage Permissions** in this channel.`,allowedMentions:{parse:[]}}).catch(()=>null);
+        if(_blind)setTimeout(()=>_blind.delete().catch(()=>{}),15000);
       }
       return;
     }
@@ -2789,19 +2745,6 @@ client.on(Events.MessageCreate,async message=>{
       if(!state._ticketPeople)state._ticketPeople={};
       if(!state._ticketPeople[message.channel.id])state._ticketPeople[message.channel.id]=new Set();
       state._ticketPeople[message.channel.id].add(message.author.id);
-    }
-    // Security reminder — once per ticket, after 10-15 messages
-    if(ticket&&ticket.status==="open"&&(!ticket.claimSystem||ticket.claimedBy)){   // nothing to warn about while the ticket is unclaimed
-      if(!state._ticketMsgCount)state._ticketMsgCount={};
-      if(!state._ticketWarnSent)state._ticketWarnSent={};
-      const _chId=message.channel.id;
-      // Set a fixed threshold for this channel the first time we see it
-      if(!state._ticketMsgCount[_chId+"_thresh"])state._ticketMsgCount[_chId+"_thresh"]=Math.floor(Math.random()*6)+10;
-      state._ticketMsgCount[_chId]=(state._ticketMsgCount[_chId]||0)+1;
-      if(!state._ticketWarnSent[_chId]&&state._ticketMsgCount[_chId]>=state._ticketMsgCount[_chId+"_thresh"]){
-        state._ticketWarnSent[_chId]=true;
-        await message.channel.send({content:`\u26A0\uFE0F **@3uce will NOT DM you first. @jswaps will NOT DM you first.** If you received a random DM from anyone claiming to be Konvert staff or an owner \u2014 it is an impersonator. Block and report them immediately. All communication happens inside this ticket only.`}).catch(()=>{});
-      }
     }
     // Safety system: reads the conversation for signs a client needs help (owners are never analysed)
     if(ticket&&ticket.status==="open")await safetyOnMessage(message,ticket).catch(e=>console.error("[safety]",e.message));
@@ -2974,7 +2917,7 @@ client.ws.on("GUILD_MEMBER_UPDATE",async(data)=>{
 });
 
 // Auto assign/remove KONV role when user changes their primary guild (clan tag)
-// Impersonation guard — alert in any open ticket when a participant changes their name
+// Impersonation guard — when a participant changes their name, the open tickets they are in are told only if a scam is already suspected there (otherwise it is only logged)
 async function alertNameChange(guild,userId,kind,before,after){
   try{
     if(!before||!after||before===after)return;
@@ -2999,6 +2942,12 @@ async function alertNameChange(guild,userId,kind,before,after){
         }catch{}
       }
       if(!involved)continue;
+      // Said in the ticket only when the system already suspects a scam there (flagged, or at caution or worse); otherwise just a quiet log line
+      if(!(t.reported||(SAFETY.rank[t.riskLevel]||0)>=SAFETY.rank.caution)){
+        log(guild,`NAME CHANGE: #${ch.name} | ${userId} | ${kind}: ${String(before).replace(/`/g,"'").slice(0,60)} -> ${String(after).replace(/`/g,"'").slice(0,60)}`);
+        console.log(`[nameChange] ${kind} change in ${chId} logged quietly: ${before} -> ${after}`);
+        continue;
+      }
       await ch.send({embeds:[new EmbedBuilder()
         .setColor(0xef4444)
         .setAuthor({name:"Konvert Exchange  \u00b7  Security Alert",iconURL:IMG.LOGO})
@@ -4843,7 +4792,7 @@ client.once(Events.ClientReady,async()=>{
     // Profit reports: tell the owner about exchangers who haven't replied (every 10 minutes; survives restarts)
     setInterval(()=>sweepProfitReplies().catch(e=>console.error("[profitSweep]",e.message)),10*60*1000);
     setTimeout(()=>sweepProfitReplies().catch(()=>{}),30*1000);
-    // Random "Is everything okay?" check-ins (every minute; survives restarts)
+    // Quick "Is everything okay?" check-ins booked by the safety system for a suspected exchanger's other clients (every minute; survives restarts)
     setInterval(()=>sweepCheckins(guild).catch(e=>console.error("[checkin]",e.message)),60*1000);
     setTimeout(()=>sweepCheckins(guild).catch(()=>{}),25*1000);
     // Safety system: settles unanswered worries, notices silent exchangers (quietly), retires old holds (every 30 seconds)
