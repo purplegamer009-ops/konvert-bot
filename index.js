@@ -2036,6 +2036,359 @@ const YT_TITLES=["You need to hear this...","Remember This...","Don't forget why
 const YT_DESCRIPTIONS=["Subscribe & never miss a workout again \u274C\n\n\uD83D\uDD14 @GymMotivez for daily motivation\n\uD83D\uDCAA Like & share if this fired you up\n\uD83D\uDCAC Comment your workout below\n\n#Shorts #GymMotivation #Fitness #Workout #Motivation #GymLife #NoExcuses #BeastMode","Subscribe & never miss a drop \uD83D\uDD25\n\n\uD83D\uDD14 Follow @GymMotivez\n\uD83D\uDCAA Drop a \uD83D\uDCAA if you needed this today\n\uD83D\uDCAC What are you working on?\n\n#Shorts #GymMotivation #Grind #Workout #FitnessMotivation #MindsetShift #NoExcuses"];
 
 
+// ── Guide (/help) ─────────────────────────────────────────────────────────────────────────────────────────────
+// Every command, and how Konvert works, as big sectioned embeds. /help shows it privately (or just one section of it); /postguide (owners) posts it in a channel
+// with jump links. The command lists live in ONE table here, and the tests compare it with the commands the bot really registers, so it cannot drift.
+var _guideIds={};                       // command name -> id, filled in when the commands are registered, so every command is a tappable mention
+function guideSetCommandIds(list){const m={};for(const c of Array.isArray(list)?list:[])if(c&&c.name&&c.id)m[c.name]=String(c.id);_guideIds=m;}
+const _gcmd=n=>_guideIds[n]?`</${n}:${_guideIds[n]}>`:`\`/${n}\``;       // tappable once the ids are known, a code pill until then
+const _gline=(n,text)=>`${_gcmd(n)}  —  ${text}`;
+const _gkey=(code,text)=>`\`${code}\`  —  ${text}`;
+const _gembed=(lines,color)=>new EmbedBuilder().setColor(color||CONFIG.COLOR).setDescription(lines.join("\n"));
+const GUIDE_PAY="PayPal · Cash App · Zelle · Interac · Venmo · Apple Pay · Google Pay · Skrill · Revolut · Bank · Wire · IBAN · UPI · Gift Card";
+const GUIDE_CRYPTO="BTC · ETH · SOL · LTC · USDT · USDC · XRP · BNB · ADA · DOGE · and more";
+const GUIDE_TAGLINE="Fast  ·  Safe  ·  Simple  ·  Private";
+const GUIDE_MAX_CHARS=5800;             // Discord allows 6,000 characters of embed text per message; keep some room
+const GUIDE_DUMMY_LINK="https://discord.com/channels/00000000000000000000/00000000000000000000/00000000000000000000";   // as long as a real jump link can be (ids are up to 20 digits)
+
+function _gExchanging(c){
+  const ex=c.exchange?`<#${c.exchange}>`:"the exchange channel";
+  return [_gembed([
+    "# Exchanging",
+    "Quote it, open a ticket, get paid. How it works, and every command you need along the way.",
+    "",
+    "## How a trade works",
+    `**1.**  Get a quote with ${_gcmd("estimate")} or ${_gcmd("fee")}`,
+    `**2.**  Open a ticket in ${ex}`,
+    "**3.**  An exchanger claims it. Their go-first limit is in their name (like **Up To $50**). Above it, use a middleman",
+    "**4.**  Send only what your ticket tells you to, then confirm once your exchanger marks the deal complete",
+    "",
+    "## Before you trade",
+    _gline("estimate","full quote before you open a ticket"),
+    _gline("fee","the fee on any amount, both directions"),
+    _gline("convert","convert between crypto and fiat"),
+    _gline("howto","how a trade works, step by step"),
+    _gline("mm","middleman guide"),
+    "",
+    "## During your trade",
+    _gline("ticket","check on your open ticket"),
+    _gline("wallets","deposit addresses (only send to what staff confirm in your ticket)"),
+    _gline("dispute","something wrong? locks the ticket and alerts staff"),
+  ])];
+}
+function _gPrices(){
+  return [_gembed([
+    "# Prices & Market",
+    "Live prices from the major exchanges, and alerts so you never have to watch the chart.",
+    "",
+    "## Look it up",
+    _gline("rates","live rates for the top coins (tap Refresh to update)"),
+    _gline("price","price, 24h change, high and low for any coin, like `/price BTC`"),
+    _gline("market","market mood plus the day's top gainers and losers"),
+    "",
+    "## Price alerts",
+    _gline("alert","get a DM when a coin goes above or below your target"),
+    _gline("myalerts","see your active alerts"),
+    _gline("clearalerts","remove all your alerts"),
+  ])];
+}
+function _gStats(){
+  return [_gembed([
+    "# Stats & Leaderboard",
+    "Every completed trade counts toward your volume, your rank and your tier.",
+    "",
+    _gline("stats","your exchange stats (or anyone's: pick a user), with the volume left to your next tier"),
+    _gline("mytrades","your personal trade history"),
+    _gline("rank","your spot on the leaderboard"),
+    _gline("leaderboard","the top 10 clients by volume"),
+    _gline("tierlist","every client tier and what it takes to reach it"),
+  ])];
+}
+function _gPerks(){
+  return [_gembed([
+    "# Perks & Games",
+    "",
+    "## KONV tag",
+    _gline("claimtag","turn on your **KONV tag** perk: **0.2% off** every exchange"),
+    "Set Konvert as your **server tag** in Discord profile settings first. Staff-run giveaways are for members with the tag on.",
+    "",
+    "## Exchange Pass game",
+    _gline("mine","find all **3 Exchange Passes** hidden in the grid to win a free exchange pass"),
+    "You get 3 clicks, one bomb ends the game, and you can play once every 3 hours. Won one? Open a ticket and type `free` to redeem it.",
+  ])];
+}
+function _gShortcuts(){
+  return [_gembed([
+    "# Shortcuts",
+    "Type these straight into chat. No slash needed.",
+    "",
+    "## Anywhere in the server",
+    _gkey("$BTC","live price card for any listed coin, like `$ETH` or `$SOL`"),
+    _gkey("100 usd to btc","instant conversion between fiat and crypto"),
+    _gkey("$fee 250","the fee on $250"),
+    _gkey("$rate","the fee table at a glance"),
+    "",
+    "## In your ticket",
+    _gkey("$vip","the client's volume and VIP status"),
+    "**Promo code**  —  type it in your ticket and the discount applies on the spot",
+    "",
+    "## The bot",
+    _gline("help","this guide"),
+    _gline("ping","bot status and latency"),
+  ])];
+}
+function _gFees(){
+  const rows=[["Under $150",100],["$150 – $349",150],["$350 – $599",350],["$600 – $799",600],["$800+",800]];
+  const col=dir=>rows.map(([,a])=>`**${feeRate(a,dir)}%**`).join("\n");
+  const vip=[...TIERS].reverse().find(t=>isVipVolume(t.min));
+  const table=new EmbedBuilder().setColor(CONFIG.COLOR).setDescription(["# Fees","Simple, tiered pricing. The bigger the exchange, the lower the rate.","​"].join("\n"))
+    .addFields({name:"Amount",value:rows.map(r=>r[0]).join("\n"),inline:true},{name:"Fiat → Crypto",value:col("send"),inline:true},{name:"Crypto → Fiat",value:col("receive"),inline:true});
+  const off=_gembed([
+    "## Discounts and extras",
+    `**Minimum fee**  —  $${CONFIG.MIN_FEE}`,
+    `${vip.emoji} **VIP**  —  ${vip.label} and above ($${vip.min.toLocaleString("en-US")}+ volume) pay **0.75% less**`,
+    `**KONV tag**  —  **0.2% off** every exchange (${_gcmd("claimtag")})`,
+    "**Promo codes**  —  type a valid code in your ticket and the discount applies on the spot",
+    "",
+    `Try ${_gcmd("fee")} for your exact number. The final fee may vary slightly.`,
+  ]);
+  return [table,off];
+}
+function _gTiers(c){
+  const has=id=>!!(id&&c.guild&&c.guild.roles&&c.guild.roles.cache&&c.guild.roles.cache.has(id));
+  const lines=[...TIERS].reverse().map(t=>`${t.emoji}  ${has(t.role)?`<@&${t.role}>`:`**${t.label}**`}  —  ${t.min>0?`$${t.min.toLocaleString("en-US")}+`:"start here"}${isVipVolume(t.min)?"  ⚡ VIP":""}`);
+  return [_gembed([
+    "# Client Tiers",
+    "Earn your tier by exchanging volume on Konvert. Your role is assigned automatically after every trade.",
+    "",
+    ...lines,
+    "",
+    `${_gcmd("tierlist")} shows this list any time, and ${_gcmd("stats")} shows how far you are from the next tier.`,
+  ])];
+}
+function _gSafety(c){
+  const sup=c.support?`<#${c.support}>`:"a support ticket";
+  return [_gembed([
+    "# Stay Safe",
+    "A few rules that keep every exchange safe.",
+    "",
+    "**Staff will never DM you first.** Anyone who does is an impersonator. Block and report them.",
+    "**Stay inside your ticket.** Every deal, address and instruction happens there. Anything outside it is at your own risk.",
+    `**Only send to addresses confirmed in your ticket.** Never to anything sent over DMs (${_gcmd("wallets")}).`,
+    "**Pay from your own balance**, not a linked card or bank. Cards can be refused or cost extra.",
+    `**Respect the go-first limit** in your exchanger's name. Above it, or if it says **Use MM Always**, use a middleman (${MM_SERVICES}).`,
+    "**Record the whole process** from start to finish.",
+    `**Something wrong?** Flag it in your ticket right away with ${_gcmd("dispute")}. Please only use it for real problems.`,
+    `**Need a human?** Open a support ticket in ${sup}.`,
+  ],0xf59e0b)];
+}
+function _gExchangers(){
+  return [_gembed([
+    "# Exchanger Tools",
+    "For exchangers. Your go-first limit comes from your display name (like **Up To $50**). Above it, the client uses a middleman.",
+    "",
+    "## Your wallets",
+    _gline("setmywallet","save a wallet address (BTC, ETH, SOL, LTC, USDT-BNB or USDT-ETH)"),
+    _gline("mywallets","see your saved addresses"),
+    _gline("postwallets","post your addresses in this ticket"),
+    _gline("clearwallet","remove a saved address"),
+    _gline("exchangerstats","your performance stats (or another exchanger's)"),
+    "",
+    "## Payment steps",
+    "`$paypal`  ·  `$cashapp`  ·  `$venmo`  ·  `$zelle`  ·  `$interac`  ·  `$applepay`",
+    "Posts that method's step-by-step rules for the client, then removes your message.",
+  ]),_gembed([
+    "## Run the ticket",
+    _gkey("$unclaim","release your claim. The ticket reopens with fresh buttons and pings the exchangers again"),
+    _gkey("$all","open it to every exchanger: anyone can see it and hop in"),
+    _gkey("$open","ping the exchangers who can take this payment method"),
+    _gkey("$complete","mark the deal done. The client confirms it"),
+    _gkey("$remind","nudge the client: they get 12 hours to reply before the ticket closes"),
+    _gkey("$close","close the ticket"),
+    _gkey("$info","ticket summary: client, method, amount and more"),
+    _gkey("$vol @user","a client's total volume and tier"),
+    _gkey("$note text","save a note on the ticket"),
+  ])];
+}
+function _gOwners(){
+  return [_gembed([
+    "# Owner Tools",
+    "Only owners can use these.",
+    "",
+    "## Tickets",
+    _gline("closeticket","close this ticket, with a reason"),
+    _gline("cancelticket","cancel this ticket, with a reason"),
+    _gline("openticket","open this ticket to all exchangers"),
+    _gline("complete","mark this exchange complete and tag the exchanger"),
+    _gline("note","add a staff note to this ticket"),
+    _gline("receipt","look up a receipt by exchange ID or user"),
+    _gkey("$close  $remind  $complete  $unclaim  $all","work in every ticket, support and custom ones too"),
+    _gkey("$purge 20","delete the last 20 messages (up to 100). Staff can use it too"),
+    "",
+    "## Safety and people",
+    _gline("suspended","exchangers who are frozen pending review"),
+    _gline("reinstate","lift an exchanger's freeze"),
+    _gline("clearexchanger","clear an exchanger of all doubt: lifts any freeze, hold, flag and pending check"),
+    _gkey("$clear @user","the same, from inside a ticket"),
+    _gline("blacklist","blacklist a user"),
+    _gline("unblacklist","remove a blacklist"),
+    _gkey("$ban @user  $unban @user","the same, typed"),
+    _gline("grantowner","give someone full owner permissions"),
+    _gline("revokeowner","remove someone's owner permissions"),
+    _gline("listowners","list every owner"),
+    _gline("exchangerboard","exchanger leaderboard"),
+  ]),_gembed([
+    "## Clients and stats",
+    _gline("clientinfo","full info on any client"),
+    _gline("adjuststats","add or subtract volume from a user's stats"),
+    _gline("resetstats","reset a user's volume adjustment to 0"),
+    _gline("transferstats","move all stats from one account to another"),
+    _gline("wipestats","wipe all stats and tickets for one user"),
+    _gline("clearleaderboard","wipe all trade data from the leaderboard and stats"),
+    _gline("vouch","manually record a completed trade"),
+    _gline("thankclient","send a thank-you DM to a client"),
+    _gline("broadcast","DM every client who traded in the last X days"),
+    _gline("passes","see who holds exchange passes"),
+    _gkey("$passes @user","how many passes one person has"),
+    _gline("volume","server volume stats"),
+    _gline("snapshot","full server snapshot"),
+    _gline("serverinfo","quick overview of the server and bot"),
+  ]),_gembed([
+    "## Posting",
+    _gline("postexchange","post the exchange embed"),
+    _gline("postsupport","post the support embed"),
+    _gline("postmm","post the middleman info embed"),
+    _gline("postinfo","post the info embed"),
+    _gline("posttos","post the Terms of Service"),
+    _gline("postlinks","post the official links"),
+    _gline("postleaderboard","post a live leaderboard that updates after every exchange"),
+    _gline("postguide","post this guide in the channel (add a section to post just one)"),
+    _gline("announce","post an announcement"),
+    _gline("calc","force-post the live rates now"),
+    _gline("setlivefeed","pick the channel for live exchange notifications"),
+    _gline("togglefeed","turn the live exchange feed on or off"),
+    _gline("migrateserver","re-post every past vouch to the current vouch channel"),
+    "",
+    "## Wallets and fees",
+    _gline("setwallet","update a deposit wallet"),
+    _gline("jbtc","save your own BTC address"),
+    _gline("jeth","save your own ETH address"),
+    _gline("jsol","save your own SOL address"),
+    _gline("jltc","save your own LTC address"),
+    _gline("jusdtbnb","save your own USDT-BNB address"),
+    _gkey("$jbtc  $jeth  $jsol  $jltc  $jusdtbnb","post that saved address in chat"),
+    _gline("setfeemode","switch between standard (5-10%) and reduced (5-9%) fees"),
+    _gline("profittest","send a test profit-split notice to everyone who gets them"),
+    "",
+    "## Promos and giveaways",
+    _gline("createpromo","create a promo code that gives clients a fee discount"),
+    _gline("editpromo","edit a promo code"),
+    _gline("endpromo","end a promo code"),
+    _gline("listpromos","see every active promo code"),
+    _gline("promostatus","active promos and the days they have left"),
+    _gline("setdualpromo","set a promo for people in both servers"),
+    _gline("dualpromooff","turn the dual-server promo off"),
+    _gline("giveaway","start a giveaway for KONV tag holders"),
+    _gline("giveawayend","end the giveaway early"),
+    _gline("giveawaystats","entry count and entrants"),
+    _gline("giveawayreroll","reroll the winners of the last giveaway"),
+    _gline("removetag","remove the KONV tag perk from a user"),
+  ])];
+}
+
+const GUIDE_SECTIONS=[
+  {key:"exchanging",label:"Exchanging",blurb:"how a trade works, quotes and tickets",who:"all",build:_gExchanging},
+  {key:"prices",label:"Prices & Market",blurb:"live prices, market mood and alerts",who:"all",build:_gPrices},
+  {key:"stats",label:"Stats & Leaderboard",blurb:"your volume, rank and trade history",who:"all",build:_gStats},
+  {key:"perks",label:"Perks & Games",blurb:"the KONV tag discount and the Pass game",who:"all",build:_gPerks},
+  {key:"shortcuts",label:"Shortcuts",blurb:"quick commands you type in chat",who:"all",build:_gShortcuts},
+  {key:"fees",label:"Fees",blurb:"exactly what Konvert charges",who:"all",build:_gFees},
+  {key:"tiers",label:"Client Tiers",blurb:"ranks, roles and the VIP rate",who:"all",build:_gTiers},
+  {key:"safety",label:"Stay Safe",blurb:"the rules that keep every trade safe",who:"all",build:_gSafety},
+  {key:"exchangers",label:"Exchanger Tools",blurb:"wallets, payment steps and ticket commands",who:"exchanger",build:_gExchangers},
+  {key:"owners",label:"Owner Tools",blurb:"everything owners can do",who:"owner",build:_gOwners},
+];
+const GUIDE_CHOICES=GUIDE_SECTIONS.map(s=>({name:s.label,value:s.key}));
+function guideVisible(s,v){return s.who==="all"||(s.who==="exchanger"&&!!v.exch)||(s.who==="owner"&&!!v.owner);}
+
+// The big first card: what the guide is, how to read it, and the contents (each line links to its section once the guide is posted in a channel)
+function guideIntro(c){
+  const tap=Object.keys(_guideIds).length>0;
+  const row=s=>`${c.links&&c.links[s.key]?`[**${s.label}**](${c.links[s.key]})`:`**${s.label}**`}  —  ${s.blurb}`;
+  return new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange  ·  Guide",iconURL:IMG.LOGO}).setThumbnail(IMG.LOGO)
+    .setDescription([
+      "# Everything Konvert",
+      `**${GUIDE_TAGLINE}**`,
+      "Every command, and everything you need to know, in one place.",
+      "",
+      "## How to use this guide",
+      `${tap?"Tap any command to use it. ":"Type any command into the chat box. "}\`/\` commands are slash commands. \`$\` commands are typed as a normal message.`,
+      "",
+      "## What's inside",
+      ...c.sections.map(row),
+    ].join("\n"))
+    .addFields({name:"Methods",value:GUIDE_PAY,inline:false},{name:"Crypto",value:GUIDE_CRYPTO,inline:false})
+    .setImage(IMG.BANNER)
+    .setFooter({text:c.public?`Konvert Exchange  ·  ${GUIDE_TAGLINE}`:"Konvert Exchange  ·  Tip: /help section:Fees shows just one section"});
+}
+function guideClosing(c){
+  const ex=c.exchange?`<#${c.exchange}>`:"the exchange channel",sup=c.support?`<#${c.support}>`:"a support ticket";
+  return new EmbedBuilder().setColor(CONFIG.COLOR).setDescription(`## Ready?\nOpen a ticket in ${ex} to start your exchange, or ask a human in ${sup}.`).setFooter({text:`Konvert Exchange  ·  ${GUIDE_TAGLINE}`});
+}
+function _gChars(e){const j=e.toJSON?e.toJSON():e;return (j.title||"").length+(j.description||"").length+((j.footer&&j.footer.text)||"").length+((j.author&&j.author.name)||"").length+(j.fields||[]).reduce((a,f)=>a+f.name.length+f.value.length,0);}
+// [{key,embed,size}]: the intro first and the closing card last (unless just one section was asked for)
+function guideItems(c,secs){
+  const items=[];
+  if(c.intro){
+    const embed=guideIntro({...c,sections:secs});
+    const sized=c.public?guideIntro({...c,sections:secs,links:Object.fromEntries(secs.map(s=>[s.key,GUIDE_DUMMY_LINK]))}):embed;   // the contents grow when the links go in: leave room for them
+    items.push({key:"intro",embed,size:_gChars(sized)});
+  }
+  for(const s of secs)for(const e of s.build(c))items.push({key:s.key,embed:e,size:_gChars(e)});
+  if(c.intro){const e=guideClosing(c);items.push({key:"end",embed:e,size:_gChars(e)});}
+  return items;
+}
+// Messages of at most 10 embeds and GUIDE_MAX_CHARS characters of embed text, in order
+function guidePack(items){
+  const msgs=[];let cur=null;
+  for(const it of items){
+    if(!cur||cur.embeds.length>=10||cur.size+it.size>GUIDE_MAX_CHARS){cur={embeds:[],keys:[],size:0};msgs.push(cur);}
+    cur.embeds.push(it.embed);cur.keys.push(it.key);cur.size+=it.size;
+  }
+  return msgs;
+}
+// /help (private) and /postguide (owners: posted in the channel, contents linked to each section)
+async function handleGuide(interaction,{post=false}={}){
+  const owner=isOwner(interaction.user.id,interaction.member),exch=owner||isExchanger(interaction.member);
+  const pick=interaction.options.getString("section")||null;
+  const sec=pick?GUIDE_SECTIONS.find(s=>s.key===pick)||null:null;
+  if(!post&&sec&&!guideVisible(sec,{owner,exch}))return interaction.reply({content:sec.who==="owner"?"Owner tools are only for owners.":"Exchanger tools are only for exchangers.",flags:64});
+  const ctx={guild:interaction.guild,exchange:CONFIG.EXCHANGE_CHANNEL,support:SUPPORT_CH,public:post,intro:!sec,links:null};
+  const secs=sec?[sec]:GUIDE_SECTIONS.filter(s=>post?s.who==="all":guideVisible(s,{owner,exch}));
+  const msgs=guidePack(guideItems(ctx,secs));
+  if(!post){
+    await interaction.reply({embeds:msgs[0].embeds,flags:64});
+    for(const m of msgs.slice(1))await interaction.followUp({embeds:m.embeds,flags:64}).catch(()=>{});
+    return;
+  }
+  await interaction.deferReply({flags:64});
+  const ch=interaction.channel,fail="I couldn't post the guide here. Check that I can send messages and embeds in this channel.";
+  if(!ch)return interaction.editReply({content:fail});
+  const sent=[];
+  for(const m of msgs){const x=await ch.send({embeds:m.embeds}).catch(()=>null);if(!x)break;sent.push(x);}
+  if(sent.length<msgs.length){
+    for(const x of sent)await x.delete().catch(()=>{});          // never leave half a guide behind
+    return interaction.editReply({content:fail});
+  }
+  if(ctx.intro){                                                  // now that every message exists, the contents can link to each section
+    const gid=(interaction.guild&&interaction.guild.id)||interaction.guildId,links={};
+    msgs.forEach((m,i)=>{for(const k of m.keys)if(!links[k])links[k]=`https://discord.com/channels/${gid}/${ch.id}/${sent[i].id}`;});
+    await sent[0].edit({embeds:[guideIntro({...ctx,sections:secs,links}),...msgs[0].embeds.slice(1)]}).catch(()=>{});
+  }
+  return interaction.editReply({content:`Guide posted (${sent.length} message${sent.length===1?"":"s"}).${ctx.intro?" The contents link to each section.":""}`});
+}
+// ── end Guide ──────────────────────────────────────────────────────────────────────────────────────────────
+
 const COMMANDS=[
   new SlashCommandBuilder().setName("rates").setDescription("View live crypto rates"),
   new SlashCommandBuilder().setName("fee").setDescription("Calculate your Konvert fee").addNumberOption(o=>o.setName("amount_usd").setDescription("Amount in USD").setRequired(true)),
@@ -2124,14 +2477,16 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("jsol").setDescription("[Owner] Set your SOL wallet address").addStringOption(o=>o.setName("address").setDescription("SOL address").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("jltc").setDescription("[Owner] Set your LTC wallet address").addStringOption(o=>o.setName("address").setDescription("LTC address").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("jusdtbnb").setDescription("[Owner] Set your USDT-BNB wallet address").addStringOption(o=>o.setName("address").setDescription("USDT BNB address").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  new SlashCommandBuilder().setName("setfeemode").setDescription("[Owner] Switch between standard (5-10%) and reduced (5-9%) fee tiers").addStringOption(o=>o.setName("mode").setDescription("Fee mode").setRequired(true).addChoices({name:"Standard (5-10%)",value:"standard"},{name:"Reduced (5-9%)",value:"reduced"})).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("setfeemode").setDescription("[Owner] Switch between standard (5-10%) and reduced (5-9%) fee tiers").addStringOption(o=>o.setName("mode").setDescription("Fee mode").setRequired(true).addChoices({name:"Standard (5-10%)",value:"standard"},{name:"Reduced (5-9%)",value:"reduced"})).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),  new SlashCommandBuilder().setName("help").setDescription("Every command and how Konvert works").addStringOption(o=>o.setName("section").setDescription("Jump to one section (leave blank for everything)").setRequired(false).addChoices(...GUIDE_CHOICES)),
+  new SlashCommandBuilder().setName("postguide").setDescription("[Owner] Post the full guide in this channel").addStringOption(o=>o.setName("section").setDescription("Post just one section (leave blank for the public guide)").setRequired(false).addChoices(...GUIDE_CHOICES)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 ].map(c=>c.toJSON());
 
 async function registerCommands(){
   const _regRest=new REST({version:"10"}).setToken(CONFIG.TOKEN);
   console.log("Registering commands...");
   try{
-    await _regRest.put(Routes.applicationGuildCommands(CONFIG.CLIENT_ID,CONFIG.GUILD_ID),{body:COMMANDS});
+    const _regRes=await _regRest.put(Routes.applicationGuildCommands(CONFIG.CLIENT_ID,CONFIG.GUILD_ID),{body:COMMANDS});
+    guideSetCommandIds(_regRes);
     console.log(`Commands registered. (${COMMANDS.length} total)`);
     // Clean up old bot global commands to prevent duplicates showing
     try{
@@ -3020,11 +3375,13 @@ client.on(Events.InteractionCreate,async interaction=>{
   try{
     if(interaction.isChatInputCommand()){
       // Owner-only commands: check OWNER_IDS regardless of Discord permissions
-      const OWNER_ONLY_CMDS=["grantowner","revokeowner","listowners","wipestats","clearleaderboard","adjuststats","resetstats","transferstats","suspended","reinstate","clearexchanger","profittest","broadcast","setfeemode","postleaderboard","serverinfo","clientinfo","receipt"];
+      const OWNER_ONLY_CMDS=["grantowner","revokeowner","listowners","wipestats","clearleaderboard","adjuststats","resetstats","transferstats","suspended","reinstate","clearexchanger","profittest","broadcast","setfeemode","postleaderboard","serverinfo","clientinfo","receipt","postguide"];
       if(OWNER_ONLY_CMDS.includes(interaction.commandName)&&!isOwner(interaction.user.id,interaction.member)){
         return interaction.reply({content:"❌ You don\'t have permission to use this command.",flags:64});
       }
       const cmd=interaction.commandName;
+
+      if(cmd==="help"||cmd==="postguide"){return handleGuide(interaction,{post:cmd==="postguide"});}
 
       if(cmd==="postexchange"){await interaction.channel.send({embeds:[mainEmbed()],components:mainButtons()});return interaction.reply({content:"Exchange embed posted.",flags:64});}
       if(cmd==="postsupport"){const embed=new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert",iconURL:IMG.LOGO}).setTitle("Support").setThumbnail(IMG.LOGO).setDescription(`This channel is for **support tickets only**.\n\nFor exchanges, head to <#${CONFIG.EXCHANGE_CHANNEL}>.\n\n**What to include:**\n\u00b7 What you need help with\n\u00b7 Any error messages or screenshots\n\u00b7 What you have already tried\n\u00b7 A full explanation of what happened\n\u200b`).setFooter({text:"Konvert  \u2022  Support"});await interaction.channel.send({embeds:[embed],components:[new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_support_ticket").setLabel("Open Support Ticket").setEmoji("\uD83C\uDF9F").setStyle(ButtonStyle.Primary))]});return interaction.reply({content:"Support embed posted.",flags:64});}
