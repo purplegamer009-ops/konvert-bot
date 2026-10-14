@@ -121,39 +121,59 @@ const CONFIG = {
 };
 
 // ── Look & feel ──────────────────────────────────────────────────────────────────────────────────────────────
-// One style for every embed, button and message: the same brand line, the same colour for the same meaning, the same icon for the same thing.
+// One style for every embed, button and message, and no emoji anywhere: the hierarchy comes from type size, spacing and colour.
 //   purple = information · green = done / safe · amber = take care · red = a problem · grey = finished
+// A card reads top to bottom:  brand line · short title · one big line (the deal, the verdict) · a quiet line under it · details · footer
 // Discord only has four button colours (blurple, grey, green, red) and no orange, so a button's colour carries its meaning:
-//   green = go ahead (Claim, Mark Complete, Confirm) · red = report a problem (Flag Ticket) · grey = everything else (Close, Remind, Cancel)
-const UI={
-  brand:CONFIG.COLOR,ok:0x22C55E,warn:0xF59E0B,bad:0xEF4444,mute:0x64748B,
-  I:{ok:"✅",warn:"⚠️",no:"⛔",info:"ℹ️",lock:"🔒",flag:"🚩",ticket:"🎫",shield:"🛡️",crown:"👑",bell:"🔔",hand:"👋",money:"💸",coin:"🪙",receipt:"🧾",
-     x:"✖️",refresh:"🔄",link:"🔗",star:"⭐",swap:"💱",calc:"🧮",clock:"⏳",eye:"👁️",ice:"🧊",party:"🎉",user:"👤",pause:"⏸️",chat:"💬",mega:"📢",help:"🛟",card:"💳",gift:"🎁",chart:"📊",cart:"🛒",spark:"✨"},
-};
+//   blurple = start / the main choice · green = go ahead (Claim, Mark Complete, Confirm) · red = report a problem (Flag Ticket) · grey = everything else (Close, Remind, Cancel)
+const UI={brand:CONFIG.COLOR,ok:0x22C55E,warn:0xF59E0B,bad:0xEF4444,mute:0x64748B};
 const kAuthor=area=>({name:area?`Konvert Exchange  ·  ${area}`:"Konvert Exchange",iconURL:IMG.LOGO});
 const kFoot=text=>({text:text?`Konvert Exchange  ·  ${text}`:"Konvert Exchange"});
 function kEmbed(area,tone){return new EmbedBuilder().setColor(UI[tone||"brand"]).setAuthor(kAuthor(area));}
-function kBtn(id,label,emoji,style){const b=new ButtonBuilder().setCustomId(id).setLabel(label).setStyle(style);if(emoji)b.setEmoji(emoji);return b;}
-function kLink(label,url,emoji){const b=new ButtonBuilder().setLabel(label).setStyle(ButtonStyle.Link).setURL(url);if(emoji)b.setEmoji(emoji);return b;}
+function kBtn(id,label,style){return new ButtonBuilder().setCustomId(id).setLabel(label).setStyle(style);}
+function kLink(label,url){return new ButtonBuilder().setLabel(label).setStyle(ButtonStyle.Link).setURL(url);}
+const kHero=text=>`## ${text}`;                    // the one big line of a card
+const kNote=text=>`*${text}*`;                     // the quiet line under it
+// Label / value rows in a code block: reads like a receipt, lines up on every screen and stays inside a phone's width
+function kLedger(rows,minWidth){
+  const r=(rows||[]).filter(x=>x&&x[1]!=null&&String(x[1])!=="").map(x=>[String(x[0]),String(x[1]).replace(/`/g,"'")]);
+  if(!r.length)return "";
+  const w=Math.max(minWidth||30,...r.map(x=>x[0].length+x[1].length+2));
+  return "```\n"+r.map(x=>x[0]+" ".repeat(w-x[0].length-x[1].length)+x[1]).join("\n")+"\n```\n";
+}
+// What people type into an amount box: "250", "$1,250.50", "100 usd" all work; "12,50" (a decimal comma), words, "1e9" and negatives are not amounts
+function parseAmount(raw){
+  let s=String(raw==null?"":raw).trim().replace(/^\$\s*/,"").replace(/\s*(?:usd|us\$|\$)$/i,"").trim();
+  if(/,/.test(s)){if(!/^\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(s))return NaN;s=s.replace(/,/g,"");}
+  if(!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(s))return NaN;
+  const n=parseFloat(s);
+  return Number.isFinite(n)&&n<=1e9?Math.round(n*100)/100:NaN;
+}
+// A coin as typed (any coin is accepted), cleaned so it can never carry formatting or links into a card
+function cleanCoin(raw){
+  const s=String(raw==null?"":raw).normalize("NFKC").replace(/[^A-Za-z0-9 .\/-]/g,"").replace(/\s+/g," ").trim().slice(0,14).trim();
+  return s?resolveCoin(s):"";
+}
+// ── end Look & feel ───────────────────────────────────────────────────────────────────────────────────────────
 // ── end Look & feel ───────────────────────────────────────────────────────────────────────────────────────────
 
 const TIERS = [
-  { min:100000, label:"Legendary Client", role:"1526741064076099704", emoji:"\uD83D\uDC51" },
-  { min:75000,  label:"Elite Client",     role:"1526740903803355307",  emoji:"\uD83D\uDC8E" },
-  { min:50000,  label:"Diamond Client",   role:"1526740774132256839",  emoji:"\uD83D\uDCC8" },
-  { min:35000,  label:"Prestige Client",  role:"1526740529943937124",  emoji:"\uD83C\uDF1F" },
-  { min:20000,  label:"Opulent Client",   role:"1514890647436394496", emoji:"\uD83D\uDEE5\uFE0F" },
-  { min:10000, label:"Whale Client",    role:"1483159341899976905", emoji:"\uD83D\uDC0B" },
-  { min:7000,  label:"Godly Client",   role:"1483159233049657550", emoji:"\u26A1"        },
-  { min:5000,  label:"Ethereal Client",role:"1483159184651325622", emoji:"\u2728"        },
-  { min:3000,  label:"Bear Client",    role:"1483159114782740540", emoji:"\uD83D\uDC3B"  },
-  { min:2000,  label:"Holy Client",    role:"1483159051872375015", emoji:"\uD83D\uDD31"  },
-  { min:1000,  label:"Zombie Client",  role:"1478413185848709367", emoji:"\uD83E\uDDDF"  },
-  { min:500,   label:"Legend Client",  role:"1478064885161132092", emoji:"\uD83C\uDFC6"  },
-  { min:250,   label:"Tuff Client",    role:"1478412812236623986", emoji:"\uD83D\uDCAA"  },
-  { min:100,   label:"Ghost Client",   role:"1488346819770581002", emoji:"\uD83D\uDC7B"  },
-  { min:10,    label:"Client",         role:"1477752522608480442", emoji:"\u2705"        },
-  { min:0,     label:"New Client",     role:null,                   emoji:"\uD83C\uDD95" },
+  { min:100000, label:"Legendary Client", role:"1526741064076099704" },
+  { min:75000,  label:"Elite Client",     role:"1526740903803355307" },
+  { min:50000,  label:"Diamond Client",   role:"1526740774132256839" },
+  { min:35000,  label:"Prestige Client",  role:"1526740529943937124" },
+  { min:20000,  label:"Opulent Client",   role:"1514890647436394496" },
+  { min:10000, label:"Whale Client",    role:"1483159341899976905" },
+  { min:7000,  label:"Godly Client",   role:"1483159233049657550"        },
+  { min:5000,  label:"Ethereal Client",role:"1483159184651325622"        },
+  { min:3000,  label:"Bear Client",    role:"1483159114782740540"  },
+  { min:2000,  label:"Holy Client",    role:"1483159051872375015"  },
+  { min:1000,  label:"Zombie Client",  role:"1478413185848709367"  },
+  { min:500,   label:"Legend Client",  role:"1478064885161132092"  },
+  { min:250,   label:"Tuff Client",    role:"1478412812236623986"  },
+  { min:100,   label:"Ghost Client",   role:"1488346819770581002"  },
+  { min:10,    label:"Client",         role:"1477752522608480442"        },
+  { min:0,     label:"New Client",     role:null },
 ];
 function getTier(v){return TIERS.find(t=>v>=t.min)||TIERS[TIERS.length-1];}
 function getNextTier(v){const i=TIERS.findIndex(t=>v>=t.min);return i>0?TIERS[i-1]:null;}
@@ -418,16 +438,73 @@ async function handleReferralTrade(guild,clientUserId,amountUSD){
           {name:"Amount",value:`**${fmtUSD(amountUSD)}**`,inline:true},
           {name:"Points Earned",value:`**+${pts} pts  (+${dollarVal})**`,inline:true},
           {name:"Your Balance",value:`**${newBal} pts**  \u00b7  **${pointsToDollars(newBal)}**`,inline:true},
-          {name:"Status",value:newBal>=MIN_WITHDRAW_POINTS?`\u2705 **Ready to withdraw** \u2014 open a ticket in <#${SUPPORT_CH}>`:`${MIN_WITHDRAW_POINTS-newBal} more pts until withdrawal`,inline:true},
+          {name:"Status",value:newBal>=MIN_WITHDRAW_POINTS?`**Ready to withdraw** \u2014 open a ticket in <#${SUPPORT_CH}>`:`${MIN_WITHDRAW_POINTS-newBal} more pts until withdrawal`,inline:true},
         )
         .setImage(IMG.BANNER).setFooter({text:"Konvert Referral Program  ·  10 pts = $1"}).setTimestamp()]});
     }catch{}
   }catch(e){console.error("[referral trade error]",e.message);}
 }
 
-const fmtUSD=n=>{if(n>=1)return`$${n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`;if(n>=0.01)return`$${n.toFixed(4)}`;return`$${n.toFixed(8)}`;};
+const fmtUSD=n=>{n=Number(n);if(!Number.isFinite(n)||n===0)return"$0.00";if(n<0)return"-"+fmtUSD(-n);if(n>=1)return`$${n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`;if(n>=0.01)return`$${n.toFixed(4)}`;return`$${n.toFixed(8)}`;};
 function calcFee(usd,dir,isVip=false){const red=state.feeMode==="reduced";const base=dir==="receive"?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(red?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(usd<150?10:usd<350?9:usd<600?8:usd<800?7:6));const r=isVip?Math.max(base-0.75,1):base;return Math.max(usd*r/100,CONFIG.MIN_FEE);}
 function feeRate(usd,dir,isVip=false){const red=state.feeMode==="reduced";const base=dir==="receive"?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(red?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(usd<150?10:usd<350?9:usd<600?8:usd<800?7:6));return isVip?Math.max(base-0.75,1):base;}
+// ── The deal, worded the same way on every card ─────────────────────────────────────────────────────────────────
+// direction "send" = the client pays with the method and receives crypto · "receive" = the client sends crypto and is paid through the method.
+// A ticket is only ever for MORE than the minimum fee: on anything at or below it the fee alone would take the whole amount.
+const DEAL_SMALL=5;     // below this much left after the fee, what the client gets is agreed in the ticket instead of being quoted
+function aboveMinimum(n){return Number.isFinite(n)&&n>CONFIG.MIN_FEE;}
+const minAmountText=()=>`The amount has to be **more than ${fmtUSD(CONFIG.MIN_FEE)}**. The minimum fee is ${fmtUSD(CONFIG.MIN_FEE)}, so anything at or below that leaves nothing to exchange. Enter a higher amount.`;
+function dealOf(t){
+  t=t||{};
+  const m=getMethod(t.method),raw=String(t.method||"Exchange"),label=(m&&m.label)||(raw.charAt(0).toUpperCase()+raw.slice(1).replace(/_/g," "));
+  const amt=Number(t.amountUSD)||0;
+  const feeN=(t.feeUSD==null||t.feeUSD==="")?NaN:Number(t.feeUSD);
+  const fee=Number.isFinite(feeN)?feeN:null;
+  const coin=t.coin||"Crypto";
+  const c2c=t.method==="crypto"&&!!t.recvCoin;
+  const custom=t.method==="custom"||t.method==="buyforyou";
+  const gift=t.method==="giftcard";
+  const plain=custom||(!c2c&&t.direction!=="send"&&t.direction!=="receive");     // no direction on the record (a manual or an old one): the amount and the method, nothing either side of an arrow
+  let giveName,getName;
+  if(c2c){giveName=coin;getName=t.recvCoin;}
+  else if(t.direction==="receive"){giveName=coin;getName=label;}
+  else{giveName=label;getName=coin;}
+  const estimable=!plain&&!gift&&amt>0&&fee!=null;
+  const left=estimable?Math.max(amt-fee,0):null;
+  const net=left!=null&&left>=DEAL_SMALL?left:null;
+  const give=amt>0?`${fmtUSD(amt)} ${giveName}`:giveName;
+  const get=net!=null?`${fmtUSD(net)} ${getName}`:getName;
+  const hero=plain?(amt>0?`${fmtUSD(amt)} · ${label}`:label):`${give} → ${get}`;
+  const verb=c2c?`Swap ${giveName} for ${getName}`:plain?label:(t.direction==="receive"?`Sell ${coin} for ${label}`:`Buy ${coin} with ${label}`);
+  const pair=`${giveName} \u2192 ${getName}`;
+  return {label,coin,giveName,getName,amount:amt,fee,net,estimable,custom,plain,gift,c2c,give,get,hero,pair,verb};
+}
+// The receipt rows of a deal. opts.rate = the tier % (shown beside the fee) · opts.coinAmt = how much coin that is, when a live price is known · opts.final = a finished deal (no "est.")
+function dealRows(d,opts){
+  opts=opts||{};
+  if(d.plain){                                                           // nothing is quoted on these: custom deals are agreed in the ticket, manual and old records only know what was paid
+    const rows=d.amount>0?[["Amount",fmtUSD(d.amount)]]:[];
+    if(!d.custom&&d.amount>0&&d.fee!=null)rows.push(["Fee",fmtUSD(d.fee)]);
+    return rows;
+  }
+  const rows=[[opts.final?"You sent":"You send",d.give]];
+  if(d.gift){rows.push(["Fee","Agreed in ticket"]);return rows;}
+  if(d.fee!=null){
+    const rate=opts.rate!=null?opts.rate:null,atMin=rate!=null&&d.fee>d.amount*rate/100+0.005;
+    rows.push([atMin?"Fee · minimum":(rate!=null?`Fee · ${rate}%`:"Fee"),fmtUSD(d.fee)]);
+  }
+  if(d.estimable){
+    rows.push([opts.final?"You received":"You receive",d.net!=null?d.get:"To be discussed"]);
+    if(opts.coinAmt&&!opts.final&&d.net!=null)rows.push(["Coin amount",`${opts.coinAmt} ${d.getName}`]);        // never next to "To be discussed"
+  }
+  return rows;
+}
+// The top of a deal card: the big line, then what kind of deal it is in plain words (and any discount that applies)
+function dealHead(d,notes){
+  const line=[...(d.plain?[]:[d.verb]),...(notes||[])].join("  ·  ");          // a record that only knows the method already says it in the headline
+  return line?`${kHero(d.hero)}\n${kNote(line)}`:kHero(d.hero);
+}
+// ── end The deal ─────────────────────────────────────────────────────────────────────────────────────────────
 async function isDualMember(userId){
   try{
     const g2=client.guilds.cache.get(SECOND_GUILD_ID)||await client.guilds.fetch(SECOND_GUILD_ID).catch(()=>null);
@@ -444,7 +521,7 @@ async function withTimeout(interaction,fn,ms=8000){
     if(!done&&!interaction.replied&&!interaction.deferred)return;
     if(!done){
       done=true;
-      interaction.editReply({content:"⚠️ Request timed out. Please try again.",embeds:[],components:[]}).catch(()=>{});
+      interaction.editReply({content:"Request timed out. Please try again.",embeds:[],components:[]}).catch(()=>{});
     }
   },ms);
   try{
@@ -453,7 +530,7 @@ async function withTimeout(interaction,fn,ms=8000){
   }catch(e){
     done=true;
     console.error("[withTimeout]",e.message);
-    interaction.editReply({content:"⚠️ Something went wrong. Please try again.",embeds:[],components:[]}).catch(()=>{});
+    interaction.editReply({content:"Something went wrong. Please try again.",embeds:[],components:[]}).catch(()=>{});
   }finally{
     clearTimeout(timer);
   }
@@ -488,14 +565,11 @@ const _r2=n=>Math.round(Number(n)*100)/100;
 const ownerCut=profit=>Math.round(Math.round(Number(profit)*100)*OWNER_PROFIT_SHARE)/100;
 const defaultProfit=t=>_r2(ticketFee(t));           // unless they say otherwise, the profit is the fee the client was charged
 
-function _dealLine(t){
-  const m=getMethod(t.method);
-  return `${fmtUSD(parseFloat(t.amountUSD)||0)} \u00b7 ${(m&&m.label)||t.method||"Exchange"}`;
-}
+function _dealLine(t){return dealOf({...t,feeUSD:ticketFee(t)}).hero;}          // "$100.00 Interac → $90.00 ETH"
 function profitRequestEmbed(t){
   return new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
     .setTitle("Deal Complete")
-    .setDescription(`**${_dealLine(t)}**\n\nFee charged to client: **${fmtUSD(t.profitDefault)}**\nYou owe **${PROFIT_PAYEE}** ${_sharePct}%: **${fmtUSD(t.profitDefaultCut)}**\n\nConfirm the split, or enter your actual profit if it was different.`)
+    .setDescription(`${kHero(_dealLine(t))}\nFee charged to client: **${fmtUSD(t.profitDefault)}**\nYou owe **${PROFIT_PAYEE}** ${_sharePct}%: **${fmtUSD(t.profitDefaultCut)}**\n\nConfirm the split, or enter your actual profit if it was different.`)
     .setFooter({text:"Konvert Exchange  ·  Please respond within 24 hours"}).setTimestamp();
 }
 function profitButtonRow(ticketId){
@@ -507,19 +581,19 @@ function ownerProfitEmbed(t,late){
   const profitText=t.profitConfirmedDefault?`**${fmtUSD(t.profitAmount)}** (confirmed)`:`**${fmtUSD(t.profitAmount)}** (changed from ${fmtUSD(t.profitDefault)})`;
   return new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Profit Share",iconURL:IMG.LOGO})
     .setTitle(`Owed: ${fmtUSD(t.ownerCut)}`)
-    .setDescription(`<@${t.completedBy}> \u00b7 ${_dealLine(t)} \u00b7 client <@${t.userId}>\nProfit ${profitText} \u2192 your ${_sharePct}%${late?" \u00b7 reported late":""}`)
+    .setDescription(`${kHero(_dealLine(t))}\n<@${t.completedBy}> with client <@${t.userId}>\nProfit ${profitText} \u2192 your ${_sharePct}%${late?" \u00b7 reported late":""}`)
     .setTimestamp();
 }
 function noReplyEmbed(t){
   return new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange  ·  Profit Share",iconURL:IMG.LOGO})
     .setTitle("No Response")
-    .setDescription(`<@${t.completedBy}> hasn't confirmed the split for a **${_dealLine(t)}** deal.\nExpected: **${fmtUSD(t.profitDefaultCut)}** (${_sharePct}% of the ${fmtUSD(t.profitDefault)} fee).`)
+    .setDescription(`${kHero(_dealLine(t))}\n<@${t.completedBy}> hasn't confirmed the split for this deal.\nExpected: **${fmtUSD(t.profitDefaultCut)}** (${_sharePct}% of the ${fmtUSD(t.profitDefault)} fee).`)
     .setFooter({text:"Konvert Exchange  ·  They can still respond \u2014 you'll get a DM"}).setTimestamp();
 }
 function dmFailedEmbed(t){
   return new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange  ·  Profit Share",iconURL:IMG.LOGO})
     .setTitle("Couldn't DM Exchanger")
-    .setDescription(`<@${t.completedBy}>'s DMs are closed, so the split wasn't delivered for a **${_dealLine(t)}** deal.\nExpected: **${fmtUSD(t.profitDefaultCut)}** (${_sharePct}% of the ${fmtUSD(t.profitDefault)} fee).`)
+    .setDescription(`${kHero(_dealLine(t))}\n<@${t.completedBy}>'s DMs are closed, so the split wasn't delivered.\nExpected: **${fmtUSD(t.profitDefaultCut)}** (${_sharePct}% of the ${fmtUSD(t.profitDefault)} fee).`)
     .setTimestamp();
 }
 function profitTestEmbed(){
@@ -592,16 +666,16 @@ async function recordProfit(interaction,t,profit){
 async function confirmProfitSplit(interaction){
   const tid=interaction.customId.slice("btn_profitok__".length);
   const t=(_mem.tickets||{})[tid];
-  if(!t||t.completedBy!==interaction.user.id)return interaction.reply({content:"⛔ This isn't your deal to confirm.",flags:64});
-  if(t.profitReportedAt)return interaction.reply({content:"⚠️ You already confirmed this deal.",flags:64});
+  if(!t||t.completedBy!==interaction.user.id)return interaction.reply({content:"This isn't your deal to confirm.",flags:64});
+  if(t.profitReportedAt)return interaction.reply({content:"You already confirmed this deal.",flags:64});
   return recordProfit(interaction,t,t.profitDefault);
 }
 // "Different Profit": open the form
 async function openProfitModal(interaction){
   const tid=interaction.customId.slice("btn_profit__".length);
   const t=(_mem.tickets||{})[tid];
-  if(!t||t.completedBy!==interaction.user.id)return interaction.reply({content:"⛔ This isn't your deal to report.",flags:64});
-  if(t.profitReportedAt)return interaction.reply({content:"⚠️ You already confirmed this deal.",flags:64});
+  if(!t||t.completedBy!==interaction.user.id)return interaction.reply({content:"This isn't your deal to report.",flags:64});
+  if(t.profitReportedAt)return interaction.reply({content:"You already confirmed this deal.",flags:64});
   const modal=new ModalBuilder().setCustomId(`modal_profit__${tid}`).setTitle("Actual Profit");
   modal.addComponents(new ActionRowBuilder().addComponents(
     new TextInputBuilder().setCustomId("inp_profit").setLabel("Profit on this deal (USD)").setStyle(TextInputStyle.Short)
@@ -611,15 +685,15 @@ async function openProfitModal(interaction){
 async function submitProfit(interaction){
   const tid=interaction.customId.slice("modal_profit__".length);
   const t=(_mem.tickets||{})[tid];
-  if(!t||t.completedBy!==interaction.user.id)return interaction.reply({content:"⛔ This isn't your deal to report.",flags:64});
-  if(t.profitReportedAt)return interaction.reply({content:"⚠️ You already confirmed this deal.",flags:64});
+  if(!t||t.completedBy!==interaction.user.id)return interaction.reply({content:"This isn't your deal to report.",flags:64});
+  if(t.profitReportedAt)return interaction.reply({content:"You already confirmed this deal.",flags:64});
   const raw=String(interaction.fields.getTextInputValue("inp_profit")||"").replace(/[$,\s]/g,"");
   const profit=Number(raw);
   const deal=parseFloat(t.amountUSD)||0;
   if(raw===""||!Number.isFinite(profit)||profit<0)
-    return interaction.reply({content:"⚠️ Enter a number like **12.50** \u2014 or **0** if you made nothing. Press the button to try again.",flags:64});
+    return interaction.reply({content:"Enter a number like **12.50** \u2014 or **0** if you made nothing. Press the button to try again.",flags:64});
   if(profit>deal+0.005)
-    return interaction.reply({content:`⚠️ That's more than the whole deal (${fmtUSD(deal)}). Check the number and press the button to try again.`,flags:64});
+    return interaction.reply({content:`That's more than the whole deal (${fmtUSD(deal)}). Check the number and press the button to try again.`,flags:64});
   return recordProfit(interaction,t,profit);
 }
 // Runs every 10 minutes (and once at startup): tells the owner about exchangers who never responded
@@ -670,20 +744,20 @@ function describeLimit(lim){
 
 // ---- One panel message; its buttons always follow the ticket's real state ----
 // Green = go ahead · red = report a problem (Flag Ticket is the only red button on a ticket, so it is easy to find in a hurry) · grey = everything else.
-function closeButton(){return kBtn("btn_close","Close Ticket",UI.I.lock,ButtonStyle.Secondary);}
+function closeButton(){return kBtn("btn_close","Close Ticket",ButtonStyle.Secondary);}
 function claimRow(){
-  return new ActionRowBuilder().addComponents(kBtn("btn_claim","Claim Ticket",UI.I.ticket,ButtonStyle.Success),closeButton());
+  return new ActionRowBuilder().addComponents(kBtn("btn_claim","Claim Ticket",ButtonStyle.Success),closeButton());
 }
-function flagButton(){return kBtn("btn_report","Flag Ticket",UI.I.flag,ButtonStyle.Danger);}
-function remindButton(){return kBtn("btn_remind","Remind",UI.I.bell,ButtonStyle.Secondary);}
+function flagButton(){return kBtn("btn_report","Flag Ticket",ButtonStyle.Danger);}
+function remindButton(){return kBtn("btn_remind","Remind",ButtonStyle.Secondary);}
 function mmConfirmRow(){
-  return new ActionRowBuilder().addComponents(kBtn("btn_mmconfirm","Confirm Middleman",UI.I.shield,ButtonStyle.Success),remindButton());
+  return new ActionRowBuilder().addComponents(kBtn("btn_mmconfirm","Confirm Middleman",ButtonStyle.Success),remindButton());
 }
-function issueButton(label){return kBtn("btn_report",label,UI.I.flag,ButtonStyle.Danger);}
+function issueButton(label){return kBtn("btn_report",label,ButtonStyle.Danger);}
 function completionRow(){
-  return new ActionRowBuilder().addComponents(kBtn("btn_confirmdone","Confirm Completion",UI.I.ok,ButtonStyle.Success),issueButton("Report Issue"));
+  return new ActionRowBuilder().addComponents(kBtn("btn_confirmdone","Confirm Completion",ButtonStyle.Success),issueButton("Report Issue"));
 }
-function hopButton(){return kBtn("btn_hopin","Hop In",UI.I.hand,ButtonStyle.Primary);}
+function hopButton(){return kBtn("btn_hopin","Hop In",ButtonStyle.Primary);}
 function panelRow(ticket){
   if(ticket.status&&ticket.status!=="open")return null;           // finished: no buttons
   if(!ticket.claimedBy)return claimRow();                          // waiting for an exchanger
@@ -691,7 +765,7 @@ function panelRow(ticket){
   if(ticket.reported)return new ActionRowBuilder().addComponents(close);                       // frozen, waiting on an owner
   const hop=ticket.openToAll?[hopButton()]:[];                      // opened to all exchangers ($all): anyone can join
   if(ticket.mmPending||ticket.completionPending)return new ActionRowBuilder().addComponents(flagButton(),...hop,close);   // waiting on the client
-  const done=kBtn("btn_done","Mark Complete",UI.I.ok,ButtonStyle.Success);
+  const done=kBtn("btn_done","Mark Complete",ButtonStyle.Success);
   return new ActionRowBuilder().addComponents(done,flagButton(),...hop,close);
 }
 async function findPanelMessage(channel,ticket){
@@ -723,28 +797,28 @@ async function clearConfirmButtons(channel,ticket){
 
 // ---- The "claimed" announcement ----
 function buildClaimEmbed(ticket,mode){
-  const ex=ticket.claimedBy,cl=ticket.userId;
+  const ex=ticket.claimedBy,cl=ticket.userId,hero=kHero(dealOf(ticket).hero);
   const e=kEmbed("Ticket");
   if(mode==="normal"){
     const {rule}=describeLimit(ticket.claimLimit||null);
-    return e.setTitle(`${UI.I.ticket}  Ticket Claimed`)
-      .setDescription(`<@${cl}>, your ticket was claimed by <@${ex}>.\n\n${UI.I.shield}  ${rule}`)
+    return e.setTitle("Ticket Claimed")
+      .setDescription(`${hero}\n<@${cl}>, your ticket was claimed by <@${ex}>.\n\n${rule}`)
       .setFooter(kFoot("Something wrong? Press Flag Ticket")).setTimestamp();
   }
   if(mode==="owner"){
-    return kEmbed("Ticket","ok").setTitle(`${UI.I.crown}  Owner Verified`)
-      .setDescription(`<@${cl}>, your ticket was claimed by <@${ex}>.\n\n${UI.I.ok}  <@${ex}> is a Konvert owner — **safe to go first**. You can trade with full confidence.`)
+    return kEmbed("Ticket","ok").setTitle("Owner Verified")
+      .setDescription(`${hero}\n<@${cl}>, your ticket was claimed by <@${ex}>.\n\n<@${ex}> is a Konvert owner \u2014 **safe to go first**. You can trade with full confidence.`)
       .setFooter(kFoot("Verified Konvert owner")).setTimestamp();
   }
   if(mode==="mmConfirmed"){
-    return kEmbed("Ticket","ok").setTitle(`${UI.I.shield}  Middleman Confirmed`)
-      .setDescription(`<@${cl}> and <@${ex}> both confirmed a middleman (${MM_SERVICES}).\n\n${UI.I.no}  Don't send anything to each other directly.`)
+    return kEmbed("Ticket","ok").setTitle("Middleman Confirmed")
+      .setDescription(`${hero}\n<@${cl}> and <@${ex}> both confirmed a middleman (${MM_SERVICES}).\n\nDon't send anything to each other directly.`)
       .setFooter(kFoot("Something wrong? Press Flag Ticket")).setTimestamp();
   }
   const why=ticket.mmReason||"This trade needs a middleman.";
-  return kEmbed("Ticket","warn").setTitle(`${UI.I.shield}  Middleman Required`)
-    .setDescription(`<@${cl}>, your ticket was claimed by <@${ex}>.\n\n${UI.I.warn}  ${why} Use ${MM_SERVICES} — **don't send anything to the exchanger directly.**\n\n<@${cl}>, press **Confirm Middleman** to continue.`)
-    .setFooter(kFoot("Exchanger confirmed  ·  waiting for the client")).setTimestamp();
+  return kEmbed("Ticket","warn").setTitle("Middleman Required")
+    .setDescription(`${hero}\n<@${cl}>, your ticket was claimed by <@${ex}>.\n\n${why} Use ${MM_SERVICES} \u2014 **don't send anything to the exchanger directly.**\n\n<@${cl}>, press **Confirm Middleman** to continue.`)
+    .setFooter(kFoot("Exchanger confirmed  \u00b7  waiting for the client")).setTimestamp();
 }
 
 // ---- Exchanger suspension (triggered by the client's Flag Ticket button) ----
@@ -811,10 +885,10 @@ async function reportTicket(interaction,ticket,tickets,reason,opts={}){
             :`This ticket was paused for a safety review. <@${exId}> is frozen until an owner reviews it.\n**Don't send any more funds.**`)
     :(exempt?`<@${ticket.userId}> flagged this ticket. An owner will review it.\n> ${clean}`
             :`<@${ticket.userId}> flagged this ticket. <@${exId}> is frozen until an owner reviews it.\n**Don't send any more funds.**\n> ${clean}`);
-  const title=auto?`${UI.I.pause}  Ticket Paused`:`${UI.I.flag}  Ticket Flagged`;
+  const title=auto?`Ticket Paused`:`Ticket Flagged`;
   await ch.send({
     content:owners.map(id=>`<@${id}>`).join(" "),
-    embeds:[kEmbed("Safety","bad").setTitle(title).setDescription(desc).setTimestamp()],
+    embeds:[kEmbed("Safety","bad").setTitle(title).setDescription(`${kHero(dealOf(ticket).hero)}\n${desc}`).setTimestamp()],
     allowedMentions:{users:owners}
   }).catch(()=>{});
 
@@ -823,11 +897,10 @@ async function reportTicket(interaction,ticket,tickets,reason,opts={}){
     :source==="owner"?`Paused by <@${opts.by}> · <@${ticket.userId}> with <@${exId}>`
     :`<@${ticket.userId}> flagged <@${exId}>`;
   const dm={embeds:[kEmbed("Safety","bad").setTitle(title)
-      .setDescription(`${who}\n> ${clean}${exempt?"":"\n\n`/reinstate` lifts the freeze."}`)
-      .addFields({name:"Amount",value:_money(parseFloat(ticket.amountUSD)||0),inline:true},{name:"Method",value:(getMethod(ticket.method)||{}).label||String(ticket.method||"—"),inline:true})
+      .setDescription(`${kHero(dealOf(ticket).hero)}\n${who}\n> ${clean}${exempt?"":"\n\n`/reinstate` lifts the freeze."}`)
       .setTimestamp()]};
   const dmRow=(auto&&!exempt)?riskAlertRow(exId,ch.id,{frozen:true}):new ActionRowBuilder();   // one tap to undo an automatic freeze
-  dmRow.addComponents(kLink("Open Ticket",link,UI.I.link));
+  dmRow.addComponents(kLink("Open Ticket",link));
   dm.components=[dmRow];
   for(const oid of owners)client.users.fetch(oid).then(u=>u.send(dm)).catch(()=>{});
   log(guild,`${auto?"PAUSE":"FLAG"}: #${ch.name} | client ${ticket.userId} | exchanger ${exId}${exempt?" (owner - not frozen)":" frozen"} | ${clean.slice(0,150)}`);
@@ -840,17 +913,17 @@ async function claimTicket(interaction,opts={}){
   const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
   const ch=interaction.channel;
   const ticket=tickets[ch.id];
-  if(!ticket||ticket.status!=="open")return interaction.reply({content:"⚠️ This ticket is no longer open.",flags:64});
+  if(!ticket||ticket.status!=="open")return interaction.reply({content:"This ticket is no longer open.",flags:64});
   const owner=isOwner(interaction.user.id,interaction.member);
-  if(!isExchanger(interaction.member))return interaction.reply({content:"⛔ Only exchangers can claim tickets.",flags:64});
-  if(interaction.user.id===ticket.userId)return interaction.reply({content:"⛔ You can't claim your own ticket.",flags:64});
+  if(!isExchanger(interaction.member))return interaction.reply({content:"Only exchangers can claim tickets.",flags:64});
+  if(interaction.user.id===ticket.userId)return interaction.reply({content:"You can't claim your own ticket.",flags:64});
   if(ticket.claimedBy){
-    return interaction.reply({content:ticket.claimedBy===interaction.user.id?"⚠️ You already claimed this ticket.":`⚠️ This ticket was already claimed by <@${ticket.claimedBy}>.`,flags:64});
+    return interaction.reply({content:ticket.claimedBy===interaction.user.id?"You already claimed this ticket.":`This ticket was already claimed by <@${ticket.claimedBy}>.`,flags:64});
   }
   if(isSuspended(interaction.user.id)&&!owner)
-    return interaction.reply({content:"⛔ Your exchanger access is suspended pending owner review, so you can't claim tickets.",flags:64});
+    return interaction.reply({content:"Your exchanger access is suspended pending owner review, so you can't claim tickets.",flags:64});
   if(isOnHold(interaction.user.id)&&!owner)
-    return interaction.reply({content:"⛔ New claims are paused while an owner reviews recent activity on your account. You can keep working your open tickets.",flags:64});
+    return interaction.reply({content:"New claims are paused while an owner reviews recent activity on your account. You can keep working your open tickets.",flags:64});
 
   // Does this claim need a middleman? Over their limit, over it in total across open tickets, or "Use MM Always".
   const lim=parseExchangerLimit(interaction.member);
@@ -881,11 +954,11 @@ async function claimTicket(interaction,opts={}){
   // Step 1 for a middleman claim: the exchanger has to knowingly opt in
   if(needsMm&&!opts.mmConfirmed){
     return interaction.reply({
-      embeds:[kEmbed("Ticket","warn").setTitle(`${UI.I.shield}  Middleman Required`)
+      embeds:[kEmbed("Ticket","warn").setTitle(`Middleman Required`)
         .setDescription(`${warnText}\n\nYou can still take it through a middleman (${MM_SERVICES}). The client must confirm first, and you can't message until they do.`)],
       components:[new ActionRowBuilder().addComponents(
-        kBtn("btn_mmclaim","Claim with Middleman",UI.I.shield,ButtonStyle.Success),
-        kBtn("btn_mmcancel","Cancel",UI.I.x,ButtonStyle.Secondary))],
+        kBtn("btn_mmclaim","Claim with Middleman",ButtonStyle.Success),
+        kBtn("btn_mmcancel","Cancel",ButtonStyle.Secondary))],
       flags:64});
   }
 
@@ -904,7 +977,7 @@ async function claimTicket(interaction,opts={}){
       // Roll back so the ticket isn't left locked with nobody able to talk
       delete ticket.claimedBy;delete ticket.claimedAt;delete ticket.claimLimit;delete ticket.ownerClaim;
       console.error("[claim] permission edit failed:",e.message);
-      return interaction.followUp({content:"⚠️ Couldn't claim this ticket (permission update failed). Try again.",flags:64}).catch(()=>{});
+      return interaction.followUp({content:"Couldn't claim this ticket (permission update failed). Try again.",flags:64}).catch(()=>{});
     }
   }
   _mem.tickets=tickets;save("tickets",tickets);
@@ -918,7 +991,7 @@ async function claimTicket(interaction,opts={}){
   if(needsMm)payload.components=[mmConfirmRow()];
   const sent=await ch.send(payload).catch(()=>null);
   if(sent){ticket.claimMessageId=sent.id;_mem.tickets=tickets;save("tickets",tickets);}
-  if(fromEphemeral)await interaction.editReply({content:needsMm?"✅ You claimed this ticket. Waiting for the client to confirm the middleman.":"✅ You claimed this ticket.",embeds:[],components:[]}).catch(()=>{});
+  if(fromEphemeral)await interaction.editReply({content:needsMm?"You claimed this ticket. Waiting for the client to confirm the middleman.":"You claimed this ticket.",embeds:[],components:[]}).catch(()=>{});
   log(interaction.guild,`CLAIM: #${ch.name} | ${interaction.user.tag} | client <@${ticket.userId}> | ${needsMm?"MIDDLEMAN":owner?"OWNER":"limit "+describeLimit(ticket.claimLimit).limitText}`);
 }
 
@@ -927,11 +1000,11 @@ async function confirmMiddleman(interaction){
   const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
   const ch=interaction.channel;
   const ticket=tickets[ch.id];
-  if(!ticket||ticket.status!=="open")return interaction.reply({content:"⚠️ This ticket is no longer open.",flags:64});
-  if(interaction.user.id!==ticket.userId)return interaction.reply({content:"⛔ Only the client can confirm this.",flags:64});
-  if(!ticket.claimedBy||!ticket.mmPending)return interaction.reply({content:"⚠️ There's nothing to confirm right now.",flags:64});
-  if(ticket.reported)return interaction.reply({content:"⚠️ This ticket is flagged \u2014 an owner needs to review it first.",flags:64});
-  if(isSuspended(ticket.claimedBy))return interaction.reply({content:"⚠️ This exchanger is currently frozen pending owner review.",flags:64});
+  if(!ticket||ticket.status!=="open")return interaction.reply({content:"This ticket is no longer open.",flags:64});
+  if(interaction.user.id!==ticket.userId)return interaction.reply({content:"Only the client can confirm this.",flags:64});
+  if(!ticket.claimedBy||!ticket.mmPending)return interaction.reply({content:"There's nothing to confirm right now.",flags:64});
+  if(ticket.reported)return interaction.reply({content:"This ticket is flagged \u2014 an owner needs to review it first.",flags:64});
+  if(isSuspended(ticket.claimedBy))return interaction.reply({content:"This exchanger is currently frozen pending owner review.",flags:64});
   await interaction.deferUpdate().catch(()=>{});
   ticket.mmPending=false;ticket.mmConfirmedAt=Date.now();
   try{
@@ -939,19 +1012,19 @@ async function confirmMiddleman(interaction){
   }catch(e){
     ticket.mmPending=true;delete ticket.mmConfirmedAt;
     console.error("[mm] unlock failed:",e.message);
-    return interaction.followUp({content:"⚠️ Couldn't unlock the exchanger (permission update failed). Press the button again.",flags:64}).catch(()=>{});
+    return interaction.followUp({content:"Couldn't unlock the exchanger (permission update failed). Press the button again.",flags:64}).catch(()=>{});
   }
   _mem.tickets=tickets;save("tickets",tickets);
   await interaction.editReply({embeds:[buildClaimEmbed(ticket,"mmConfirmed")],components:[]}).catch(()=>{});
   await refreshPanel(ch,ticket);
-  await ch.send({content:`<@${ticket.claimedBy}> ${UI.I.chat}  The client confirmed the middleman — you can chat now.`,allowedMentions:{users:[ticket.claimedBy]}}).catch(()=>{});
+  await ch.send({content:`<@${ticket.claimedBy}> The client confirmed the middleman — you can chat now.`,allowedMentions:{users:[ticket.claimedBy]}}).catch(()=>{});
   log(interaction.guild,`MM CONFIRMED: #${ch.name} | client <@${ticket.userId}> | exchanger <@${ticket.claimedBy}>`);
 }
 
 // ---- Completion: the exchanger marks it, the client confirms (or flags) ----
 function completionEmbed(ticket){
-  return kEmbed("Ticket").setTitle(`${UI.I.ok}  Confirm Completion`)
-    .setDescription(`<@${ticket.userId}>, <@${ticket.claimedBy}> marked this exchange as complete.\n\nPress **Confirm Completion** if everything went through, or **Report Issue** if something is wrong.`)
+  return kEmbed("Ticket").setTitle(`Confirm Completion`)
+    .setDescription(`${kHero(dealOf(ticket).hero)}\n<@${ticket.userId}>, <@${ticket.claimedBy}> marked this exchange as complete.\n\nPress **Confirm Completion** if everything went through, or **Report Issue** if something is wrong.`)
     .setFooter(kFoot("Reporting an issue freezes the exchanger until an owner reviews it")).setTimestamp();
 }
 async function requestCompletion(channel,ticket,tickets){
@@ -973,14 +1046,14 @@ async function confirmCompletion(interaction){
   const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
   const ch=interaction.channel;
   const ticket=tickets[ch.id];
-  if(!ticket||ticket.status!=="open")return interaction.reply({content:"⚠️ This ticket is no longer open.",flags:64});
-  if(interaction.user.id!==ticket.userId)return interaction.reply({content:"⛔ Only the client can confirm this.",flags:64});
-  if(!ticket.completionPending||!ticket.claimedBy)return interaction.reply({content:"⚠️ There's nothing to confirm right now.",flags:64});
-  if(ticket.reported)return interaction.reply({content:"⚠️ This ticket is flagged \u2014 an owner needs to review it first.",flags:64});
+  if(!ticket||ticket.status!=="open")return interaction.reply({content:"This ticket is no longer open.",flags:64});
+  if(interaction.user.id!==ticket.userId)return interaction.reply({content:"Only the client can confirm this.",flags:64});
+  if(!ticket.completionPending||!ticket.claimedBy)return interaction.reply({content:"There's nothing to confirm right now.",flags:64});
+  if(ticket.reported)return interaction.reply({content:"This ticket is flagged \u2014 an owner needs to review it first.",flags:64});
   await interaction.deferUpdate().catch(()=>{});
   ticket.completionPending=false;ticket.completionConfirmedAt=Date.now();delete ticket.completionMessageId;
-  await interaction.editReply({embeds:[kEmbed("Ticket","ok").setTitle(`${UI.I.ok}  Completion Confirmed`)
-    .setDescription(`<@${ticket.userId}> confirmed the exchange.`).setTimestamp()],components:[]}).catch(()=>{});
+  await interaction.editReply({embeds:[kEmbed("Ticket","ok").setTitle(`Completion Confirmed`)
+    .setDescription(`**${dealOf(ticket).hero}**\n<@${ticket.userId}> confirmed the exchange.`).setTimestamp()],components:[]}).catch(()=>{});
   // Finalize as the exchanger who handled it, so stats, receipts and the profit DM all credit the right person
   ticket._overrideExchangerId=ticket.claimedBy;
   const exUser=await client.users.fetch(ticket.claimedBy).catch(()=>({id:ticket.claimedBy,tag:ticket.claimedBy,username:ticket.claimedBy}));
@@ -994,32 +1067,32 @@ async function remindClient(interaction){
   const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
   const ch=interaction.channel;
   const ticket=tickets[ch.id];
-  if(!ticket||ticket.status!=="open")return interaction.reply({content:"⚠️ This ticket is no longer open.",flags:64});
+  if(!ticket||ticket.status!=="open")return interaction.reply({content:"This ticket is no longer open.",flags:64});
   const owner=isOwner(interaction.user.id,interaction.member);
-  if(!owner&&interaction.user.id!==ticket.claimedBy)return interaction.reply({content:"⛔ Only the exchanger on this ticket can send a reminder.",flags:64});
-  if(isSuspended(interaction.user.id)&&!owner)return interaction.reply({content:"⛔ Your exchanger access is suspended pending owner review.",flags:64});
-  if(ticket.reported)return interaction.reply({content:"⚠️ This ticket is flagged.",flags:64});
-  if(!ticket.mmPending)return interaction.reply({content:"⚠️ Nothing is waiting on the client.",flags:64});
+  if(!owner&&interaction.user.id!==ticket.claimedBy)return interaction.reply({content:"Only the exchanger on this ticket can send a reminder.",flags:64});
+  if(isSuspended(interaction.user.id)&&!owner)return interaction.reply({content:"Your exchanger access is suspended pending owner review.",flags:64});
+  if(ticket.reported)return interaction.reply({content:"This ticket is flagged.",flags:64});
+  if(!ticket.mmPending)return interaction.reply({content:"Nothing is waiting on the client.",flags:64});
   const what="confirm the middleman",msgId=ticket.claimMessageId;
   const wait=REMIND_COOLDOWN_MS-(Date.now()-(_remindAt.get(ch.id)||0));
   if(wait>0)return interaction.reply({content:`You can remind the client again in ${Math.ceil(wait/1000)}s.`,flags:64});
   _remindAt.set(ch.id,Date.now());
   await interaction.deferUpdate().catch(()=>{});
   const link=msgId&&interaction.guild?`https://discord.com/channels/${interaction.guild.id}/${ch.id}/${msgId}`:null;
-  await ch.send({content:`${UI.I.bell}  <@${ticket.userId}>, <@${ticket.claimedBy}> is waiting for you to ${link?`[${what}](${link})`:what}.`,allowedMentions:{users:[ticket.userId]}}).catch(()=>{});
+  await ch.send({content:`<@${ticket.userId}>, <@${ticket.claimedBy}> is waiting for you to ${link?`[${what}](${link})`:what}.`,allowedMentions:{users:[ticket.userId]}}).catch(()=>{});
 }
 
 // ---- "Is everything okay?" check-in: ONLY for the other clients of an exchanger the safety system really suspects ----
 // There is no routine or random check-in. forceCheckin() (safety section) books one 1-3 minutes out; this sweep delivers it.
 let _checkinSweepRunning=false;
 function checkinEmbed(t){
-  return kEmbed("Ticket").setTitle(`${UI.I.chat}  Is everything okay?`)
-    .setDescription(`<@${t.userId}>, how is your exchange with <@${t.claimedBy}> going?`)
+  return kEmbed("Ticket").setTitle(`Is everything okay?`)
+    .setDescription(`**${dealOf(t).hero}**\n<@${t.userId}>, how is your exchange with <@${t.claimedBy}> going?`)
     .setFooter(kFoot("Press No to report an issue — the exchanger is frozen until an owner reviews it")).setTimestamp();
 }
 function checkinRow(){
   return new ActionRowBuilder().addComponents(
-    kBtn("btn_checkin_ok","Yes, all good",UI.I.ok,ButtonStyle.Success),
+    kBtn("btn_checkin_ok","Yes, all good",ButtonStyle.Success),
     issueButton("No, report issue"));
 }
 // Runs every minute (and once at startup): posts a booked check-in when its time arrives.
@@ -1058,14 +1131,14 @@ async function sweepCheckins(guild){
 async function answerCheckin(interaction){
   const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
   const ticket=tickets[interaction.channel.id];
-  if(!ticket||ticket.status!=="open")return interaction.reply({content:"⚠️ This ticket is no longer open.",flags:64});
-  if(interaction.user.id!==ticket.userId)return interaction.reply({content:"⛔ Only the client can answer this.",flags:64});
-  if(ticket.checkinAnswered)return interaction.reply({content:"⚠️ Already answered.",flags:64});
+  if(!ticket||ticket.status!=="open")return interaction.reply({content:"This ticket is no longer open.",flags:64});
+  if(interaction.user.id!==ticket.userId)return interaction.reply({content:"Only the client can answer this.",flags:64});
+  if(ticket.checkinAnswered)return interaction.reply({content:"Already answered.",flags:64});
   await interaction.deferUpdate().catch(()=>{});
   ticket.checkinAnswered="ok";
   save("tickets",_mem.tickets);
   await interaction.editReply({embeds:[kEmbed("Ticket","ok")
-    .setTitle(`${UI.I.chat}  Check-In`).setDescription(`<@${ticket.userId}> says everything is fine.`).setTimestamp()],components:[]}).catch(()=>{});
+    .setTitle(`Check-In`).setDescription(`<@${ticket.userId}> says everything is fine.`).setTimestamp()],components:[]}).catch(()=>{});
 }
 
 // Gives a ticket back to the queue (used by $unclaim). A fresh embed with new buttons goes out and re-pings the payment method's exchangers.
@@ -1087,7 +1160,7 @@ async function releaseClaim(channel,ticket,tickets,{by=null}={}){
   for(const id of new Set([prev,...hoppers]))if(!CONFIG.OWNER_IDS.includes(id))await channel.permissionOverwrites.delete(id).catch(()=>{});
   // The old panel is retired. A fresh one (new embed + new Claim / Close buttons) pings whoever can take the ticket and becomes its panel.
   const oldPanel=await findPanelMessage(channel,ticket);
-  const fresh=await postOpenPanel(channel,ticket,{title:`${UI.I.refresh}  Ticket Open Again`,lead:`<@${prev}> released this ticket. It is back in the queue — any exchanger can claim it.`});
+  const fresh=await postOpenPanel(channel,ticket,{title:`Ticket Open Again`,lead:`<@${prev}> released this ticket. It is back in the queue — any exchanger can claim it.`});
   if(fresh){if(oldPanel&&oldPanel.id!==fresh.id)await oldPanel.edit({components:[]}).catch(()=>{});}
   else await refreshPanel(channel,ticket);                          // couldn't post: at least put the buttons back on the old panel
   log(channel.guild,`RELEASE: #${channel.name} | ${prev}${by&&by!==prev?" | by "+by:""}`);
@@ -1096,12 +1169,10 @@ async function releaseClaim(channel,ticket,tickets,{by=null}={}){
 // A fresh panel for a ticket that needs an exchanger: an embed plus the buttons for its current state. It pings the roles that can take the
 // ticket and becomes the ticket's panel, so later claims / completions keep its buttons up to date.
 async function postOpenPanel(channel,ticket,{title,lead,known}){
-  const m=getMethod(ticket.method);
   const roles=ticketPingRoles(channel,ticket,known);
   const row=panelRow(ticket);
   const embed=kEmbed("Ticket").setTitle(title)
-    .setDescription(lead)
-    .addFields({name:"Method",value:`**${(m&&m.label)||ticket.method||"Exchange"}**`,inline:true},{name:"Amount",value:`**${fmtUSD(parseFloat(ticket.amountUSD)||0)}**`,inline:true},{name:"Client",value:`<@${ticket.userId}>`,inline:true})
+    .setDescription(`${kHero(dealOf(ticket).hero)}\n${lead}`)
     .setFooter(kFoot(ticket.claimedBy?"Press Hop In to join this ticket":"Press Claim Ticket to take it")).setTimestamp();
   const content=[...roles.map(r=>`<@&${r}>`),`<@${ticket.userId}>`].join(" ");
   const sent=await channel.send({content,embeds:[embed],components:row?[row]:[],allowedMentions:{roles,users:[ticket.userId]}}).catch(e=>{console.error("[panel] couldn't post:",e.message);return null;});
@@ -1157,7 +1228,7 @@ async function openToAllExchangers(channel,ticket,tickets,{by=null}={}){
     ?`This ticket is open to **all exchangers**. <@${ticket.claimedBy}> is handling it — anyone else can press **Hop In** to join.`
     :`This ticket is open to **all exchangers**, whatever their payment method. Press **Claim Ticket** to take it.`;
   const oldPanel=await findPanelMessage(channel,ticket);
-  const fresh=await postOpenPanel(channel,ticket,{title:`${UI.I.mega}  Open to All Exchangers`,lead,known:granted});   // the roles opened a moment ago are pinged too
+  const fresh=await postOpenPanel(channel,ticket,{title:`Open to All Exchangers`,lead,known:granted});   // the roles opened a moment ago are pinged too
   if(fresh){if(oldPanel&&oldPanel.id!==fresh.id)await oldPanel.edit({components:[]}).catch(()=>{});}
   else await refreshPanel(channel,ticket);
   log(guild,`OPEN TO ALL: #${channel.name} | by ${by} | ${opened} role(s) can now see it${failed.length?` | COULDN'T OPEN TO ${failed.join(", ")}`:""}`);
@@ -1169,22 +1240,22 @@ async function hopIn(interaction){
   const ch=interaction.channel;
   const ticket=tickets[ch.id];
   const uid=interaction.user.id;
-  if(!ticket||ticket.status!=="open")return interaction.reply({content:"⚠️ This ticket is no longer open.",flags:64});
-  if(!isExchanger(interaction.member))return interaction.reply({content:"⛔ Only exchangers can hop in.",flags:64});
-  if(uid===ticket.userId)return interaction.reply({content:"⛔ You can't hop into your own ticket.",flags:64});
-  if(!ticket.openToAll)return interaction.reply({content:"⚠️ This ticket isn't open to everyone.",flags:64});
-  if(!ticket.claimedBy)return interaction.reply({content:"⚠️ Nobody has claimed this yet — press Claim Ticket instead.",flags:64});
-  if(ticket.reported)return interaction.reply({content:"⚠️ This ticket is flagged — an owner needs to review it first.",flags:64});
+  if(!ticket||ticket.status!=="open")return interaction.reply({content:"This ticket is no longer open.",flags:64});
+  if(!isExchanger(interaction.member))return interaction.reply({content:"Only exchangers can hop in.",flags:64});
+  if(uid===ticket.userId)return interaction.reply({content:"You can't hop into your own ticket.",flags:64});
+  if(!ticket.openToAll)return interaction.reply({content:"This ticket isn't open to everyone.",flags:64});
+  if(!ticket.claimedBy)return interaction.reply({content:"Nobody has claimed this yet — press Claim Ticket instead.",flags:64});
+  if(ticket.reported)return interaction.reply({content:"This ticket is flagged — an owner needs to review it first.",flags:64});
   const owner=isOwner(uid,interaction.member);
-  if(isSuspended(uid)&&!owner)return interaction.reply({content:"⛔ Your exchanger access is suspended pending owner review.",flags:64});
-  if(isOnHold(uid)&&!owner)return interaction.reply({content:"⛔ Joining tickets is paused while an owner reviews recent activity on your account.",flags:64});
+  if(isSuspended(uid)&&!owner)return interaction.reply({content:"Your exchanger access is suspended pending owner review.",flags:64});
+  if(isOnHold(uid)&&!owner)return interaction.reply({content:"Joining tickets is paused while an owner reviews recent activity on your account.",flags:64});
   if(uid===ticket.claimedBy||(ticket.hoppedIn&&ticket.hoppedIn[uid]))return interaction.reply({content:"You're already in this ticket.",flags:64});
   try{await ch.permissionOverwrites.edit(interaction.user,_CLAIM_PERMS);}
-  catch(e){console.error("[hopin] permission edit failed:",e.message);return interaction.reply({content:"⚠️ Couldn't add you to this ticket (permission update failed). Try again.",flags:64});}
+  catch(e){console.error("[hopin] permission edit failed:",e.message);return interaction.reply({content:"Couldn't add you to this ticket (permission update failed). Try again.",flags:64});}
   ticket.hoppedIn={...(ticket.hoppedIn||{}),[uid]:Date.now()};
   _mem.tickets=tickets;save("tickets",tickets);
-  await interaction.reply({content:"✅ You're in — you can talk in this ticket now.",flags:64}).catch(()=>{});
-  await ch.send({embeds:[kEmbed("Ticket").setTitle(`${UI.I.hand}  Exchanger Joined`)
+  await interaction.reply({content:"You're in — you can talk in this ticket now.",flags:64}).catch(()=>{});
+  await ch.send({embeds:[kEmbed("Ticket").setTitle(`Exchanger Joined`)
     .setDescription(`<@${uid}> hopped in to help <@${ticket.claimedBy}>.`).setTimestamp()],allowedMentions:{parse:[]}}).catch(()=>{});
   log(interaction.guild,`HOP IN: #${ch.name} | ${uid} | claimed by ${ticket.claimedBy}`);
 }
@@ -1914,22 +1985,22 @@ function boostOtherTickets(guild,cid,t){
 
 // ---- 5. What the client and owners see ----
 // Only ever said when the system really suspects a scam (it is part of the Safety Check), never on a timer
-const IMPERSONATOR_NOTICE="\u26A0\uFE0F **@3uce will NOT DM you first. @jswaps will NOT DM you first.** If you received a random DM from anyone claiming to be Konvert staff or an owner \u2014 it is an impersonator. Block and report them immediately. All communication happens inside this ticket only.";
+const IMPERSONATOR_NOTICE="**@3uce will NOT DM you first. @jswaps will NOT DM you first.** If you received a random DM from anyone claiming to be Konvert staff or an owner \u2014 it is an impersonator. Block and report them immediately. All communication happens inside this ticket only.";
 function safetyCheckEmbed(t){
-  return kEmbed("Safety","warn").setTitle(`${UI.I.shield}  Safety Check`)
+  return kEmbed("Safety","warn").setTitle(`Safety Check`)
     .setDescription(`<@${t.userId}>, a quick safety review has started on this ticket and an owner has been notified.\nAs a precaution, **please hold off on sending any further funds** until they confirm.\n\n${IMPERSONATOR_NOTICE}`)
     .setFooter(kFoot("Automatic check  ·  Nothing is needed from you right now")).setTimestamp();
 }
 function reviewDoneEmbed(t){
-  return kEmbed("Safety","ok").setTitle(`${UI.I.ok}  Safety Review Complete`)
+  return kEmbed("Safety","ok").setTitle(`Safety Review Complete`)
     .setDescription(`An owner has finished the review. <@${t.claimedBy}> is cleared to continue and you can carry on with your exchange.`).setTimestamp();
 }
 // Clear (and, when frozen, reinstate) · Freeze · and a link straight to the ticket when there is one
 function riskAlertRow(exId,cid,{frozen=false,link=null}={}){
   const row=new ActionRowBuilder().addComponents(
-    kBtn(`btn_riskclear__${exId}`,frozen?"Clear & Reinstate":"Clear",UI.I.ok,ButtonStyle.Success));
-  if(!frozen)row.addComponents(kBtn(`btn_riskfreeze__${cid}`,"Freeze Exchanger",UI.I.ice,ButtonStyle.Danger));
-  if(link)row.addComponents(kLink("Open Ticket",link,UI.I.link));
+    kBtn(`btn_riskclear__${exId}`,frozen?"Clear & Reinstate":"Clear",ButtonStyle.Success));
+  if(!frozen)row.addComponents(kBtn(`btn_riskfreeze__${cid}`,"Freeze Exchanger",ButtonStyle.Danger));
+  if(link)row.addComponents(kLink("Open Ticket",link));
   return row;
 }
 async function postSafetyCheck(ch,t){
@@ -1958,13 +2029,13 @@ async function alertOwners(guild,ch,t,level){
   const link=`https://discord.com/channels/${guild.id}/${ch.id}`,g=evidenceGroups(t);
   const others=Object.entries(_mem.tickets||{}).filter(([ocid,o])=>ocid!==ch.id&&o&&o.status==="open"&&o.claimedBy===t.claimedBy&&!o.ownerClaim).length;
   const lines=a=>a.map(x=>`• ${x}`).join("\n").slice(0,1000);
-  const embed=kEmbed("Safety","warn").setTitle(`${UI.I.shield}  Safety Alert`)
-    .setDescription(`<@${t.userId}> with <@${t.claimedBy}>  ·  ${_money(parseFloat(t.amountUSD)||0)}`)
+  const embed=kEmbed("Safety","warn").setTitle(`Safety Alert`)
+    .setDescription(`${kHero(dealOf(t).hero)}\n<@${t.userId}> with <@${t.claimedBy}>`)
     .addFields({name:"Risk",value:`**${level.charAt(0).toUpperCase()+level.slice(1)}**  ·  ${t.riskScore||0}/100`,inline:true},
-              {name:"Already done",value:`${UI.I.pause}  New claims paused${others?`\n${UI.I.chat}  ${others} other client${others===1?"":"s"} will be checked on`:""}`,inline:true});
-  if(g.did.length)embed.addFields({name:`${UI.I.flag}  What the exchanger did`,value:lines(g.did)});
-  if(g.said.length)embed.addFields({name:`${UI.I.chat}  What the client said`,value:lines(g.said)});
-  if(!g.did.length&&!g.said.length)embed.addFields({name:`${UI.I.eye}  What was seen`,value:lines(g.other.length?g.other:["Several warning signs"])});
+              {name:"Already done",value:`New claims paused${others?`\n${others} other client${others===1?"":"s"} will be checked on`:""}`,inline:true});
+  if(g.did.length)embed.addFields({name:`What the exchanger did`,value:lines(g.did)});
+  if(g.said.length)embed.addFields({name:`What the client said`,value:lines(g.said)});
+  if(!g.did.length&&!g.said.length)embed.addFields({name:`What was seen`,value:lines(g.other.length?g.other:["Several warning signs"])});
   embed.setFooter(kFoot("Clear if it looks fine  ·  Freeze to stop the exchanger now")).setTimestamp();
   const row=riskAlertRow(t.claimedBy,ch.id,{link});
   for(const oid of CONFIG.OWNER_IDS)client.users.fetch(oid).then(u=>u.send({embeds:[embed],components:[row]})).catch(()=>{});
@@ -1978,7 +2049,7 @@ async function noticeOtherClients(guild,cid,t){
     if(ocid===cid||!o||o.status!=="open"||o.claimedBy!==t.claimedBy||o.ownerClaim)continue;
     const och=guild.channels.cache.get(ocid);
     if(!och)continue;
-    await och.send({content:`<@${o.userId}>`,allowedMentions:{users:[o.userId]},embeds:[kEmbed("Safety","warn").setTitle(`${UI.I.warn}  Exchanger Unavailable`)
+    await och.send({content:`<@${o.userId}>`,allowedMentions:{users:[o.userId]},embeds:[kEmbed("Safety","warn").setTitle(`Exchanger Unavailable`)
       .setDescription(`<@${o.claimedBy}> is temporarily unavailable while an owner completes a review. An owner will follow up in this ticket shortly.\nPlease hold off on sending anything until then.`).setTimestamp()]}).then(()=>{n++;o.clientHeld=true;}).catch(()=>{});
   }
   if(n)save("tickets",_mem.tickets);
@@ -2177,9 +2248,9 @@ async function sweepSafety(guild){
 async function handleRiskButton(interaction){
   const [action,arg]=String(interaction.customId).split("__");
   const guild=interaction.guild||client.guilds.cache.get(CONFIG.GUILD_ID)||client.guilds.cache.first()||null;
-  if(!guild)return interaction.reply({content:"⚠️ Couldn't find the server.",flags:64});
+  if(!guild)return interaction.reply({content:"Couldn't find the server.",flags:64});
   const member=await guild.members.fetch(interaction.user.id).catch(()=>null);
-  if(!isOwner(interaction.user.id,member))return interaction.reply({content:"⛔ Owners only.",flags:64});
+  if(!isOwner(interaction.user.id,member))return interaction.reply({content:"Owners only.",flags:64});
   await interaction.deferUpdate().catch(()=>{});
   const finish=async note=>{    // strip the buttons and stamp who handled it
     const base=interaction.message&&interaction.message.embeds&&interaction.message.embeds[0];
@@ -2228,12 +2299,12 @@ function feeEmbed(amt,{vip=false,prices={}}={}){
   let tS=_feeText(amt,rS,fS),tR=_feeText(amt,rR,fR);
   if(Math.max(tS.length,tR.length)>15){tS=_feeText(amt,rS,fS,true);tR=_feeText(amt,rR,fR,true);}   // keep each column narrow enough to sit side by side on a phone
   const coins=[["BTC",6],["ETH",5],["SOL",4]].filter(([c])=>prices[c]>0).map(([c,d])=>`${c} ${(getS/prices[c]).toFixed(d)}`);
-  const e=slim("Fee Calculator").setDescription(`Estimate for **${_usd2(amt)}**${vip?"  \u00B7  \u26A1 VIP rate":""}`)
+  const e=slim("Fee Calculator").setDescription(`Estimate for **${_usd2(amt)}**${vip?"  \u00B7  VIP rate":""}`+(amt>CONFIG.MIN_FEE?"":`\n**Too small for a ticket.** An exchange has to be for more than ${_usd2(CONFIG.MIN_FEE)}.`))
     .addFields(
       {name:"Fiat \u2192 Crypto",value:`Get **${_usd2(getS)}**\n${tS}`,inline:true},
       {name:"Crypto \u2192 Fiat",value:`Get **${_usd2(getR)}**\n${tR}`,inline:true});
   if(coins.length)e.addFields({name:"\u2248 In coins",value:coins.join("\n"),inline:true});
-  return e.setFooter({text:"Konvert Exchange  ·  Final fee may vary slightly"});
+  return e.setFooter({text:`Konvert Exchange  ·  Exchanges must be more than ${_usd2(CONFIG.MIN_FEE)}  ·  Final fee may vary slightly`});
 }
 // == end Compact embeds ==========================================
 function log(guild,msg){if(!CONFIG.LOG_CHANNEL||!guild)return;const ch=guild.channels.cache.get(CONFIG.LOG_CHANNEL);if(ch)ch.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setDescription("```"+msg+"```").setTimestamp()]}).catch(()=>{});}
@@ -2364,7 +2435,7 @@ function _gExchanging(c){
     "Quote it, open a ticket, get paid. How it works, and every command you need along the way.",
     "",
     "## How a trade works",
-    `**1.**  Get a quote with ${_gcmd("estimate")} or ${_gcmd("fee")}`,
+    `**1.**  Get a quote with ${_gcmd("estimate")} or ${_gcmd("fee")}. An exchange has to be for more than $${CONFIG.MIN_FEE}`,
     `**2.**  Open a ticket in ${ex}`,
     "**3.**  An exchanger claims it. Their go-first limit is in their name (like **Up To $50**). Above it, use a middleman",
     "**4.**  Send only what your ticket tells you to, then confirm once your exchanger marks the deal complete",
@@ -2452,7 +2523,8 @@ function _gFees(){
   const off=_gembed([
     "## Discounts and extras",
     `**Minimum fee**  —  $${CONFIG.MIN_FEE}`,
-    `${vip.emoji} **VIP**  —  ${vip.label} and above ($${vip.min.toLocaleString("en-US")}+ volume) pay **0.75% less**`,
+    `**Minimum exchange**  —  more than $${CONFIG.MIN_FEE}`,
+    `**VIP**  —  ${vip.label} and above ($${vip.min.toLocaleString("en-US")}+ volume) pay **0.75% less**`,
     `**KONV tag**  —  **0.2% off** every exchange (${_gcmd("claimtag")})`,
     "**Promo codes**  —  type a valid code in your ticket and the discount applies on the spot",
     "",
@@ -2462,7 +2534,7 @@ function _gFees(){
 }
 function _gTiers(c){
   const has=id=>!!(id&&c.guild&&c.guild.roles&&c.guild.roles.cache&&c.guild.roles.cache.has(id));
-  const lines=[...TIERS].reverse().map(t=>`${t.emoji}  ${has(t.role)?`<@&${t.role}>`:`**${t.label}**`}  —  ${t.min>0?`$${t.min.toLocaleString("en-US")}+`:"start here"}${isVipVolume(t.min)?"  ⚡ VIP":""}`);
+  const lines=[...TIERS].reverse().map(t=>`${has(t.role)?`<@&${t.role}>`:`**${t.label}**`}  —  ${t.min>0?`$${t.min.toLocaleString("en-US")}+`:"start here"}${isVipVolume(t.min)?"  \u00B7  VIP":""}`);
   return [_gembed([
     "# Client Tiers",
     "Earn your tier by exchanging volume on Konvert. Your role is assigned automatically after every trade.",
@@ -2810,32 +2882,36 @@ async function registerCommands(){
 }
 
 function mainEmbed(){
-  return kEmbed().setTitle(`${UI.I.swap}  Exchange with Konvert`)
-    .setDescription("**Simple · Smooth · Seamless**\nPress **Exchange Now** to open a private ticket with the right exchanger.\n\u200b")
+  return kEmbed().setTitle("Exchange with Konvert")
+    .setDescription(`${kHero("Simple · Smooth · Seamless")}\nPress **Exchange Now** to open a private ticket with the right exchanger.\n​`)
     .addFields(
-      {name:`${UI.I.receipt}  Fee`,value:"5% – 10% tiered · Min $5",inline:true},
-      {name:`${UI.I.money}  Min Amount`,value:"$5 USD",inline:true},
-      {name:`${UI.I.card}  Payment Methods`,value:"PayPal · Cash App · Zelle · Interac · Venmo · Apple Pay · Google Pay · Skrill · Revolut · Bank · Wire · IBAN · UPI · Gift Card",inline:false},
-      {name:`${UI.I.coin}  Crypto`,value:"BTC · ETH · SOL · LTC · USDT · USDC · XRP · BNB · ADA · DOGE · and more",inline:false},
+      {name:"Fee",value:`5% – 10%, tiered\nMinimum fee ${fmtUSD(CONFIG.MIN_FEE)}`,inline:true},
+      {name:"Minimum Amount",value:`More than ${fmtUSD(CONFIG.MIN_FEE)}`,inline:true},
+      {name:"Payment Methods",value:"PayPal · Cash App · Zelle · Interac · Venmo · Apple Pay · Google Pay · Skrill · Revolut · Bank · Wire · IBAN · UPI · Gift Card",inline:false},
+      {name:"Crypto",value:"BTC · ETH · SOL · LTC · USDT · USDC · XRP · BNB · ADA · DOGE · and more",inline:false},
     ).setThumbnail(IMG.LOGO).setImage(IMG.BANNER).setFooter(kFoot("Fast · Safe · Simple"));
 }
+const confirmRow=()=>new ActionRowBuilder().addComponents(kBtn("btn_confirm_ticket","Confirm & Open Ticket",ButtonStyle.Success),kBtn("btn_cancel_ticket","Cancel",ButtonStyle.Secondary));
 function mainButtons(){
   return [new ActionRowBuilder().addComponents(
-    kBtn("btn_exchange_now","Exchange Now",UI.I.swap,ButtonStyle.Primary),
-    kBtn("btn_fee_calc","Calculate Fee",UI.I.calc,ButtonStyle.Secondary),
+    kBtn("btn_exchange_now","Exchange Now",ButtonStyle.Primary),
+    kBtn("btn_fee_calc","Calculate Fee",ButtonStyle.Secondary),
   )];
 }
 function step1Embed(){
-  return kEmbed().setTitle(`${UI.I.card}  Step 1 · Select Payment Method`).setThumbnail(IMG.LOGO)
-    .setDescription("Choose how you'd like to pay or receive.\nA private ticket with the right handler opens instantly.\n\u200b")
+  return kEmbed().setTitle("Step 1 · Select Payment Method").setThumbnail(IMG.LOGO)
+    .setDescription("Choose how you'd like to pay or receive.\nA private ticket with the right handler opens instantly.\n​")
     .setFooter(kFoot("Step 1 of 3"));
 }
+const minLine=()=>kNote(`Every exchange has to be for more than ${fmtUSD(CONFIG.MIN_FEE)}.`);
 function step2Embed(method){
   const m=getMethod(method);
-  if(method==="crypto"){return kEmbed().setTitle(`${UI.I.swap}  Step 2 · Crypto to Crypto`).setDescription("**Send one coin, receive another.**\nFor example: send SOL, receive BTC.\n\nSelect your direction below.").setFooter(kFoot("Step 2 of 3"));}
-  if(method==="buyforyou")return kEmbed().setTitle(`${UI.I.cart}  Buy For You`).setDescription("Tell us what you want us to purchase and we will handle it.\n\nDescribe the item, link, and amount in your ticket — a helper will reach out.").setFooter(kFoot("Step 2 of 3"));
-  if(method==="custom")return kEmbed().setTitle(`${UI.I.spark}  Custom Exchange`).setDescription("Something unique? No problem.\n\nExplain what you need in your ticket and a helper will assist you.").setFooter(kFoot("Step 2 of 3"));
-  return kEmbed().setTitle(`${UI.I.card}  Step 2 · ${m.label}`).setDescription(`**Send Crypto → Receive ${m.label}**\nYou send crypto. We pay you via ${m.label}.\n\n**Send ${m.label} → Receive Crypto**\nYou pay via ${m.label}. We send crypto to your wallet.`).setFooter(kFoot("Step 2 of 3"));
+  if(method==="crypto"){return kEmbed().setTitle("Step 2 · Crypto to Crypto").setDescription(`${kHero("Send one coin, receive another")}\nFor example: send SOL, receive BTC.\n\nSelect your coins below.\n\n${minLine()}`).setFooter(kFoot("Step 2 of 3"));}
+  if(method==="buyforyou")return kEmbed().setTitle("Buy For You").setDescription(`Tell us what you want us to purchase and we will handle it.\n\nDescribe the item, link, and amount in your ticket — a helper will reach out.\n\n${minLine()}`).setFooter(kFoot("Step 2 of 3"));
+  if(method==="custom")return kEmbed().setTitle("Custom Exchange").setDescription(`Something unique? No problem.\n\nExplain what you need in your ticket and a helper will assist you.\n\n${minLine()}`).setFooter(kFoot("Step 2 of 3"));
+  return kEmbed().setTitle(`Step 2 · ${m.label}`)
+    .setDescription(`${kHero("Choose your direction")}\n**Send Crypto → Get ${m.label}**\nYou send crypto and we pay you through ${m.label}.\n\n**Send ${m.label} → Get Crypto**\nYou pay through ${m.label} and we send crypto to your wallet.\n\n${minLine()}`)
+    .setFooter(kFoot("Step 2 of 3"));
 }
 
 const RATES_CHANNEL_ID=process.env.RATES_CHANNEL_ID||null;
@@ -2854,9 +2930,9 @@ async function buildRatesEmbed(){
     return `\`${coin.padEnd(5)}\` **$${usd}**  \u00b7  CA$${cad}  \u00b7  ${ch>=0?"\u25B2":"\u25BC"} ${ch.toFixed(2)}%`;
   }).filter(Boolean).join("\n");
   const now=new Date(),next=new Date(now.getTime()+30*60*1000);
-  return kEmbed().setTitle(`${UI.I.chart}  Live Rates`).setThumbnail(IMG.LOGO)
+  return kEmbed().setTitle(`Live Rates`).setThumbnail(IMG.LOGO)
     .setDescription((lines||"Unable to fetch rates right now.")+"\n\u200b")
-    .addFields({name:`${UI.I.swap}  Exchange`,value:`Open a ticket in <#${CONFIG.EXCHANGE_CHANNEL}>`,inline:true},{name:`${UI.I.info}  Tip`,value:"Type **$BTC**, **$ETH** etc. for live price",inline:true})
+    .addFields({name:`Exchange`,value:`Open a ticket in <#${CONFIG.EXCHANGE_CHANNEL}>`,inline:true},{name:`Tip`,value:"Type **$BTC**, **$ETH** etc. for live price",inline:true})
     .setImage(IMG.BANNER).setFooter(kFoot(`Updates every 30 min  ·  Next: ${next.toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"})}`)).setTimestamp();
 }
 
@@ -2883,29 +2959,21 @@ function buildMineGrid(userId,game){
   return rows;
 }
 
-function buildDealEmbed({clientId,exchangerId,method,amountUSD,direction,coin,message,rating,recvCoin}){
-  const _isC2CVouch=method==="crypto"&&coin&&recvCoin;
-  const dirStr=_isC2CVouch?`${coin} \u2192 ${recvCoin}`:(direction&&coin&&method?(direction==="send"?`${method} \u2192 ${coin}`:`${coin} \u2192 ${method}`):null);
+function buildDealEmbed({clientId,exchangerId,method,methodValue,amountUSD,direction,coin,message,rating,recvCoin,feeUSD}){
+  const d=dealOf({method:methodValue||method,direction,coin,recvCoin,amountUSD,feeUSD});          // "$100.00 Interac → $90.00 ETH"
   const embed=new EmbedBuilder()
     .setColor(UI.ok)
     .setAuthor(kAuthor("Exchange Verified"))
-    .setTitle(`${UI.I.ok}  Exchange Complete`)
-    .setThumbnail(IMG.LOGO)
-    .setDescription("\u200b")
+    .setTitle(`Exchange Complete`)
+    .setDescription(dealHead(d))
     .addFields(
       {name:"Client",value:`<@${clientId}>`,inline:true},
       {name:"Exchanger",value:`<@${exchangerId}>`,inline:true},
-      {name:"\u200b",value:"\u200b",inline:true},
     );
-  if(dirStr)embed.addFields({name:"Direction",value:`**${dirStr}**`,inline:true});
-  else if(method)embed.addFields({name:"Method",value:`**${method}**`,inline:true});
-  if(coin&&!dirStr)embed.addFields({name:"Coin",value:`**${coin}**`,inline:true});
-  if(amountUSD)embed.addFields({name:"Amount",value:`**${fmtUSD(amountUSD)}**`,inline:true});
-  if(message)embed.addFields({name:"\u200b",value:"\u200b",inline:false},{name:"Review",value:message,inline:false});
+  if(message)embed.addFields({name:"Review",value:message,inline:false});
   embed.setImage(IMG.BANNER).setTimestamp().setFooter(kFoot("Verified"));
   return embed;
 }
-
 
 async function endGiveaway(guild,channel){
   if(!state.activeGiveaway)return;
@@ -2914,13 +2982,13 @@ async function endGiveaway(guild,channel){
   state.lastGiveaway={prize,entrants:[...entrants],numWinners,channelId};
   const arr=[...entrants];
   if(!arr.length){
-    await channel.send({embeds:[new EmbedBuilder().setColor(0xef4444).setTitle("\uD83C\uDF89 Giveaway Over").setDescription(`Prize: **${prize}**\n\nNo one entered.`).setTimestamp()]}).catch(()=>{});
+    await channel.send({embeds:[new EmbedBuilder().setColor(0xef4444).setTitle("Giveaway Over").setDescription(`Prize: **${prize}**\n\nNo one entered.`).setTimestamp()]}).catch(()=>{});
     return;
   }
   const winners=[];const pool=[...arr];
   while(winners.length<Math.min(numWinners,pool.length)){const idx=Math.floor(Math.random()*pool.length);winners.push(pool.splice(idx,1)[0]);}
   const wMentions=winners.map(id=>`<@${id}>`).join(", ");
-  await channel.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Giveaway",iconURL:IMG.LOGO}).setTitle("\uD83C\uDF89 Giveaway Ended!").setDescription(`**Prize:** ${prize}\n\n**Winner${winners.length>1?"s":""}:** ${wMentions}\n\nCongratulations! Staff will reach out.`).addFields({name:"Total Entries",value:`**${arr.length}**`,inline:true}).setImage(IMG.BANNER).setTimestamp()]}).catch(()=>{});
+  await channel.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Giveaway",iconURL:IMG.LOGO}).setTitle("Giveaway Ended!").setDescription(`**Prize:** ${prize}\n\n**Winner${winners.length>1?"s":""}:** ${wMentions}\n\nCongratulations! Staff will reach out.`).addFields({name:"Total Entries",value:`**${arr.length}**`,inline:true}).setImage(IMG.BANNER).setTimestamp()]}).catch(()=>{});
   try{const gc=guild.channels.cache.get(channelId);if(gc){const gm=await gc.messages.fetch(messageId).catch(()=>null);if(gm){const dr=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_giveaway_enter").setLabel("Giveaway Ended").setStyle(ButtonStyle.Secondary).setDisabled(true));await gm.edit({components:[dr]}).catch(()=>{});}}}
   catch{}
 }
@@ -2977,7 +3045,10 @@ function supportTicketOf(channel){
 }
 
 async function createTicket(interaction,method,direction,amountUSD,coin,walletInfo,notes,recvCoin){
-  const guild=interaction.guild,user=interaction.user,m=getMethod(method);
+  const guild=interaction.guild,user=interaction.user,m=getMethod(method)||(method==="crypto"?{label:"Crypto to Crypto",value:"crypto"}:null);
+  if(!m){await interaction.editReply({content:"That payment method isn't available any more. Please start again.",embeds:[],components:[]});return null;}
+  // No ticket for an amount at or below the minimum fee, whatever got us here (the fee alone would be the whole amount)
+  if(!aboveMinimum(Number(amountUSD))){await interaction.editReply({content:minAmountText(),embeds:[],components:[]});return null;}
   const tickets=load("tickets");
   // Count open tickets where the channel still actually exists (no ghost tickets)
   const openTickets=Object.entries(tickets).filter(([id,t])=>t.userId===user.id&&t.status==="open"&&guild.channels.cache.has(id));
@@ -2985,7 +3056,7 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   let ghostCleaned=false;
   for(const [id,t] of Object.entries(tickets)){if(t.userId===user.id&&t.status==="open"&&!guild.channels.cache.has(id)){tickets[id].status="closed";tickets[id].closedAt=Date.now();ghostCleaned=true;}}
   if(ghostCleaned){_mem.tickets=tickets;save("tickets",tickets);}
-  if(openTickets.length>=3){await interaction.editReply({content:`⚠️ You already have **${openTickets.length}** open tickets. Please complete or close one before opening another.`,embeds:[],components:[]});return null;}
+  if(openTickets.length>=3){await interaction.editReply({content:`You already have **${openTickets.length}** open tickets. Please complete or close one before opening another.`,embeds:[],components:[]});return null;}
   const _clientVol=getUserVolume(user.id),_isVip=isVipVolume(_clientVol);
   const _tagMember=guild&&guild.members&&guild.members.cache?guild.members.cache.get(user.id):null;
   const _hasTag=isKonvTag(user.id,_tagMember);
@@ -3003,8 +3074,9 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   const receiveU=_isGiftCard?amountUSD:amountUSD-feeUSD;
   let coinAmt=null;
   try{const _cp=await Promise.race([getPrice(coin),new Promise(r=>setTimeout(()=>r(null),2000))]);if(_cp)coinAmt=(receiveU/_cp).toFixed(6);}catch{}
-  const sendLabel=direction==="send"?`${fmtUSD(amountUSD)} via ${m.label}`:`${coin} worth ${fmtUSD(amountUSD)}`;
-  const receiveLabel=direction==="send"?(coinAmt?`${coinAmt} ${coin}`:`${fmtUSD(receiveU)} worth of ${coin}`):receiveU<5?"To be discussed":`${fmtUSD(receiveU)} via ${m.label}`;
+  const d=dealOf({method,direction,coin,recvCoin,amountUSD,feeUSD});              // the deal, worded once and used on every card of this ticket
+  const _rateShown=_isGiftCard?null:(_dualPromoActive?_dualPromoFee:rate);
+  const _coinAmt=(!_isC2C&&direction==="send"&&coinAmt)?coinAmt:null;
   const perms=[{id:guild.roles.everyone,deny:[PermissionFlagsBits.ViewChannel]},{id:user.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]}];
   if(CONFIG.STAFF_ROLE&&guild.roles.cache.has(CONFIG.STAFF_ROLE))perms.push({id:CONFIG.STAFF_ROLE,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]});
   const mRoleId=CONFIG.ROLES?CONFIG.ROLES[m.value]:null;
@@ -3014,31 +3086,21 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   for(const o of await ownerOverwrites(guild))addOverwrite(perms,o);        // owners see and talk in every ticket
   if(guild.roles.cache.has(OWNER_ROLE)&&OWNER_ROLE!==CONFIG.STAFF_ROLE&&OWNER_ROLE!==mRoleId)addOverwrite(perms,{id:OWNER_ROLE,allow:[...OWNER_CHANNEL_ALLOW]});
   let ch;
-  try{ch=await guild.channels.create({name:`${m.value}-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,4)}`,type:ChannelType.GuildText,parent:CONFIG.TICKET_CATEGORY||null,permissionOverwrites:perms});}
-  catch(err){await interaction.editReply({content:`⚠️ Failed to create ticket: ${err.message}`,embeds:[],components:[]});return null;}
-  const _c2cTitle=method==="crypto"&&recvCoin?`${coin} \u2192 ${recvCoin}`:null;
-  // Fee line: the rate on top, any discount applied underneath
+  try{ch=await guild.channels.create({name:`${m.value}-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,4)}`,type:ChannelType.GuildText,parent:CONFIG.TICKET_CATEGORY||null,topic:d.hero,permissionOverwrites:perms});}
+  catch(err){await interaction.editReply({content:`Failed to create ticket: ${err.message}`,embeds:[],components:[]});return null;}
+  // Any discount that applies is named under the deal
   const _feeNotes=[];
   if(_dualPromoActive)_feeNotes.push("Dual-member rate");
   else{if(_isVip)_feeNotes.push("VIP rate");if(_hasTag)_feeNotes.push("KONV tag discount");}
-  const _feeValue=_isGiftCard?"To be decided in this ticket"
-    :`${_dualPromoActive?_dualPromoFee:rate}% \u2014 ${fmtUSD(feeUSD)}`+(_feeNotes.length?`\n${_feeNotes.join(" \u00b7 ")}`:"");
-  const _showReceive=!_isC2C&&!_isGiftCard&&method!=="custom"&&method!=="buyforyou";   // fiat <-> crypto only: an estimate for the others would mislead
-  const ticketEmbed=kEmbed("Ticket").setTitle(`${UI.I.swap}  ${_c2cTitle||`${m.label} Exchange`}`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO)
-    .setDescription(`Welcome, <@${user.id}>! Your ticket is open — an exchanger will claim it shortly.\n\u200b`)
-    .addFields(
-      {name:`${UI.I.money}  You Send`,value:sendLabel,inline:true},
-      ...(_showReceive?[{name:`${UI.I.coin}  You Receive (est.)`,value:receiveLabel,inline:true}]:[]),
-      {name:`${UI.I.receipt}  Fee`,value:_feeValue,inline:true},
-      {name:`${UI.I.info}  Next Step`,value:"Your exchanger will confirm the wallet and payment details here. Final amounts are agreed in this ticket.",inline:false});
-
-  if(method==="buyforyou"||method==="custom"){
-    const _helperPing=CONFIG.HELPER_ROLE?`<@&${CONFIG.HELPER_ROLE}>`:"@Helper";
-    ticketEmbed.setDescription(`${_helperPing} — New **${m?.label||method}** ticket opened.\n\u200b`);
-  }
-  ticketEmbed.setImage(IMG.BANNER).setTimestamp().setFooter(kFoot("All communication stays in this ticket"));
+  const _intro=(method==="buyforyou"||method==="custom")
+    ?`${CONFIG.HELPER_ROLE?`<@&${CONFIG.HELPER_ROLE}>`:"@Helper"} — New **${m.label}** ticket opened.`
+    :`Welcome, <@${user.id}>. Your ticket is open and an exchanger will claim it shortly.`;
+  const ticketEmbed=kEmbed("Ticket").setTitle(_isC2C&&recvCoin?"Crypto to Crypto Exchange":`${m.label} Exchange`)
+    .setDescription(`${dealHead(d,_feeNotes)}\n${kLedger(dealRows(d,{rate:_rateShown,coinAmt:_coinAmt}))}${_intro}`)
+    .addFields({name:"What happens next",value:"1. An exchanger claims this ticket.\n2. They confirm the wallet and payment details here.\n3. Final amounts are agreed in this ticket before anything is sent.",inline:false})
+    .setImage(IMG.BANNER).setTimestamp().setFooter(kFoot("All communication stays in this ticket"));
   const rulesEmbed=kEmbed("Safety","warn")
-    .setTitle(`${UI.I.shield}  Before You Proceed`)
+    .setTitle(`Before You Proceed`)
     .setDescription(
       `**1 · Go-first limit**\nShown in your exchanger's name. Above it, or if it says "Use MM Always", use a middleman (${MM_SERVICES}) and open their ticket before sending anything.\n\n`
       +"**2 · Impersonators**\n**@3uce** and **@jswaps** never DM first. Anyone who does is an impersonator.\n\n"
@@ -3050,11 +3112,11 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   const pings=[];
   if(mRoleId)pings.push(`<@&${mRoleId}>`);
   if(CONFIG.STAFF_ROLE&&CONFIG.STAFF_ROLE!==mRoleId)pings.push(`<@&${CONFIG.STAFF_ROLE}>`);
-  if(pings.length)await ch.send(`${UI.I.ticket}  New **${m.label}** ticket — ${pings.join(" ")}`);
+  if(pings.length)await ch.send(`**New ticket**  \u00b7  ${d.hero}  \u00b7  ${pings.join(" ")}`);
   const t=Object.keys(_mem.tickets||{}).length>0?{..._mem.tickets}:load("tickets");
   t[ch.id]={userId:user.id,userTag:user.tag,method,direction,coin,recvCoin:recvCoin||null,amountUSD,feeUSD,walletInfo,notes:notes||"",status:"open",claimSystem:true,panelMessageId:_panel.id,createdAt:Date.now()};
   _mem.tickets=t;save("tickets",t);
-  log(guild,`TICKET: #${ch.name} | ${user.tag} | ${m.label} | ${fmtUSD(amountUSD)} | ${coin}`);
+  log(guild,`TICKET: #${ch.name} | ${user.tag} | ${d.hero}`);
   return ch;
 }
 
@@ -3079,23 +3141,21 @@ async function doCloseTicket(channel,guild,closedBy,reason){
   log(guild,`CLOSED: #${channel.name} by ${closedBy.tag} -- ${reason}`);
 }
 
-async function sendReceiptDM(clientUserId,exchangerId,ticketData,tradeCount,totalVolume){
+async function sendReceiptDM(clientUserId,exchangerId,ticketData,tradeCount,totalVolume,ticketKey){
   try{
     const clientUser=await client.users.fetch(clientUserId).catch(()=>null);
     if(!clientUser)return;
-    const m=getMethod(ticketData.method);
     const tier=getTier(totalVolume),nextT=getNextTier(totalVolume);
-    const tradeId=`KV-${Date.now().toString(36).toUpperCase()}`;
-    const dirStr=ticketData.direction&&ticketData.coin&&ticketData.method?(ticketData.direction==="send"?`${ticketData.coin} \u2192 ${m?.label||ticketData.method}`:`${m?.label||ticketData.method} \u2192 ${ticketData.coin}`):(m?.label||ticketData.method);
-    await clientUser.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Trade Receipt",iconURL:IMG.LOGO}).setTitle(`${UI.I.ok}  Trade Complete`).setThumbnail(IMG.LOGO)
-      .setDescription(`Your exchange has been verified and completed. This is your official receipt.\n\u200b`)
+    const tradeId=ticketKey?`KV-${String(ticketKey).slice(-6).toUpperCase()}`:`KV-${Date.now().toString(36).toUpperCase()}`;
+    const fee=ticketData.feeUSD!=null?ticketData.feeUSD:calcFee(ticketData.amountUSD,ticketData.direction==="receive"?"receive":"send");
+    const d=dealOf({...ticketData,feeUSD:fee});
+    await clientUser.send({embeds:[kEmbed("Trade Receipt","ok").setTitle("Trade Complete")
+      .setDescription(`${dealHead(d)}\n${kLedger([["Receipt ID",tradeId],...dealRows(d,{final:true})])}Your exchange has been verified and completed. This is your official receipt.`)
       .addFields(
-        {name:"Receipt ID",value:`\`${tradeId}\``,inline:true},{name:"Date",value:`<t:${Math.floor(Date.now()/1000)}:F>`,inline:true},{name:"\u200b",value:"\u200b",inline:true},
-        {name:"Method",value:`**${m?.label||ticketData.method}**`,inline:true},{name:"Direction",value:`**${dirStr}**`,inline:true},{name:"Amount",value:`**${fmtUSD(ticketData.amountUSD)}**`,inline:true},
-        {name:"Fee",value:`**${fmtUSD(ticketData.feeUSD||calcFee(ticketData.amountUSD,"send"))}**`,inline:true},{name:"Exchanger",value:`<@${exchangerId}>`,inline:true},{name:"\u200b",value:"\u200b",inline:true},
-        {name:"Your Tier",value:`${tier.emoji} **${tier.label}**`,inline:true},{name:"Total Exchanges",value:`**${tradeCount}**`,inline:true},{name:"Total Volume",value:`**${fmtUSD(totalVolume)}**`,inline:true},
-        {name:nextT?`Next Tier: ${nextT.emoji} ${nextT.label}`:"Max Tier Reached",value:nextT?`${fmtUSD(Math.max(nextT.min-totalVolume,0))} away`:"You're at the top. Thank you.",inline:false},
-      ).setImage(IMG.DEAL).setFooter({text:"Konvert Exchange  ·  Keep this receipt for your records"}).setTimestamp()]});
+        {name:"Date",value:`<t:${Math.floor(Date.now()/1000)}:F>`,inline:true},{name:"Exchanger",value:`<@${exchangerId}>`,inline:true},{name:"​",value:"​",inline:true},
+        {name:"Your Tier",value:`**${tier.label}**`,inline:true},{name:"Total Exchanges",value:`**${tradeCount}**`,inline:true},{name:"Total Volume",value:`**${fmtUSD(totalVolume)}**`,inline:true},
+        {name:nextT?`Next Tier: ${nextT.label}`:"Max Tier Reached",value:nextT?`${fmtUSD(Math.max(nextT.min-totalVolume,0))} away`:"You're at the top. Thank you.",inline:false},
+      ).setImage(IMG.DEAL).setFooter(kFoot("Keep this receipt for your records")).setTimestamp()]});
   }catch(e){console.log("[receipt DM]",e.message);}
 }
 
@@ -3130,31 +3190,31 @@ async function completeTrade(interaction,ticket,tickets){
     }
   }
   await handleReferralTrade(interaction.guild,ticket.userId,ticket.amountUSD);
-  if(state.feedEnabled&&state.feedChannel){try{const feedCh=interaction.guild.channels.cache.get(state.feedChannel);if(feedCh){const vol=getUserVolume(ticket.userId);const _tier=getTier(vol);await feedCh.send(`\u2705  **${m?.label||ticket.method}**  \u00b7  **${fmtUSD(ticket.amountUSD)}**  \u00b7  ${_tier.emoji}  \u2014  just now`);}}catch{}}
+  if(state.feedEnabled&&state.feedChannel){try{const feedCh=interaction.guild.channels.cache.get(state.feedChannel);if(feedCh){await feedCh.send(`**${dealOf(ticket).hero}**  ·  just now`);}}catch{}}
   try{const _vol=getUserVolume(ticket.userId);console.log(`[tierRole] userId=${ticket.userId} volume=${_vol}`);await applyTierRole(interaction.guild,ticket.userId,_vol);}catch(e){console.log("[tierRole error]",e.message);}
-  try{const volume=getUserVolume(ticket.userId);await sendReceiptDM(ticket.userId,interaction.user.id,ticket,getUserDealCount(ticket.userId),volume);}catch{}
+  try{const volume=getUserVolume(ticket.userId);await sendReceiptDM(ticket.userId,interaction.user.id,ticket,getUserDealCount(ticket.userId),volume,ticketKey);}catch{}
   // Completion — 90s window to go vouch in the vouch channel, then auto-close.
   let _vouchPosted=false;
   const _postOnce=async()=>{
     if(_vouchPosted)return;
     _vouchPosted=true;
-    await postVouch(interaction.guild,{clientId:ticket.userId,exchangerId:ticket.completedBy,method:m?.label||ticket.method,amountUSD:ticket.amountUSD,direction:ticket.direction,coin:ticket.coin,recvCoin:ticket.recvCoin||null,message:null,rating:5,referredBy:null});
+    await postVouch(interaction.guild,{clientId:ticket.userId,exchangerId:ticket.completedBy,method:m?.label||ticket.method,methodValue:ticket.method,feeUSD:ticket.feeUSD,amountUSD:ticket.amountUSD,direction:ticket.direction,coin:ticket.coin,recvCoin:ticket.recvCoin||null,message:null,rating:5,referredBy:null});
     updateStatChannel(interaction.guild).catch(()=>{});
     await doCloseTicket(interaction.channel,interaction.guild,interaction.user,"Trade completed");
     setTimeout(()=>interaction.channel.delete().catch(()=>{}),2000);
   };
   const _vRow=new ActionRowBuilder().addComponents(
-    kLink("Vouch Here",VOUCH_LINK,UI.I.star),
-    kBtn("skip_vouch","Close Now",UI.I.lock,ButtonStyle.Secondary)
+    kLink("Vouch Here",VOUCH_LINK),
+    kBtn("skip_vouch","Close Now",ButtonStyle.Secondary)
   );
   const _vPrompt=kEmbed("Ticket","ok")
-    .setTitle(`${UI.I.party}  Exchange Complete`)
+    .setTitle(`Exchange Complete`)
     .setDescription(`<@${ticket.userId}> — thanks for trading with Konvert! Please leave a vouch in <#${VOUCH_POST_CHANNEL}>.`)
     .setFooter(kFoot("This ticket closes in 90 seconds"));
   // Post publicly so the client actually sees it (btn_done defers ephemerally)
   await interaction.channel.send({content:`<@${ticket.userId}>`,embeds:[_vPrompt],components:[_vRow]}).catch(()=>{});
   // Quiet confirmation for whoever triggered it
-  if(!interaction._fake){try{await interaction.editReply({content:"✅ Exchange marked complete.",embeds:[],components:[]});}catch{}}
+  if(!interaction._fake){try{await interaction.editReply({content:"Exchange marked complete.",embeds:[],components:[]});}catch{}}
   // Store _postOnce on channel so the Close Now button can call it directly
   if(interaction.channel)interaction.channel._completePostOnce=_postOnce;
   setTimeout(()=>{_postOnce().catch(()=>{});},90*1000);
@@ -3175,8 +3235,8 @@ client.on(Events.MessageCreate,async message=>{
         const title=YT_TITLES[Math.floor(Math.random()*YT_TITLES.length)];
         const desc=YT_DESCRIPTIONS[Math.floor(Math.random()*YT_DESCRIPTIONS.length)];
         const res=await youtube.videos.insert({part:["snippet","status"],requestBody:{snippet:{title,description:desc,tags:["gym motivation","shorts","fitness","workout","motivation"],categoryId:"17"},status:{privacyStatus:"public"}},media:{body:fs.createReadStream(filePath)}});
-        await message.react("\u2705");await message.reply(`\u2705 Posted: https://youtube.com/watch?v=${res.data.id}\n**Title:** ${title}`);fs.unlinkSync(filePath);
-      }catch(err){await message.react("\u274C");await message.reply(`\u274C Upload failed: ${err.message}`);try{fs.unlinkSync(filePath);}catch{}}
+        await message.react("\u2705");await message.reply(`Posted: https://youtube.com/watch?v=${res.data.id}\n**Title:** ${title}`);fs.unlinkSync(filePath);
+      }catch(err){await message.react("\u274C");await message.reply(`Upload failed: ${err.message}`);try{fs.unlinkSync(filePath);}catch{}}
       return;
     }
   }
@@ -3209,8 +3269,8 @@ client.on(Events.MessageCreate,async message=>{
       await message.channel.send({embeds:[new EmbedBuilder()
         .setColor(_pm.color)
         .setAuthor(kAuthor("Payment Instructions"))
-        .setTitle(`${UI.I.card}  ${_pm.name} Instructions`)
-        .setDescription("Please read and follow **all steps** before sending.\n\n"+_pmSteps.map((r,i)=>`**${i+1}.**  ${r}`).join("\n")+`\n\n${UI.I.warn}  ${_pmWarn}`)
+        .setTitle(`${_pm.name} Instructions`)
+        .setDescription("Please read and follow **all steps** before sending.\n\n"+_pmSteps.map((r,i)=>`**${i+1}.**  ${r}`).join("\n")+`\n\n${_pmWarn}`)
         .setFooter(kFoot("Always confirm the details inside this ticket"))
         .setTimestamp()
       ]}).catch(()=>{});
@@ -3242,7 +3302,7 @@ client.on(Events.MessageCreate,async message=>{
     if(/^\$all$/i.test(message.content.trim())&&ticket&&ticket.status==="open"&&(isExchanger(message.member)||isOwner(message.author.id,message.member))){
       const _staffAll=!!(CONFIG.STAFF_ROLE&&message.member?.roles.cache.has(CONFIG.STAFF_ROLE));
       if(ticket.claimedBy&&message.author.id!==ticket.claimedBy&&!isOwner(message.author.id,message.member)&&!_staffAll){
-        const _no=await message.reply("⛔ Only the exchanger on this ticket or staff can open it to everyone.").catch(()=>null);
+        const _no=await message.reply("Only the exchanger on this ticket or staff can open it to everyone.").catch(()=>null);
         if(_no)setTimeout(()=>_no.delete().catch(()=>{}),5000);
         return;
       }
@@ -3250,7 +3310,7 @@ client.on(Events.MessageCreate,async message=>{
       _tksAll[message.channel.id]=ticket;
       const _resAll=await openToAllExchangers(message.channel,ticket,_tksAll,{by:message.author.id});
       if(!_resAll.ok){
-        const _wait=await message.reply(`⚠️ Already sent a moment ago. Try again in ${_resAll.wait}s.`).catch(()=>null);
+        const _wait=await message.reply(`Already sent a moment ago. Try again in ${_resAll.wait}s.`).catch(()=>null);
         if(_wait)setTimeout(()=>_wait.delete().catch(()=>{}),5000);
       }else if(_resAll.failed&&_resAll.failed.length){
         const _blind=await message.channel.send({content:`I couldn't give ${_resAll.failed.map(r=>`<@&${r}>`).join(" ")} access to this ticket, so they can't see it. Check that I have **Manage Permissions** in this channel.`,allowedMentions:{parse:[]}}).catch(()=>null);
@@ -3271,7 +3331,7 @@ client.on(Events.MessageCreate,async message=>{
         try{return !!message.channel.permissionsFor(role)?.has(PermissionFlagsBits.ViewChannel);}catch{return false;}
       });
       const _mOpen=getMethod(ticket.method);
-      if(!_visible.length)return void message.reply("⚠️ No exchanger role has access to this channel. Add one to the channel permissions first.").catch(()=>{});
+      if(!_visible.length)return void message.reply("No exchanger role has access to this channel. Add one to the channel permissions first.").catch(()=>{});
       const _pings=_visible.map(r=>"<@&"+r+">").join(" ");
       await message.channel.send({content:`${_pings} — **${_mOpen?.label||ticket.method}** ticket needs an exchanger. ${fmtUSD(ticket.amountUSD||0)}`,allowedMentions:{roles:_visible}}).catch(()=>{});
       return;
@@ -3279,7 +3339,7 @@ client.on(Events.MessageCreate,async message=>{
     // $info — ticket summary
     if(message.content.trim()==="$info"&&ticket&&(isExchanger(message.member)||isOwner(message.author.id,message.member))){
       const _im=getMethod(ticket.method);const _ivol=getUserVolume(ticket.userId);const _itier=getTier(_ivol);
-      await message.reply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Ticket Info",iconURL:IMG.LOGO}).addFields({name:"Client",value:"<@"+ticket.userId+">",inline:true},{name:"Method",value:_im?.label||ticket.method||"--",inline:true},{name:"Amount",value:fmtUSD(ticket.amountUSD||0),inline:true},{name:"Volume",value:fmtUSD(_ivol),inline:true},{name:"Tier",value:_itier.emoji+" "+_itier.label,inline:true},{name:"Opened",value:"<t:"+Math.floor((ticket.createdAt||Date.now())/1000)+":R>",inline:true},{name:"Claimed By",value:ticket.claimedBy?"<@"+ticket.claimedBy+">":(ticket.claimSystem?"Unclaimed":"—"),inline:true}).setTimestamp()]}).catch(()=>{});
+      await message.reply({embeds:[kEmbed("Ticket Info").setDescription(dealHead(dealOf(ticket))).addFields({name:"Client",value:"<@"+ticket.userId+">",inline:true},{name:"Claimed By",value:ticket.claimedBy?"<@"+ticket.claimedBy+">":(ticket.claimSystem?"Unclaimed":"—"),inline:true},{name:"Opened",value:"<t:"+Math.floor((ticket.createdAt||Date.now())/1000)+":R>",inline:true},{name:"Volume",value:fmtUSD(_ivol),inline:true},{name:"Tier",value:_itier.label,inline:true}).setFooter(kFoot("Ticket summary")).setTimestamp()]}).catch(()=>{});
       return;
     }
     // $fee [amount]
@@ -3289,7 +3349,7 @@ client.on(Events.MessageCreate,async message=>{
     }
     // $vip — check client VIP status
     if(message.content.trim()==="$vip"&&ticket){
-      const _vv=getUserVolume(ticket.userId);await message.reply("Client volume: **"+fmtUSD(_vv)+"** — VIP: **"+(isVipVolume(_vv)?"Yes ⚡":"No")+"**").catch(()=>{});return;
+      const _vv=getUserVolume(ticket.userId);await message.reply("Client volume: **"+fmtUSD(_vv)+"** — VIP: **"+(isVipVolume(_vv)?"Yes":"No")+"**").catch(()=>{});return;
     }
     // $rate — show fee table
     if(message.content.trim()==="$rate"){
@@ -3298,7 +3358,7 @@ client.on(Events.MessageCreate,async message=>{
     // $vol [@user]
     if(message.content.trim().startsWith("$vol")&&(isExchanger(message.member)||isOwner(message.author.id,message.member))){
       const _vu=message.mentions.users.first()||message.author;const _vvol=getUserVolume(_vu.id);const _vt=getTier(_vvol);
-      await message.reply(_vu.username+": **"+fmtUSD(_vvol)+"** | "+_vt.emoji+" **"+_vt.label+"**").catch(()=>{});return;
+      await message.reply(_vu.username+": **"+fmtUSD(_vvol)+"**  ·  **"+_vt.label+"**").catch(()=>{});return;
     }
     // $passes [@user]
     if(message.content.trim().startsWith("$passes")&&isOwner(message.author.id,message.member)){
@@ -3316,17 +3376,17 @@ client.on(Events.MessageCreate,async message=>{
     if(message.content.trim()==="$complete"&&ticket&&ticket.status==="open"){
       const _canComp=isOwner(message.author.id,message.member)||isExchanger(message.member);
       if(_canComp){
-        if(isSuspended(message.author.id)&&!isOwner(message.author.id,message.member)){await message.reply("⛔ Your exchanger access is suspended pending owner review.").catch(()=>{});return;}
-        if(ticket.reported&&!isOwner(message.author.id,message.member)){await message.reply("⚠️ This ticket is flagged. An owner needs to review it first.").catch(()=>{});return;}
-        if(ticket.mmPending&&!isOwner(message.author.id,message.member)){await message.reply("⚠️ Waiting for the client to confirm the middleman.").catch(()=>{});return;}
-        if(ticket.claimSystem&&!ticket.claimedBy){await message.reply("⚠️ Claim this ticket before completing it.").catch(()=>{});return;}
-        if(ticket.claimSystem&&message.author.id!==ticket.claimedBy&&!isOwner(message.author.id,message.member)){await message.reply(`⛔ Only <@${ticket.claimedBy}> can complete this ticket.`).catch(()=>{});return;}
+        if(isSuspended(message.author.id)&&!isOwner(message.author.id,message.member)){await message.reply("Your exchanger access is suspended pending owner review.").catch(()=>{});return;}
+        if(ticket.reported&&!isOwner(message.author.id,message.member)){await message.reply("This ticket is flagged. An owner needs to review it first.").catch(()=>{});return;}
+        if(ticket.mmPending&&!isOwner(message.author.id,message.member)){await message.reply("Waiting for the client to confirm the middleman.").catch(()=>{});return;}
+        if(ticket.claimSystem&&!ticket.claimedBy){await message.reply("Claim this ticket before completing it.").catch(()=>{});return;}
+        if(ticket.claimSystem&&message.author.id!==ticket.claimedBy&&!isOwner(message.author.id,message.member)){await message.reply(`Only <@${ticket.claimedBy}> can complete this ticket.`).catch(()=>{});return;}
         if(ticket.claimSystem&&!isOwner(message.author.id,message.member)){
           // The client confirms before anything is finalized (owners finalize directly)
-          if(ticket.completionPending){await message.reply("⚠️ Already waiting for the client to confirm.").catch(()=>{});return;}
+          if(ticket.completionPending){await message.reply("Already waiting for the client to confirm.").catch(()=>{});return;}
           const _tk=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
           const _ok=await requestCompletion(message.channel,ticket,_tk);
-          if(!_ok)await message.reply("⚠️ Couldn't send the confirmation. Try again.").catch(()=>{});
+          if(!_ok)await message.reply("Couldn't send the confirmation. Try again.").catch(()=>{});
           return;
         }
         const _allT=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
@@ -3341,7 +3401,7 @@ client.on(Events.MessageCreate,async message=>{
     // $ban — blacklist a user (reply to their message or mention)
     if(message.content.trim().startsWith("$ban ")&&isOwner(message.author.id,message.member)){
       const _banId=message.mentions.users.first()?.id||message.content.trim().split(" ")[1];
-      if(_banId&&isOwner(_banId)){await message.reply("⛔ Owners can't be banned.").catch(()=>{});}
+      if(_banId&&isOwner(_banId)){await message.reply("Owners can't be banned.").catch(()=>{});}
       else if(_banId){const bl=load("blacklist");bl[_banId]=true;save("blacklist",bl);await message.reply(`Banned <@${_banId}> from Konvert.`).catch(()=>{});}
       return;
     }
@@ -3468,7 +3528,7 @@ client.on(Events.MessageCreate,async message=>{
         ticket.feeUSD=newFee;
         await message.reply({embeds:[new EmbedBuilder()
           .setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Promo Applied",iconURL:IMG.LOGO})
-          .setTitle("\u2728  Promo Code Applied!")
+          .setTitle("Promo Code Applied!")
           .setDescription(`**${code.toUpperCase()}** has been applied to your exchange.\n\u200b`)
           .addFields(
             {name:"Original Fee",value:`**${fmtUSD(origFee)}**`,inline:true},
@@ -3498,10 +3558,10 @@ client.on(Events.MessageCreate,async message=>{
     try{
       let amtUSD=0;
       if(isFiat(fromRaw)){amtUSD=rawAmt/FIAT_RATES[fromRaw];}
-      else{const fp=await getPrice(fromRaw);if(!fp){await message.reply({content:`⚠️ Could not fetch price for **${fromRaw}**.`}).catch(()=>{});return;}amtUSD=rawAmt*fp;}
+      else{const fp=await getPrice(fromRaw);if(!fp){await message.reply({content:`Could not fetch price for **${fromRaw}**.`}).catch(()=>{});return;}amtUSD=rawAmt*fp;}
       let result=0;
       if(isFiat(toRaw)){result=amtUSD*FIAT_RATES[toRaw];}
-      else{const tp=await getPrice(toRaw);if(!tp){await message.reply({content:`⚠️ Could not fetch price for **${toRaw}**.`}).catch(()=>{});return;}result=amtUSD/tp;}
+      else{const tp=await getPrice(toRaw);if(!tp){await message.reply({content:`Could not fetch price for **${toRaw}**.`}).catch(()=>{});return;}result=amtUSD/tp;}
       const fmtR=n=>{if(n>=1000)return n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});if(n>=1)return n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:4});if(n>=0.01)return n.toFixed(4);return n.toFixed(8);};
       const fromSym=isFiat(fromRaw)?(FIAT_SYM[fromRaw]||fromRaw+" "):"";
       const toSym=isFiat(toRaw)?(FIAT_SYM[toRaw]||toRaw+" "):"";
@@ -3524,7 +3584,7 @@ client.on(Events.MessageCreate,async message=>{
     if(jwCoin&&state.personalWallets[jwCoin]){
       await message.channel.send({content:state.personalWallets[jwCoin]}).catch(()=>{});
     } else {
-      await message.reply({content:`⚠️ No **${jwCoin||jwKey.toUpperCase()}** address set yet.`}).catch(()=>{});
+      await message.reply({content:`No **${jwCoin||jwKey.toUpperCase()}** address set yet.`}).catch(()=>{});
     }
     return;
   }
@@ -3533,7 +3593,7 @@ client.on(Events.MessageCreate,async message=>{
   const coin=match[1].toUpperCase();
   if(!COINS.includes(coin))return;
   const d=await fetchFullPrice(coin);
-  if(!d){await message.reply(`\u274C Could not fetch **${coin}** price right now. Try again in a moment.`).catch(()=>{});return;}
+  if(!d){await message.reply(`Could not fetch **${coin}** price right now. Try again in a moment.`).catch(()=>{});return;}
   const fmt=n=>{if(n>=1)return n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});if(n>=0.01)return n.toFixed(4);return n.toFixed(8);};
   const ch2=parseFloat(d.usd_24h_change||0),isUp=ch2>=0;
   const mcap=d.usd_market_cap?`$${(d.usd_market_cap/1e9).toFixed(2)}B`:"—";
@@ -3687,25 +3747,25 @@ client.on(Events.InteractionCreate,async interaction=>{
       // Owner-only commands: check OWNER_IDS regardless of Discord permissions
       const OWNER_ONLY_CMDS=["grantowner","revokeowner","listowners","wipestats","clearleaderboard","adjuststats","resetstats","transferstats","suspended","reinstate","clearexchanger","profittest","broadcast","setfeemode","postleaderboard","serverinfo","clientinfo","receipt","postguide"];
       if(OWNER_ONLY_CMDS.includes(interaction.commandName)&&!isOwner(interaction.user.id,interaction.member)){
-        return interaction.reply({content:"⚠️ You don\'t have permission to use this command.",flags:64});
+        return interaction.reply({content:"You don\'t have permission to use this command.",flags:64});
       }
       const cmd=interaction.commandName;
 
       if(cmd==="help"||cmd==="postguide"){return handleGuide(interaction,{post:cmd==="postguide"});}
 
-      if(cmd==="postexchange"){await interaction.channel.send({embeds:[mainEmbed()],components:mainButtons()});return interaction.reply({content:"✅ Exchange embed posted.",flags:64});}
-      if(cmd==="postsupport"){const embed=kEmbed("Support").setTitle(`${UI.I.help}  Support`).setThumbnail(IMG.LOGO).setDescription(`This channel is for **support tickets only**.\n\nFor exchanges, head to <#${CONFIG.EXCHANGE_CHANNEL}>.\n\n**What to include**\n• What you need help with\n• Any error messages or screenshots\n• What you have already tried\n• A full explanation of what happened\n\u200b`).setFooter(kFoot("Support"));await interaction.channel.send({embeds:[embed],components:[new ActionRowBuilder().addComponents(kBtn("btn_support_ticket","Open Support Ticket","🎟️",ButtonStyle.Primary))]});return interaction.reply({content:"✅ Support embed posted.",flags:64});}
-      if(cmd==="postmm"){const embed=kEmbed("Middleman").setTitle(`${UI.I.shield}  Middleman Information`).setThumbnail(IMG.LOGO).setDescription(`**Konvert officially partners with Astro MM** to make sure every deal goes smoothly.\n\n**How it works**\n**1.** Open a ticket in <#${CONFIG.EXCHANGE_CHANNEL}>\n**2.** Get a quote for your exchange\n**3.** If terms are agreed, open an MM ticket on Astro MM\n**4.** Complete the exchange safely\n\u200b`).addFields({name:`${UI.I.warn}  Important`,value:"**Do NOT go first** without using Astro MM, unless explicitly advised by an owner in your ticket.",inline:false},{name:`${UI.I.shield}  Astro MM`,value:"Press the button below to join the Astro MM server.",inline:false}).setImage(IMG.BANNER).setFooter(kFoot("Official escrow partner: Astro MM"));await interaction.channel.send({embeds:[embed],components:[new ActionRowBuilder().addComponents(kLink("Join Astro MM","https://discord.gg/astromm","🤝"))]});return interaction.reply({content:"✅ MM embed posted.",flags:64});}
+      if(cmd==="postexchange"){await interaction.channel.send({embeds:[mainEmbed()],components:mainButtons()});return interaction.reply({content:"Exchange embed posted.",flags:64});}
+      if(cmd==="postsupport"){const embed=kEmbed("Support").setTitle(`Support`).setThumbnail(IMG.LOGO).setDescription(`This channel is for **support tickets only**.\n\nFor exchanges, head to <#${CONFIG.EXCHANGE_CHANNEL}>.\n\n**What to include**\n• What you need help with\n• Any error messages or screenshots\n• What you have already tried\n• A full explanation of what happened\n\u200b`).setFooter(kFoot("Support"));await interaction.channel.send({embeds:[embed],components:[new ActionRowBuilder().addComponents(kBtn("btn_support_ticket","Open Support Ticket",ButtonStyle.Primary))]});return interaction.reply({content:"Support embed posted.",flags:64});}
+      if(cmd==="postmm"){const embed=kEmbed("Middleman").setTitle(`Middleman Information`).setThumbnail(IMG.LOGO).setDescription(`**Konvert officially partners with Astro MM** to make sure every deal goes smoothly.\n\n**How it works**\n**1.** Open a ticket in <#${CONFIG.EXCHANGE_CHANNEL}>\n**2.** Get a quote for your exchange\n**3.** If terms are agreed, open an MM ticket on Astro MM\n**4.** Complete the exchange safely\n\u200b`).addFields({name:`Important`,value:"**Do NOT go first** without using Astro MM, unless explicitly advised by an owner in your ticket.",inline:false},{name:`Astro MM`,value:"Press the button below to join the Astro MM server.",inline:false}).setImage(IMG.BANNER).setFooter(kFoot("Official escrow partner: Astro MM"));await interaction.channel.send({embeds:[embed],components:[new ActionRowBuilder().addComponents(kLink("Join Astro MM","https://discord.gg/astromm"))]});return interaction.reply({content:"MM embed posted.",flags:64});}
 
 
       if(cmd==="rates"){await interaction.deferReply();
         const _re=await Promise.race([buildRatesEmbed(),new Promise((_,r)=>setTimeout(()=>r(new Error("t")),7000))]).catch(()=>null);
-        if(!_re)return interaction.editReply("⚠️ Could not fetch rates right now. Try again.");
-        return interaction.editReply({embeds:[_re],components:[new ActionRowBuilder().addComponents(kBtn("btn_refresh_rates","Refresh",UI.I.refresh,ButtonStyle.Secondary))]});}
+        if(!_re)return interaction.editReply("Could not fetch rates right now. Try again.");
+        return interaction.editReply({embeds:[_re],components:[new ActionRowBuilder().addComponents(kBtn("btn_refresh_rates","Refresh",ButtonStyle.Secondary))]});}
 
       if(cmd==="fee"){
         const amt=interaction.options.getNumber("amount_usd");
-        if(!amt||amt<=0)return interaction.reply({content:"⚠️ Please enter a valid amount greater than $0.",flags:64});
+        if(!amt||amt<=0)return interaction.reply({content:"Please enter a valid amount greater than $0.",flags:64});
         await interaction.deferReply({flags:64});
         const _feeVol=getUserVolume(interaction.user.id),_feeVip=isVipVolume(_feeVol);
         const [btcP,ethP,solP]=await Promise.all([getPrice("BTC"),getPrice("ETH"),getPrice("SOL")]);
@@ -3717,7 +3777,7 @@ client.on(Events.InteractionCreate,async interaction=>{
         const coin=interaction.options.getString("coin").toUpperCase();
         if(!GECKO[coin]&&!BINANCE[coin])return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setDescription(`**${coin}** is not supported. Try BTC, ETH, SOL, LTC, BNB, XRP, DOGE and more.`)]});
         const d=await Promise.race([fetchFullPrice(coin),new Promise((_,r)=>setTimeout(()=>r(new Error("t")),7000))]).catch(()=>null);
-        if(!d)return interaction.editReply("⚠️ Could not fetch price right now. Try again in a moment.");
+        if(!d)return interaction.editReply("Could not fetch price right now. Try again in a moment.");
         const ch=parseFloat(d.usd_24h_change||0),isUp=ch>=0;
         const fmt2=n=>n>=1?n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):n>=0.01?n.toFixed(4):n.toFixed(8);
         const chSign=isUp?"+":"";
@@ -3736,16 +3796,16 @@ client.on(Events.InteractionCreate,async interaction=>{
       if(cmd==="convert"){
         await interaction.deferReply();
         const amount=interaction.options.getNumber("amount"),from=interaction.options.getString("from").toUpperCase(),to=interaction.options.getString("to").toUpperCase();
-        if(!amount||amount<=0)return interaction.editReply("⚠️ Please enter a valid amount greater than 0.");
+        if(!amount||amount<=0)return interaction.editReply("Please enter a valid amount greater than 0.");
         const FIAT={USD:1,CAD:1.37,EUR:0.93,GBP:0.79};
         const fromNorm=from.trim().toUpperCase(),toNorm=to.trim().toUpperCase();
-        if(!FIAT[fromNorm]&&!GECKO[fromNorm])return interaction.editReply(`⚠️ **${fromNorm}** not recognised.`);
-        if(!FIAT[toNorm]&&!GECKO[toNorm])return interaction.editReply(`⚠️ **${toNorm}** not recognised.`);
+        if(!FIAT[fromNorm]&&!GECKO[fromNorm])return interaction.editReply(`**${fromNorm}** not recognised.`);
+        if(!FIAT[toNorm]&&!GECKO[toNorm])return interaction.editReply(`**${toNorm}** not recognised.`);
         let amtUSD;
         const _pr=t=>new Promise(r=>setTimeout(()=>r(null),t));
-        if(FIAT[fromNorm]){amtUSD=amount/FIAT[fromNorm];}else{const p=await Promise.race([getPrice(fromNorm),_pr(5000)]);if(!p)return interaction.editReply(`⚠️ Could not fetch price for **${fromNorm}**. Try again.`);amtUSD=amount*p;}
+        if(FIAT[fromNorm]){amtUSD=amount/FIAT[fromNorm];}else{const p=await Promise.race([getPrice(fromNorm),_pr(5000)]);if(!p)return interaction.editReply(`Could not fetch price for **${fromNorm}**. Try again.`);amtUSD=amount*p;}
         let result;
-        if(FIAT[toNorm]){result=amtUSD*FIAT[toNorm];}else{const p=await Promise.race([getPrice(toNorm),_pr(5000)]);if(!p)return interaction.editReply(`⚠️ Could not fetch price for **${toNorm}**. Try again.`);result=amtUSD/p;}
+        if(FIAT[toNorm]){result=amtUSD*FIAT[toNorm];}else{const p=await Promise.race([getPrice(toNorm),_pr(5000)]);if(!p)return interaction.editReply(`Could not fetch price for **${toNorm}**. Try again.`);result=amtUSD/p;}
         const fee=calcFee(amtUSD,"send"),toPrice=FIAT[toNorm]?(1/FIAT[toNorm]):(await Promise.race([getPrice(toNorm),_pr(3000)])||1),youGet=result-(fee/toPrice);
         const isToFiat=!!FIAT[toNorm],receiveUSD=isToFiat?youGet:youGet*toPrice;
         const youGetDisplay=isToFiat?fmtUSD(youGet):`${youGet.toFixed(6)} ${toNorm}`;
@@ -3779,12 +3839,12 @@ client.on(Events.InteractionCreate,async interaction=>{
         const tier=getTier(volume),nextTier=getNextTier(volume),needed=nextTier?Math.max(nextTier.min-volume,0):0;
         const last=realTrades.length>0?[...realTrades].sort((a,b)=>(b.completedAt||0)-(a.completedAt||0))[0]:null;
         
-        const tierStatus=nextTier?`${tier.emoji} **${tier.label}** \u2014 ${fmtUSD(needed)} away from ${nextTier.emoji} **${nextTier.label}**`:`${tier.emoji} **${tier.label}** \u2014 Maximum tier reached`;
+        const tierStatus=nextTier?`**${tier.label}** \u2014 ${fmtUSD(needed)} away from **${nextTier.label}**`:`**${tier.label}** \u2014 Maximum tier reached`;
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF)
           .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
           .setTitle(isSelf?"Your Stats":`${target.username}'s Stats`)
           .setThumbnail(target.displayAvatarURL({size:256}))
-          .setDescription(`${tier.emoji} **${tier.label}**${isVipVolume(volume)?" \u26A1":""} \u2014 ${nextTier?`${fmtUSD(Math.max(nextTier.min-volume,0))} to ${nextTier.emoji} ${nextTier.label}`:"Max tier reached"}\n\u200b`)
+          .setDescription(`**${tier.label}**${isVipVolume(volume)?"  \u00B7  VIP":""} \u2014 ${nextTier?`${fmtUSD(Math.max(nextTier.min-volume,0))} to ${nextTier.label}`:"Max tier reached"}\n\u200b`)
           .addFields(
             {name:"Exchanges",value:`**${realTrades.length}**`,inline:true},
             {name:"Volume",value:`**${volume>0?fmtUSD(volume):"$0.00"}**`,inline:true},
@@ -3794,7 +3854,7 @@ client.on(Events.InteractionCreate,async interaction=>{
             {name:"Last Exchange",value:last?.completedAt?`<t:${Math.floor(last.completedAt/1000)}:R>`:"\u2014",inline:true},
           )
           .setImage(IMG.BANNER)
-          .setFooter({text:`Konvert Exchange  ·  ${tier.emoji} ${tier.label}`})
+          .setFooter({text:`Konvert Exchange  ·  ${tier.label}`})
           .setTimestamp()]});
 
       }
@@ -3804,8 +3864,7 @@ client.on(Events.InteractionCreate,async interaction=>{
         const byUser=buildLeaderboardVolumes();
         if(!Object.keys(byUser).length)return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Client Leaderboard").setThumbnail(IMG.LOGO).setDescription("No completed trades on record yet.\n\nComplete a trade to appear here.\n\u200b").setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  ·  Leaderboard"}).setTimestamp()]});
         const ranked=Object.entries(byUser).sort((a,b)=>b[1]-a[1]).slice(0,10);
-        const medals=["🥇","🥈","🥉"];
-        const lines=ranked.map(([uid,vol],i)=>`${medals[i]||`**${i+1}.**`}  <@${uid}>  \u2014  **${fmtUSD(vol)}**`).join("\n");
+        const lines=ranked.map(([uid,vol],i)=>`**${i+1}.**  <@${uid}>  \u2014  **${fmtUSD(vol)}**`).join("\n");
         const totalVol=ranked.reduce((s,[,v])=>s+v,0);
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF)
           .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
@@ -3813,7 +3872,7 @@ client.on(Events.InteractionCreate,async interaction=>{
           .setThumbnail(IMG.LOGO)
           .setDescription(`Top ${ranked.length} clients by volume\n\u200b`)
           .addFields({name:"\u200b",value:lines,inline:false})
-          .setFooter({text:`Konvert Exchange  ·  ${fmtUSD(totalVol)} total volume  ·  Konvert Exchange`})
+          .setFooter({text:`Konvert Exchange  ·  ${fmtUSD(totalVol)} total volume`})
           .setTimestamp()]});
 
       }
@@ -3839,7 +3898,7 @@ client.on(Events.InteractionCreate,async interaction=>{
         state.cooldowns[userId]=Date.now();
         const pos=Array.from({length:25},(_,i)=>i).sort(()=>Math.random()-0.5);
         state.mineGames[userId]={diamonds:pos.slice(0,3),bombs:pos.slice(3,25),revealed:[],found:0,tries:0,over:false};
-        return interaction.reply({embeds:[base("Konvert Mine").setColor(0x7C4DFF).setDescription("Find all **3 Exchange Passes** hidden in the grid.\nHit a bomb and it's over. You have **3 clicks**.\n\u200b").addFields({name:"Passes Found",value:"**0 / 3**",inline:true},{name:"Clicks Left",value:"**3**",inline:true},{name:"Prize",value:"Free Exchange Pass",inline:true}).setFooter({text:"Konvert Mine  ·  Cooldown: 3 hours  ·  \uD83C\uDF9F = Pass  \uD83D\uDCA5 = Bomb"})],components:buildMineGrid(userId,state.mineGames[userId]),flags:64});
+        return interaction.reply({embeds:[base("Konvert Mine").setColor(0x7C4DFF).setDescription("Find all **3 Exchange Passes** hidden in the grid.\nHit a bomb and it's over. You have **3 clicks**.\n\u200b").addFields({name:"Passes Found",value:"**0 / 3**",inline:true},{name:"Clicks Left",value:"**3**",inline:true},{name:"Prize",value:"Free Exchange Pass",inline:true}).setFooter({text:"Konvert Mine  ·  Cooldown: 3 hours"})],components:buildMineGrid(userId,state.mineGames[userId]),flags:64});
       }
 
       if(cmd==="vouch"){
@@ -3855,17 +3914,17 @@ client.on(Events.InteractionCreate,async interaction=>{
         const vol=getUserVolume(clientUser.id);await applyTierRole(interaction.guild,clientUser.id,vol);
         const _allVouched=Object.values(_mem.tickets).filter(t=>t.userId===clientUser.id&&["vouched","completed"].includes(t.status)&&t.method!=="adjustment");
         await sendReceiptDM(clientUser.id,exchUser.id,{method,direction:null,coin:null,amountUSD:amount,feeUSD:calcFee(amount,"send")},_allVouched.length,vol);
-        return interaction.reply({content:`✅ Vouch recorded \u2014 <@${clientUser.id}> exchanged with <@${exchUser.id}>.`,flags:64});
+        return interaction.reply({content:`Vouch recorded \u2014 <@${clientUser.id}> exchanged with <@${exchUser.id}>.`,flags:64});
       }
 
-      if(cmd==="ticket"){const tickets=load("tickets"),found=Object.entries(tickets).find(([,t])=>t.userId===interaction.user.id&&t.status==="open");if(!found)return interaction.reply({content:"⚠️ You don't have an open ticket. Use **Exchange Now** to start one.",flags:64});const [channelId,t]=found,m=getMethod(t.method);return interaction.reply({embeds:[base("Your Open Ticket").setThumbnail(IMG.LOGO).addFields({name:"Channel",value:`<#${channelId}>`,inline:true},{name:"Method",value:`**${m?.label||t.method}**`,inline:true},{name:"Amount",value:`**${fmtUSD(t.amountUSD)}**`,inline:true},{name:"Coin",value:`**${t.coin||"--"}**`,inline:true},{name:"Direction",value:t.direction==="send"?"Fiat \u2192 Crypto":"Crypto \u2192 Fiat",inline:true},{name:"Opened",value:`<t:${Math.floor(t.createdAt/1000)}:R>`,inline:true}).setFooter({text:"Konvert Exchange  ·  All communication stays in your ticket"})],flags:64});}
+      if(cmd==="ticket"){const tickets=load("tickets"),found=Object.entries(tickets).find(([,t])=>t.userId===interaction.user.id&&t.status==="open");if(!found)return interaction.reply({content:"You don't have an open ticket. Use **Exchange Now** to start one.",flags:64});const [channelId,t]=found,d=dealOf(t),status=t.reported?"Under owner review":t.mmPending?"Waiting for you to confirm the middleman":t.completionPending?"Waiting for you to confirm completion":t.claimedBy?`Claimed by <@${t.claimedBy}>`:"Waiting for an exchanger";return interaction.reply({embeds:[base("Your Open Ticket").setDescription(`${dealHead(d)}\n\u200b`).addFields({name:"Channel",value:`<#${channelId}>`,inline:true},{name:"Status",value:status,inline:true},{name:"Opened",value:t.createdAt?`<t:${Math.floor(t.createdAt/1000)}:R>`:"Earlier",inline:true}).setFooter({text:"Konvert Exchange  ·  All communication stays in your ticket"})],flags:64});}
       if(cmd==="howto"){return interaction.reply({embeds:[base("How to Use Konvert").setThumbnail(IMG.LOGO).setDescription("New to Konvert? Here's how a trade works step by step.\n\u200b").addFields({name:"1.  Check Rates",value:"Use **Live Rates** or type `$BTC` / `$ETH` etc. in any channel to see the current price.",inline:false},{name:"2.  Calculate Fee",value:"Use **Calculate Fee** to estimate your cost. Fees range from **5% - 10%** depending on amount.",inline:false},{name:"3.  Open a Ticket",value:"Click **Exchange Now**, pick your payment method, fill in details, confirm. A private ticket opens instantly.",inline:false},{name:"4.  Agree on an MM",value:"A **middleman** is required on all trades. Agree on one with your exchanger inside your ticket.",inline:false},{name:"5.  Send & Confirm",value:"Staff confirms the deal. You send funds and share proof. Once confirmed, you receive your crypto or payment.",inline:false},{name:"Stay Safe",value:"Staff never DM you first. Anyone doing so is an impersonator. All communication stays in your ticket.",inline:false}).setFooter({text:"Konvert Exchange  ·  Questions? Ask in your ticket"})],flags:64});}
-      if(cmd==="ping"){const sent=Date.now();await interaction.deferReply({flags:64});return interaction.editReply({embeds:[base("Bot Status").setThumbnail(IMG.LOGO).setDescription("**All systems operational.** Konvert is online and ready.\n\u200b").addFields({name:"Status",value:"**Online**",inline:true},{name:"Latency",value:`**${Date.now()-sent}ms**`,inline:true},{name:"API Latency",value:`**${client.ws.ping}ms**`,inline:true}).setFooter({text:"Konvert Exchange  ·  Bot Status"})]});}
+      if(cmd==="ping"){const sent=Date.now();await interaction.deferReply({flags:64});return interaction.editReply({embeds:[base("Bot Status").setThumbnail(IMG.LOGO).setDescription("**All systems operational.** Konvert is online and ready.\n\u200b").addFields({name:"Status",value:"**Online**",inline:true},{name:"Latency",value:`**${Date.now()-sent}ms**`,inline:true},{name:"API Latency",value:client.ws.ping>=0?`**${client.ws.ping}ms**`:"**—**",inline:true}).setFooter({text:"Konvert Exchange  ·  Bot Status"})]});}
 
       if(cmd==="calc"){await interaction.deferReply({flags:64});if(!CONFIG.RATES_CHANNEL)return interaction.editReply("RATES_CHANNEL_ID not configured.");const ch=interaction.guild.channels.cache.get(CONFIG.RATES_CHANNEL);if(!ch)return interaction.editReply("Rates channel not found.");const embed=await buildRatesEmbed();if(ratesMsgId){const msg=await ch.messages.fetch(ratesMsgId).catch(()=>null);if(msg){await msg.edit({embeds:[embed]});}else{const s=await ch.send({embeds:[embed]});ratesMsgId=s.id;}}else{const s=await ch.send({embeds:[embed]});ratesMsgId=s.id;}return interaction.editReply("Rates posted.");}
       if(cmd==="setwallet"){const coin=interaction.options.getString("coin").toUpperCase(),addr=interaction.options.getString("address");const w=load("wallets");w[coin]=addr;save("wallets",w);log(interaction.guild,`WALLET: ${interaction.user.tag} set ${coin} to ${addr}`);return interaction.reply({content:`**${coin}** deposit address updated to \`${addr}\``,flags:64});}
-      if(cmd==="announce"){const message=interaction.options.getString("message"),channelId=interaction.options.getString("channel"),ping=interaction.options.getString("ping")||"none",ch=interaction.guild.channels.cache.get(channelId);if(!ch)return interaction.reply({content:"⚠️ Channel not found.",flags:64});const pingStr=ping==="everyone"?"@everyone ":ping==="here"?"@here ":"";await ch.send({content:pingStr||undefined,embeds:[base("Konvert Announcement").setThumbnail(IMG.LOGO).setDescription(message).setFooter({text:`Konvert Exchange  ·  Announced by ${interaction.user.tag}  ·  Konvert`})]});return interaction.reply({content:"✅ Announced.",flags:64});}
-      if(cmd==="blacklist"){const target=interaction.options.getUser("user"),reason=interaction.options.getString("reason")||"No reason given";if(isOwner(target.id))return interaction.reply({content:"⛔ Owners can't be blacklisted.",flags:64});const bl=load("blacklist");bl[target.id]={tag:target.tag,reason,by:interaction.user.tag,at:Date.now()};save("blacklist",bl);log(interaction.guild,`BLACKLIST: ${target.tag} -- ${reason}`);return interaction.reply({content:`**${target.tag}** blacklisted. Reason: ${reason}`,flags:64});}
+      if(cmd==="announce"){const message=interaction.options.getString("message"),channelId=interaction.options.getString("channel"),ping=interaction.options.getString("ping")||"none",ch=interaction.guild.channels.cache.get(channelId);if(!ch)return interaction.reply({content:"Channel not found.",flags:64});const pingStr=ping==="everyone"?"@everyone ":ping==="here"?"@here ":"";await ch.send({content:pingStr||undefined,embeds:[base("Konvert Announcement").setThumbnail(IMG.LOGO).setDescription(message).setFooter({text:`Konvert Exchange  ·  Announced by ${interaction.user.tag}  ·  Konvert`})]});return interaction.reply({content:"Announced.",flags:64});}
+      if(cmd==="blacklist"){const target=interaction.options.getUser("user"),reason=interaction.options.getString("reason")||"No reason given";if(isOwner(target.id))return interaction.reply({content:"Owners can't be blacklisted.",flags:64});const bl=load("blacklist");bl[target.id]={tag:target.tag,reason,by:interaction.user.tag,at:Date.now()};save("blacklist",bl);log(interaction.guild,`BLACKLIST: ${target.tag} -- ${reason}`);return interaction.reply({content:`**${target.tag}** blacklisted. Reason: ${reason}`,flags:64});}
       if(cmd==="unblacklist"){const target=interaction.options.getUser("user");const bl=load("blacklist");delete bl[target.id];save("blacklist",bl);return interaction.reply({content:`**${target.tag}** removed from blacklist.`,flags:64});}
       if(cmd==="closeticket"){
         const reason=interaction.options.getString("reason")||"Deal complete";
@@ -3873,7 +3932,7 @@ client.on(Events.InteractionCreate,async interaction=>{
         await doCloseTicket(interaction.channel,interaction.guild,interaction.user,reason);
         const isDealComplete=!reason||reason.toLowerCase().includes("complete")||reason.toLowerCase().includes("done");
         const isCancelled=reason.toLowerCase().includes("cancel");
-        const closeTitle=isCancelled?`${UI.I.x}  Deal Cancelled`:isDealComplete?`${UI.I.ok}  Deal Complete`:`${UI.I.lock}  Ticket Closed`;
+        const closeTitle=isCancelled?`Deal Cancelled`:isDealComplete?`Deal Complete`:`Ticket Closed`;
         await interaction.editReply({embeds:[new EmbedBuilder()
           .setColor(isCancelled?UI.mute:isDealComplete?UI.ok:UI.mute)
           .setAuthor(kAuthor("Ticket"))
@@ -3883,7 +3942,7 @@ Deleting in 10 seconds.`)
           .setTimestamp()]});
         setTimeout(()=>interaction.channel.delete().catch(()=>{}),10000);return;
       }
-      if(cmd==="cancelticket"){const reason=interaction.options.getString("reason")||"Cancelled by staff";await interaction.deferReply();const tickets=load("tickets");if(tickets[interaction.channel.id]){tickets[interaction.channel.id].status="cancelled";tickets[interaction.channel.id].cancelledAt=Date.now();save("tickets",tickets);const t=tickets[interaction.channel.id];try{const mem=await interaction.guild.members.fetch(t.userId).catch(()=>null);if(mem)await mem.send({embeds:[base("Ticket Cancelled").setDescription(`Your Konvert exchange ticket has been cancelled by staff.\n**Reason:** ${reason}\n\nIf this is a mistake, please open a new ticket.`).setFooter({text:"Konvert Exchange"})]}).catch(()=>{});}catch{}}await interaction.editReply({embeds:[kEmbed("Ticket","mute").setTitle(`${UI.I.x}  Deal Cancelled`).setDescription(`This exchange has been cancelled.${reason&&reason!=="Cancelled by staff"?`\n**Reason:** ${reason}`:""}\nDeleting in 10 seconds.`).setTimestamp()]});log(interaction.guild,`CANCELLED: #${interaction.channel.name} by ${interaction.user.tag}`);setTimeout(()=>interaction.channel.delete().catch(()=>{}),10000);return;}
+      if(cmd==="cancelticket"){const reason=interaction.options.getString("reason")||"Cancelled by staff";await interaction.deferReply();const tickets=load("tickets");if(tickets[interaction.channel.id]){tickets[interaction.channel.id].status="cancelled";tickets[interaction.channel.id].cancelledAt=Date.now();save("tickets",tickets);const t=tickets[interaction.channel.id];try{const mem=await interaction.guild.members.fetch(t.userId).catch(()=>null);if(mem)await mem.send({embeds:[base("Ticket Cancelled").setDescription(`Your Konvert exchange ticket has been cancelled by staff.\n**Reason:** ${reason}\n\nIf this is a mistake, please open a new ticket.`).setFooter({text:"Konvert Exchange"})]}).catch(()=>{});}catch{}}await interaction.editReply({embeds:[kEmbed("Ticket","mute").setTitle(`Deal Cancelled`).setDescription(`This exchange has been cancelled.${reason&&reason!=="Cancelled by staff"?`\n**Reason:** ${reason}`:""}\nDeleting in 10 seconds.`).setTimestamp()]});log(interaction.guild,`CANCELLED: #${interaction.channel.name} by ${interaction.user.tag}`);setTimeout(()=>interaction.channel.delete().catch(()=>{}),10000);return;}
 
       if(cmd==="openticket"){
         await interaction.deferReply();
@@ -3893,7 +3952,7 @@ Deleting in 10 seconds.`)
         return;
       }
 
-      if(cmd==="note"){const text=interaction.options.getString("text");await interaction.channel.send({embeds:[new EmbedBuilder().setColor(0xFFB347).setAuthor({name:`Staff Note · ${interaction.user.tag}`,iconURL:interaction.user.displayAvatarURL()}).setDescription(text).setTimestamp().setFooter({text:"Konvert Exchange  ·  Staff Note"})]});return interaction.reply({content:"✅ Note added.",flags:64});}
+      if(cmd==="note"){const text=interaction.options.getString("text");await interaction.channel.send({embeds:[new EmbedBuilder().setColor(0xFFB347).setAuthor({name:`Staff Note · ${interaction.user.tag}`,iconURL:interaction.user.displayAvatarURL()}).setDescription(text).setTimestamp().setFooter({text:"Konvert Exchange  ·  Staff Note"})]});return interaction.reply({content:"Note added.",flags:64});}
       if(cmd==="volume"){const all=Object.values(load("tickets")),done=all.filter(t=>t.status==="vouched"&&t.amountUSD&&t.method!=="adjustment"),totalVol=done.reduce((s,t)=>s+(t.amountUSD||0),0),totalFees=done.reduce((s,t)=>s+(t.feeUSD||0),0),open=all.filter(t=>t.status==="open").length,today=done.filter(t=>t.completedAt&&Date.now()-t.completedAt<86400000),methods={};done.forEach(t=>{if(t.method)methods[t.method]=(methods[t.method]||0)+1;});const topMethod=Object.entries(methods).sort((a,b)=>b[1]-a[1])[0];return interaction.reply({embeds:[base("Konvert Volume Stats").setThumbnail(IMG.LOGO).addFields({name:"Total Exchanges",value:`**${done.length}** exchanges`,inline:true},{name:"Total Volume",value:`**${fmtUSD(totalVol)}**`,inline:true},{name:"Total Fees",value:`**${fmtUSD(totalFees)}**`,inline:true},{name:"Open Tickets",value:`**${open}**`,inline:true},{name:"Today's Volume",value:`**${fmtUSD(today.reduce((s,t)=>s+(t.amountUSD||0),0))}** (${today.length} trades)`,inline:true},{name:"Top Method",value:topMethod?`**${getMethod(topMethod[0])?.label||topMethod[0]}** (${topMethod[1]})`:"—",inline:true}).setFooter({text:"Konvert Exchange  ·  Server Volume Statistics"})],flags:64});}
 
       if(cmd==="snapshot"){
@@ -3918,61 +3977,61 @@ Deleting in 10 seconds.`)
         ).setFooter({text:"Konvert Exchange  ·  Owner Snapshot"}).setTimestamp()]});
       }
 
-      if(cmd==="exchangerboard"){const done=Object.values(load("tickets")).filter(t=>t.status==="vouched"&&t.completedBy&&t.method!=="adjustment"),byEx={};done.forEach(t=>{if(!byEx[t.completedBy])byEx[t.completedBy]={trades:0,volume:0};byEx[t.completedBy].trades+=1;byEx[t.completedBy].volume+=(t.amountUSD||0);});const ranked=Object.entries(byEx).sort((a,b)=>b[1].trades-a[1].trades).slice(0,10);if(!ranked.length)return interaction.reply({content:"⚠️ No completed exchanges yet.",flags:64});const medals=["\uD83E\uDD47","\uD83E\uDD48","\uD83E\uDD49"];const lines=ranked.map(([uid,d],i)=>`${medals[i]||`**${i+1}.**`}  <@${uid}>  ·  **${d.trades}** exchange${d.trades!==1?"s":""}  \u00b7  ${fmtUSD(d.volume)}`).join("\n");return interaction.reply({embeds:[base("Exchanger Leaderboard").setThumbnail(IMG.LOGO).setDescription("Top Konvert exchangers ranked by completed trades.\n\u200b").addFields({name:"Rankings",value:lines,inline:false}).setFooter({text:"Konvert Exchange  ·  Exchanger Leaderboard"}).setTimestamp()],flags:64});}
+      if(cmd==="exchangerboard"){const done=Object.values(load("tickets")).filter(t=>t.status==="vouched"&&t.completedBy&&t.method!=="adjustment"),byEx={};done.forEach(t=>{if(!byEx[t.completedBy])byEx[t.completedBy]={trades:0,volume:0};byEx[t.completedBy].trades+=1;byEx[t.completedBy].volume+=(t.amountUSD||0);});const ranked=Object.entries(byEx).sort((a,b)=>b[1].trades-a[1].trades).slice(0,10);if(!ranked.length)return interaction.reply({content:"No completed exchanges yet.",flags:64});const lines=ranked.map(([uid,d],i)=>`**${i+1}.**  <@${uid}>  ·  **${d.trades}** exchange${d.trades!==1?"s":""}  \u00b7  ${fmtUSD(d.volume)}`).join("\n");return interaction.reply({embeds:[base("Exchanger Leaderboard").setThumbnail(IMG.LOGO).setDescription("Top Konvert exchangers ranked by completed trades.\n\u200b").addFields({name:"Rankings",value:lines,inline:false}).setFooter({text:"Konvert Exchange  ·  Exchanger Leaderboard"}).setTimestamp()],flags:64});}
 
       if(cmd==="thankclient"){
         const target=interaction.options.getUser("client"),amount=interaction.options.getNumber("amount")||null;
         const vol=getUserVolume(target.id),tradeCount=getUserDealCount(target.id),tier=getTier(vol),feePreview=amount?`Your rate on your next **${fmtUSD(amount)}** trade: **${feeRate(amount,"send")}%**`:null;
-        try{await target.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Thank You for Trading with Us").setThumbnail(IMG.LOGO).setDescription(`Hey <@${target.id}> — your trade has been completed successfully.\n\nWe appreciate your trust in **Konvert Exchange**. Every deal matters to us and we look forward to trading with you again.\n\u200b`).addFields({name:"Your Tier",value:`${tier.emoji} **${tier.label}**`,inline:true},{name:"Trades With Us",value:`**${tradeCount}** exchanges`,inline:true},{name:"Total Exchanged",value:vol>0?`**${fmtUSD(vol)}**`:"—",inline:true},{name:"Come Back Anytime",value:"Head to our exchange channel anytime.\n**Fast  \u00b7  Safe  \u00b7  Simple  \u00b7  Private**",inline:false},...(feePreview?[{name:"Your Rate Preview",value:feePreview,inline:false}]:[])).setImage(IMG.DEAL).setFooter({text:"Konvert Exchange  ·  Thank you for your business"}).setTimestamp()]});return interaction.reply({content:`✅ Thank-you card sent to **${target.tag}**.`,flags:64});}
-        catch{return interaction.reply({content:`⚠️ Could not DM **${target.tag}**. They may have DMs disabled.`,flags:64});}
+        try{await target.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Thank You for Trading with Us").setThumbnail(IMG.LOGO).setDescription(`Hey <@${target.id}> — your trade has been completed successfully.\n\nWe appreciate your trust in **Konvert Exchange**. Every deal matters to us and we look forward to trading with you again.\n\u200b`).addFields({name:"Your Tier",value:`**${tier.label}**`,inline:true},{name:"Trades With Us",value:`**${tradeCount}** exchanges`,inline:true},{name:"Total Exchanged",value:vol>0?`**${fmtUSD(vol)}**`:"—",inline:true},{name:"Come Back Anytime",value:"Head to our exchange channel anytime.\n**Fast  \u00b7  Safe  \u00b7  Simple  \u00b7  Private**",inline:false},...(feePreview?[{name:"Your Rate Preview",value:feePreview,inline:false}]:[])).setImage(IMG.DEAL).setFooter({text:"Konvert Exchange  ·  Thank you for your business"}).setTimestamp()]});return interaction.reply({content:`Thank-you card sent to **${target.tag}**.`,flags:64});}
+        catch{return interaction.reply({content:`Could not DM **${target.tag}**. They may have DMs disabled.`,flags:64});}
       }
 
-      if(cmd==="passes"){const holders=Object.entries(state.passes).filter(([,v])=>v>0);if(!holders.length)return interaction.reply({content:"⚠️ No exchange passes have been won yet.",flags:64});return interaction.reply({embeds:[base("Exchange Pass Holders").setThumbnail(IMG.LOGO).setDescription(holders.map(([uid,c])=>`<@${uid}> — **${c}** pass${c!==1?"es":""}`).join("\n")).setFooter({text:"Konvert Mine  ·  Won by finding all 3 diamonds"})],flags:64});}
-      if(cmd==="postinfo"){const embed=kEmbed().setTitle(`${UI.I.info}  Info`).setThumbnail(IMG.LOGO).setDescription("Konvert is a **fast and reliable exchange community** for converting value across platforms.\n\nEasily exchange **PayPal, Crypto, Cash App, Zelle, E-Transfer**, and other payment methods — both directions — with **low fees** and **quick processing**.\n\nOur agents are available **24/7**, backed by a friendly, active community and real-time crypto price updates to keep you informed.\n\u200b").addFields({name:`${UI.I.money}  Fees`,value:"5% – 10%  ·  Tiered by amount  ·  Min $5",inline:true},{name:"⚡  Speed",value:"Usually under 10 minutes",inline:true},{name:"🤝  Support",value:"24/7 agents always available",inline:true}).setImage(IMG.BANNER).setFooter(kFoot("Fast  ·  Safe  ·  Simple  ·  Private"));await interaction.channel.send({embeds:[embed]});return interaction.reply({content:"✅ Info embed posted.",flags:64});}
+      if(cmd==="passes"){const holders=Object.entries(state.passes).filter(([,v])=>v>0);if(!holders.length)return interaction.reply({content:"No exchange passes have been won yet.",flags:64});return interaction.reply({embeds:[base("Exchange Pass Holders").setThumbnail(IMG.LOGO).setDescription(holders.map(([uid,c])=>`<@${uid}> — **${c}** pass${c!==1?"es":""}`).join("\n")).setFooter({text:"Konvert Mine  ·  Won by finding all 3 diamonds"})],flags:64});}
+      if(cmd==="postinfo"){const embed=kEmbed().setTitle(`Info`).setThumbnail(IMG.LOGO).setDescription("Konvert is a **fast and reliable exchange community** for converting value across platforms.\n\nEasily exchange **PayPal, Crypto, Cash App, Zelle, E-Transfer**, and other payment methods — both directions — with **low fees** and **quick processing**.\n\nOur agents are available **24/7**, backed by a friendly, active community and real-time crypto price updates to keep you informed.\n\u200b").addFields({name:`Fees`,value:"5% – 10%  ·  Tiered by amount\nMinimum exchange: more than $5",inline:true},{name:"Speed",value:"Usually under 10 minutes",inline:true},{name:"Support",value:"24/7 agents always available",inline:true}).setImage(IMG.BANNER).setFooter(kFoot("Fast  ·  Safe  ·  Simple  ·  Private"));await interaction.channel.send({embeds:[embed]});return interaction.reply({content:"Info embed posted.",flags:64});}
       if(cmd==="posttos"){
         const embed=kEmbed()
-          .setTitle("📜  Terms of Service")
+          .setTitle("Terms of Service")
           .setThumbnail(IMG.LOGO)
           .setDescription("By using Konvert's services you agree to the following. These terms protect everyone involved and keep trades running smoothly.\n\u200b")
           .addFields(
-            {name:"🌍  1 · Use of Service",
+            {name:"1 · Use of Service",
              value:"Konvert is available to anyone who can legally exchange cryptocurrency in their jurisdiction. We reserve the right to refuse or cancel any transaction at any time without explanation.",
              inline:false},
-            {name:"💳  2 · Payments from Balance Only",
+            {name:"2 · Payments from Balance Only",
              value:"All payments must be sent from your own balance. Card payments may incur an additional fee or be rejected entirely at our discretion. If your payment method is flagged or declined, the trade will not proceed.",
              inline:false},
-            {name:"💸  3 · Fees",
-             value:"Every trade has a service fee shown to you before you confirm. The minimum fee is $5. Once both parties confirm a trade is complete, the fee is non-refundable.",
+            {name:"3 · Fees",
+             value:"Every trade has a service fee shown to you before you confirm. The minimum fee is $5, so every trade has to be for more than $5. Once both parties confirm a trade is complete, the fee is non-refundable.",
              inline:false},
-            {name:"🚫  4 · Right to Refuse",
+            {name:"4 · Right to Refuse",
              value:"We reserve the right to reject any transaction we reasonably suspect involves money laundering, fraudulent activity, or suspicious alternate accounts. No explanation will be provided and no liability is assumed.",
              inline:false},
-            {name:"🛡️  5 · Exchanger Limits",
+            {name:"5 · Exchanger Limits",
              value:"Each exchanger has a go-first limit displayed on their profile. If you proceed without reading or respecting that limit, Konvert is not liable for any resulting loss or dispute.",
              inline:false},
-            {name:"⚠️  6 · Off-Platform Activity",
+            {name:"6 · Off-Platform Activity",
              value:"Any business conducted outside of Konvert's official ticket system is entirely at your own risk. We are not responsible for losses, scams, or disputes arising from off-platform arrangements.",
              inline:false},
-            {name:"🎭  7 · Impersonators",
+            {name:"7 · Impersonators",
              value:"Our staff and owners will never DM you first. If you engage with or send funds to someone impersonating Konvert, we are not liable for any loss. Always verify inside your official ticket.",
              inline:false},
-            {name:"✅  8 · Payment Compliance",
+            {name:"8 · Payment Compliance",
              value:"If you do not send from your balance or fail to use the exact payment method requested by your exchanger, we are not liable for lost or delayed funds. Always follow your exchanger's instructions precisely.",
              inline:false},
-            {name:"🚩  9 · Disputes",
+            {name:"9 · Disputes",
              value:"If something goes wrong, flag it inside your ticket immediately. Abusing the dispute process or filing false claims will result in a permanent ban.",
              inline:false},
           )
           .setImage(IMG.BANNER)
           .setFooter(kFoot("Using our service means you accept these terms"));
         await interaction.channel.send({embeds:[embed]});
-        return interaction.reply({content:"✅ Terms of Service embed posted.",flags:64});
+        return interaction.reply({content:"Terms of Service embed posted.",flags:64});
       }
-      if(cmd==="postlinks"){const embed=kEmbed().setTitle(`${UI.I.link}  Official Links for Konvert`).setThumbnail(IMG.LOGO).setDescription("All official Konvert social media. Follow us for updates, announcements, and giveaways.\n\u200b").addFields({name:"\uD835\uDD4F  Twitter / X",value:"[**@KonvertNow**](https://x.com/konvertnow)",inline:true},{name:"\uD83D\uDCF8  Instagram",value:"[**@KonvertNow**](https://www.instagram.com/konvertnow/)",inline:true},{name:`${UI.I.warn}  Stay Safe`,value:"Only interact with accounts listed here. Any other account claiming to be Konvert is an impersonator.",inline:false}).setImage(IMG.BANNER).setFooter(kFoot("Official links  ·  Follow us for updates"));await interaction.channel.send({embeds:[embed]});return interaction.reply({content:"✅ Official links embed posted.",flags:64});}
+      if(cmd==="postlinks"){const embed=kEmbed().setTitle(`Official Links for Konvert`).setThumbnail(IMG.LOGO).setDescription("All official Konvert social media. Follow us for updates, announcements, and giveaways.\n\u200b").addFields({name:"Twitter / X",value:"[**@KonvertNow**](https://x.com/konvertnow)",inline:true},{name:"Instagram",value:"[**@KonvertNow**](https://www.instagram.com/konvertnow/)",inline:true},{name:`Stay Safe`,value:"Only interact with accounts listed here. Any other account claiming to be Konvert is an impersonator.",inline:false}).setImage(IMG.BANNER).setFooter(kFoot("Official links  ·  Follow us for updates"));await interaction.channel.send({embeds:[embed]});return interaction.reply({content:"Official links embed posted.",flags:64});}
 
       if(cmd==="adjuststats"){
         const target=interaction.options.getUser("user"),amount=interaction.options.getNumber("amount"),reason=interaction.options.getString("reason")||"Staff adjustment";
-        if(amount===0)return interaction.reply({content:"⚠️ Amount cannot be 0.",flags:64});
+        if(amount===0)return interaction.reply({content:"Amount cannot be 0.",flags:64});
         const tickets=Object.keys(_mem.tickets||{}).length>0?{..._mem.tickets}:load("tickets");
         const key=`adj_${target.id}_${Date.now()}`;
         tickets[key]={userId:target.id,userTag:target.tag||target.username,method:amount>0?"adjustment_deal":"adjustment",direction:null,coin:null,amountUSD:amount,feeUSD:0,walletInfo:"staff",notes:reason,status:"vouched",completedBy:interaction.user.id,completedAt:Date.now(),createdAt:Date.now()};
@@ -3981,13 +4040,13 @@ Deleting in 10 seconds.`)
         const newVol=getUserVolume(target.id);await applyTierRole(interaction.guild,target.id,newVol);
         const tier=getTier(newVol);
         log(interaction.guild,`ADJUSTSTATS: ${interaction.user.tag} adjusted ${target.tag||target.username} by ${amount>0?"+":""}${fmtUSD(amount)} | New total: ${fmtUSD(newVol)} | Reason: ${reason}`);
-        return interaction.reply({embeds:[base("Stats Adjusted").setThumbnail(target.displayAvatarURL({size:128})).setDescription(`Stats updated for <@${target.id}>.\n\u200b`).addFields({name:"Adjustment",value:`**${amount>0?"+":""}${fmtUSD(amount)}**`,inline:true},{name:"New Volume",value:`**${fmtUSD(newVol)}**`,inline:true},{name:"New Tier",value:`${tier.emoji} **${tier.label}**`,inline:true},{name:"Reason",value:reason,inline:false}).setFooter({text:`Konvert Exchange  ·  Adjusted by ${interaction.user.tag}  ·  Konvert`})],flags:64});
+        return interaction.reply({embeds:[base("Stats Adjusted").setThumbnail(target.displayAvatarURL({size:128})).setDescription(`Stats updated for <@${target.id}>.\n\u200b`).addFields({name:"Adjustment",value:`**${amount>0?"+":""}${fmtUSD(amount)}**`,inline:true},{name:"New Volume",value:`**${fmtUSD(newVol)}**`,inline:true},{name:"New Tier",value:`**${tier.label}**`,inline:true},{name:"Reason",value:reason,inline:false}).setFooter({text:`Konvert Exchange  ·  Adjusted by ${interaction.user.tag}  ·  Konvert`})],flags:64});
       }
 
       if(cmd==="suspended"){
         const entries=Object.entries(_mem.suspensions||{});
         const holds=Object.entries(_mem.holds||{}).filter(([id])=>!isSuspended(id)&&isOnHold(id));
-        if(!entries.length&&!holds.length)return interaction.reply({content:"⚠️ No exchangers are currently suspended or on hold.",flags:64});
+        if(!entries.length&&!holds.length)return interaction.reply({content:"No exchangers are currently suspended or on hold.",flags:64});
         const _row=(id,s,tag)=>`<@${id}> \u00B7 ${tag}client <@${s.clientId}> \u00B7 ${s.amountUSD?fmtUSD(s.amountUSD):"—"} \u00B7 <t:${Math.floor((s.at||Date.now())/1000)}:R>\n> ${String(s.reason||"").slice(0,160)}\n> https://discord.com/channels/${interaction.guild.id}/${s.channelId}`;
         const lines=[...entries.map(([id,s])=>_row(id,s,"")),...holds.map(([id,h])=>_row(id,h,`on hold (${h.level}) \u00B7 `))].join("\n\n");
         return interaction.reply({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange  ·  Suspended Exchangers",iconURL:IMG.LOGO}).setDescription(lines.slice(0,4000)).setFooter({text:`Konvert Exchange  ·  ${entries.length} suspended  ·  ${holds.length} on hold  ·  /reinstate to lift`}).setTimestamp()],flags:64});
@@ -3999,7 +4058,7 @@ Deleting in 10 seconds.`)
         if(!isSuspended(target.id)&&!isOnHold(target.id))return interaction.editReply({content:`**${target.username}** isn't suspended or on hold.`});
         const _r=await liftRestrictions(interaction.guild,target.id);
         log(interaction.guild,`REINSTATE: ${interaction.user.tag} reinstated ${target.tag||target.username}`);
-        return interaction.editReply({content:`✅ Reinstated <@${target.id}>.`+(_r.suspended?` Typing access restored in ${_r.restored} open ticket${_r.restored!==1?"s":""}.`:" New claims are open again.")});
+        return interaction.editReply({content:`Reinstated <@${target.id}>.`+(_r.suspended?` Typing access restored in ${_r.restored} open ticket${_r.restored!==1?"s":""}.`:" New claims are open again.")});
       }
 
       if(cmd==="clearexchanger"){
@@ -4012,7 +4071,7 @@ Deleting in 10 seconds.`)
       if(cmd==="profittest"){
         await interaction.deferReply({flags:64});
         const _pt=await notifyProfitOwners(profitTestEmbed(),{test:true});
-        const _lines=[..._pt.sent.map(id=>`✅ <@${id}> received it`),..._pt.failed.map(f=>`❌ <@${f.id}> — ${f.reason}`)];
+        const _lines=[..._pt.sent.map(id=>`<@${id}> received it`),..._pt.failed.map(f=>`<@${f.id}> — ${f.reason}`)];
         const _tip=_pt.failed.length?"\n\nThat person can't be DMed. Fix: Server Settings → Privacy → allow direct messages from server members. Until then their real notices are posted in the log channel.":"";
         return interaction.editReply({content:`Test notice sent to ${PROFIT_DM_IDS.length} recipient${PROFIT_DM_IDS.length===1?"":"s"}:\n${_lines.join("\n")}${_tip}`,allowedMentions:{parse:[]}});
       }
@@ -4021,7 +4080,7 @@ Deleting in 10 seconds.`)
         await interaction.deferReply({flags:64});
         const fromUser=interaction.options.getUser("from");
         const toUser=interaction.options.getUser("to");
-        if(fromUser.id===toUser.id)return interaction.editReply({content:"⚠️ Cannot transfer to the same account."});
+        if(fromUser.id===toUser.id)return interaction.editReply({content:"Cannot transfer to the same account."});
         const tickets=Object.keys(_mem.tickets||{}).length>0?{..._mem.tickets}:load("tickets");
         // Move every ticket owned by fromUser to toUser
         let moved=0;
@@ -4061,7 +4120,7 @@ Deleting in 10 seconds.`)
           {name:"From",value:`<@${fromUser.id}>\nNow **$0.00** \u00b7 0 trades`,inline:true},
           {name:"To",value:`<@${toUser.id}>\nNow **${fmtUSD(newVol)}** \u00b7 ${getUserDealCount(toUser.id)} trades`,inline:true},
           {name:"Moved",value:`**${moved}** trades \u00b7 **${fmtUSD(movedVol)}** volume`,inline:false},
-          {name:"New Tier",value:`${newTier.emoji} **${newTier.label}**`,inline:true},
+          {name:"New Tier",value:`**${newTier.label}**`,inline:true},
         ).setFooter({text:"Konvert Exchange  ·  Stats transferred"}).setTimestamp()]});
       }
 
@@ -4076,7 +4135,7 @@ Deleting in 10 seconds.`)
         delete state.volumeAdj[target.id];
         try{const member=await interaction.guild.members.fetch(target.id).catch(()=>null);if(member){for(const t of TIERS){if(t.role&&member.roles.cache.has(t.role))await member.roles.remove(t.role).catch(()=>{});}}}catch{}
         await applyTierRole(interaction.guild,target.id,0);
-        return interaction.reply({content:`✅ All stats wiped for **${target.tag||target.username}**. Removed **${removed}** entries, cleared adjustments, reset tier to New Client.`,flags:64});
+        return interaction.reply({content:`All stats wiped for **${target.tag||target.username}**. Removed **${removed}** entries, cleared adjustments, reset tier to New Client.`,flags:64});
       }
 
       if(cmd==="clearleaderboard"){
@@ -4095,13 +4154,13 @@ Deleting in 10 seconds.`)
           }
         }catch(e){console.log("[clearLB]",e.message);}
         updateStatChannel(interaction.guild).catch(()=>{});
-        return interaction.editReply(`✅ Cleared ${_before} entries. All tier roles removed.`);
+        return interaction.editReply(`Cleared ${_before} entries. All tier roles removed.`);
       }
 
       if(cmd==="wipestats"){
         await interaction.deferReply({flags:64});
         const target=interaction.options.getUser("user"),confirm=interaction.options.getString("confirm");
-        if(confirm!=="CONFIRM"){return interaction.editReply({content:'\u274C You must type **CONFIRM** exactly in the confirm field to wipe a user. This cannot be undone.',flags:64});}
+        if(confirm!=="CONFIRM"){return interaction.editReply({content:'You must type **CONFIRM** exactly in the confirm field to wipe a user. This cannot be undone.',flags:64});}
         const tickets=Object.keys(_mem.tickets||{}).length>0?{..._mem.tickets}:load("tickets");
         let removed=0;
         for(const [key,t] of Object.entries(tickets)){if(t.userId===target.id){delete tickets[key];removed++;}}
@@ -4114,15 +4173,15 @@ Deleting in 10 seconds.`)
         delete state.volumeAdj[target.id];
         updateStatChannel(interaction.guild).catch(()=>{});
         log(interaction.guild,`WIPESTATS: ${interaction.user.tag} wiped ALL data for ${target.tag||target.username} \u2014 ${removed} entries removed`);
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange  ·  Admin",iconURL:IMG.LOGO}).setTitle("User Wiped").setThumbnail(target.displayAvatarURL({size:128})).setDescription(`All data for <@${target.id}> has been permanently removed.\n\u200b`).addFields({name:"Entries Removed",value:`**${removed}**`,inline:true},{name:"Referral Points",value:"**Cleared**",inline:true},{name:"Tier Roles",value:"**Removed**",inline:true}).setFooter({text:`Konvert Exchange  ·  Wiped by ${interaction.user.tag}  ·  Konvert Exchange`}).setTimestamp()]});
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange  ·  Admin",iconURL:IMG.LOGO}).setTitle("User Wiped").setThumbnail(target.displayAvatarURL({size:128})).setDescription(`All data for <@${target.id}> has been permanently removed.\n\u200b`).addFields({name:"Entries Removed",value:`**${removed}**`,inline:true},{name:"Referral Points",value:"**Cleared**",inline:true},{name:"Tier Roles",value:"**Removed**",inline:true}).setFooter({text:`Konvert Exchange  ·  Wiped by ${interaction.user.tag}`}).setTimestamp()]});
       }
 
       if(cmd==="complete"){
         await interaction.deferReply();
         const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
         const ticket=tickets[interaction.channel.id];
-        if(!ticket)return interaction.editReply({content:"⚠️ No ticket found for this channel.",flags:64});
-        if(ticket.status==="vouched"||ticket.status==="closed")return interaction.editReply({content:"⚠️ This exchange is already complete.",flags:64});
+        if(!ticket)return interaction.editReply({content:"No ticket found for this channel.",flags:64});
+        if(ticket.status==="vouched"||ticket.status==="closed")return interaction.editReply({content:"This exchange is already complete.",flags:64});
         const exchanger=interaction.options.getUser("exchanger");
         const amountOverride=interaction.options.getNumber("amount");
         if(amountOverride&&amountOverride>0)ticket.amountUSD=amountOverride;
@@ -4135,14 +4194,14 @@ Deleting in 10 seconds.`)
         await interaction.deferReply({flags:64});
         const tickets=Object.keys(_mem.tickets||{}).length?_mem.tickets:load("tickets");
         const ticket=Object.entries(tickets).find(([id,t])=>id===interaction.channel.id&&t.status==="open");
-        if(!ticket){return interaction.editReply({content:"⚠️ This command can only be used inside your open ticket channel.",flags:64});}
+        if(!ticket){return interaction.editReply({content:"This command can only be used inside your open ticket channel.",flags:64});}
         const [channelId,t]=ticket;
         try{await interaction.channel.permissionOverwrites.edit(interaction.user.id,{SendMessages:false});if(CONFIG.EXCHANGER_ROLE)await interaction.channel.permissionOverwrites.edit(CONFIG.EXCHANGER_ROLE,{SendMessages:false}).catch(()=>{});}catch{}
-        await interaction.channel.send({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange  ·  Dispute Filed",iconURL:IMG.LOGO}).setTitle("\u26A0\uFE0F  Dispute Filed").setDescription(`<@${interaction.user.id}> has flagged an issue with this trade.\n\nThis ticket has been **locked** pending staff review. Only owners can unlock it.\n\u200b`).addFields({name:"Filed By",value:`<@${interaction.user.id}>`,inline:true},{name:"Time",value:`<t:${Math.floor(Date.now()/1000)}:F>`,inline:true},{name:"Status",value:"\uD83D\uDD34 **Under Review**",inline:true}).setFooter({text:"Konvert Exchange  ·  Do not close this ticket until resolved"}).setTimestamp()]});
+        await interaction.channel.send({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange  ·  Dispute Filed",iconURL:IMG.LOGO}).setTitle("Dispute Filed").setDescription(`<@${interaction.user.id}> has flagged an issue with this trade.\n\nThis ticket has been **locked** pending staff review. Only owners can unlock it.\n\u200b`).addFields({name:"Filed By",value:`<@${interaction.user.id}>`,inline:true},{name:"Time",value:`<t:${Math.floor(Date.now()/1000)}:F>`,inline:true},{name:"Status",value:"**Under Review**",inline:true}).setFooter({text:"Konvert Exchange  ·  Do not close this ticket until resolved"}).setTimestamp()]});
         tickets[channelId].status="dispute";_mem.tickets=tickets;save("tickets",tickets);
-        for(const oid of CONFIG.OWNER_IDS){try{const owner=await client.users.fetch(oid);await owner.send({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange  ·  Dispute Alert",iconURL:IMG.LOGO}).setTitle("\u26A0\uFE0F  Dispute Filed").setDescription(`A client has filed a dispute in a ticket.\n\u200b`).addFields({name:"Client",value:`<@${interaction.user.id}>`,inline:true},{name:"Channel",value:`<#${channelId}>`,inline:true},{name:"Method",value:getMethod(t.method)?.label||t.method||"\u2014",inline:true},{name:"Amount",value:fmtUSD(t.amountUSD||0),inline:true}).setFooter({text:"Konvert Exchange  ·  Review immediately"}).setTimestamp()]});}catch{}}
+        for(const oid of CONFIG.OWNER_IDS){try{const owner=await client.users.fetch(oid);await owner.send({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange  ·  Dispute Alert",iconURL:IMG.LOGO}).setTitle("Dispute Filed").setDescription(`${dealHead(dealOf(t))}\nA client has filed a dispute in a ticket.`).addFields({name:"Client",value:`<@${interaction.user.id}>`,inline:true},{name:"Channel",value:`<#${channelId}>`,inline:true}).setFooter({text:"Konvert Exchange  ·  Review immediately"}).setTimestamp()]});}catch{}}
         log(interaction.guild,`DISPUTE: ${interaction.user.tag} filed dispute in #${interaction.channel.name}`);
-        return interaction.editReply({content:"✅ Your dispute has been filed. Staff have been notified and will review shortly. The ticket has been locked.",flags:64});
+        return interaction.editReply({content:"Your dispute has been filed. Staff have been notified and will review shortly. The ticket has been locked.",flags:64});
       }
 
       if(cmd==="broadcast"){
@@ -4152,11 +4211,11 @@ Deleting in 10 seconds.`)
         const cutoff=Date.now()-(days*24*60*60*1000);
         const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
         const uniqueIds=[...new Set(allT.filter(t=>["vouched","completed"].includes(t.status)&&(t.completedAt||0)>=cutoff&&t.method!=="adjustment").map(t=>t.userId))];
-        if(!uniqueIds.length)return interaction.editReply({content:`⚠️ No clients found who traded in the last ${days} days.`});
-        await interaction.editReply({content:`\uD83D\uDCE8 Sending to **${uniqueIds.length}** clients...`});
+        if(!uniqueIds.length)return interaction.editReply({content:`No clients found who traded in the last ${days} days.`});
+        await interaction.editReply({content:`Sending to **${uniqueIds.length}** clients...`});
         let sent=0,failed=0;
         for(const uid of uniqueIds){try{const u=await client.users.fetch(uid);await u.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Message from Konvert").setDescription(msg).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  ·  Thank you for trading with us"}).setTimestamp()]});sent++;await new Promise(r=>setTimeout(r,800));}catch{failed++;}}
-        return interaction.followUp({content:`✅ Broadcast complete \u2014 **${sent}** sent, **${failed}** failed (DMs closed).`,flags:64});
+        return interaction.followUp({content:`Broadcast complete \u2014 **${sent}** sent, **${failed}** failed (DMs closed).`,flags:64});
       }
 
       if(cmd==="mytrades"){
@@ -4177,42 +4236,44 @@ Deleting in 10 seconds.`)
         const topM=Object.entries(methods).sort((a,b)=>b[1]-a[1])[0];
         const avg=done.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0)/done.length;
         const refPts=0;
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  My Trade History",iconURL:IMG.LOGO}).setTitle("My Trades").setThumbnail(interaction.user.displayAvatarURL({size:256})).setDescription(`${tier.emoji} **${tier.label}**${vip?" \u26A1 VIP":""}${nextT?`  \u00b7  ${fmtUSD(Math.max(nextT.min-volume,0))} to ${nextT.emoji} ${nextT.label}`:"  \u00b7  Max tier reached"}\n\u200b`).addFields({name:"\u2705  Total Trades",value:`**${done.length}**`,inline:true},{name:"\uD83D\uDCB0  Total Volume",value:`**${fmtUSD(volume)}**`,inline:true},{name:"\uD83D\uDCCA  Avg Trade",value:`**${fmtUSD(avg)}**`,inline:true},{name:"\uD83C\uDFC6  Top Method",value:topM?`**${getMethod(topM[0])?.label||topM[0]}** (${topM[1]}x)`:"\u2014",inline:true},{name:"\u26A1  VIP Discount",value:vip?"Active \u2014 0.75% off":"Not yet ($7,000+ required)",inline:true},{name:"\uD83D\uDCCB  Last 5 Trades",value:last5,inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  ·  Use /stats for full tier details"}).setTimestamp()]});
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  My Trade History",iconURL:IMG.LOGO}).setTitle("My Trades").setThumbnail(interaction.user.displayAvatarURL({size:256})).setDescription(`**${tier.label}**${vip?"  \u00B7  VIP":""}${nextT?`  \u00b7  ${fmtUSD(Math.max(nextT.min-volume,0))} to ${nextT.label}`:"  \u00b7  Max tier reached"}\n\u200b`).addFields({name:"Total Trades",value:`**${done.length}**`,inline:true},{name:"Total Volume",value:`**${fmtUSD(volume)}**`,inline:true},{name:"Avg Trade",value:`**${fmtUSD(avg)}**`,inline:true},{name:"Top Method",value:topM?`**${getMethod(topM[0])?.label||topM[0]}** (${topM[1]}x)`:"\u2014",inline:true},{name:"VIP Discount",value:vip?"Active \u2014 0.75% off":"Not yet ($7,000+ required)",inline:true},{name:"Last 5 Trades",value:last5,inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  ·  Use /stats for full tier details"}).setTimestamp()]});
       }
 
       if(cmd==="estimate"){
         await interaction.deferReply({flags:64});
         const amount=interaction.options.getNumber("amount"),methodRaw=interaction.options.getString("method").toLowerCase().trim(),coinRaw=interaction.options.getString("coin").toUpperCase().trim(),direction=interaction.options.getString("direction");
         const m=METHODS.find(x=>x.label.toLowerCase().includes(methodRaw)||x.value.includes(methodRaw));
-        if(!m)return interaction.editReply({content:`⚠️ Method **${methodRaw}** not recognised. Try: PayPal, Interac, Zelle, Cash App etc.`});
-        if(!COINS.includes(coinRaw))return interaction.editReply({content:`⚠️ Coin **${coinRaw}** not supported. Try BTC, ETH, SOL, LTC etc.`});
+        if(!m)return interaction.editReply({content:`Method **${methodRaw}** not recognised. Try: PayPal, Interac, Zelle, Cash App etc.`});
+        if(!COINS.includes(coinRaw))return interaction.editReply({content:`Coin **${coinRaw}** not supported. Try BTC, ETH, SOL, LTC etc.`});
+        if(!aboveMinimum(amount))return interaction.editReply({content:minAmountText()});
         const vol=getUserVolume(interaction.user.id),vip=isVipVolume(vol);
-        const fee=calcFee(amount,direction,vip),rate=feeRate(amount,direction,vip),receive=amount-fee;
+        const fee=calcFee(amount,direction,vip),rate=feeRate(amount,direction,vip);
         const coinPrice=await getPrice(coinRaw),tier=getTier(vol);
-        let coinLine="";
-        if(coinPrice){coinLine=direction==="send"?`**~${(receive/coinPrice).toFixed(6)} ${coinRaw}**  (\u2248${fmtUSD(receive)})`:`**${fmtUSD(receive)}** via ${m.label}`;}
-        const sendStr=direction==="send"?`**${fmtUSD(amount)}** via **${m.label}**`:`**${coinRaw}** worth **${fmtUSD(amount)}**`;
-        const receiveStr=coinLine||(direction==="send"?`~${fmtUSD(receive)} worth of ${coinRaw}`:`${fmtUSD(receive)} via ${m.label}`);
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Trade Estimate",iconURL:IMG.LOGO}).setTitle(`${m.label}  \u2194  ${coinRaw}  \u2014  Estimate`).setThumbnail(COIN_LOGO[coinRaw]||IMG.LOGO).setDescription(`Live quote for your proposed trade. Open a ticket to proceed.\n\u200b`).addFields({name:"\uD83D\uDCE4  You Send",value:sendStr,inline:true},{name:"\uD83D\uDCE5  You Receive",value:receiveStr,inline:true},{name:"\u200b",value:"\u200b",inline:true},{name:"\uD83D\uDCB8  Fee",value:`**${rate}%**${vip?" \u26A1 VIP":""} \u2014 ${fmtUSD(fee)}`,inline:true},{name:`\uD83D\uDCC8  ${coinRaw} Price`,value:coinPrice?`**${fmtUSD(coinPrice)}**`:"Unavailable",inline:true},{name:`${tier.emoji}  Your Tier`,value:`**${tier.label}**`,inline:true}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  ·  Estimate only  ·  Final rate confirmed in your ticket"}).setTimestamp()]});
+        const d=dealOf({method:m.value,direction,coin:coinRaw,amountUSD:amount,feeUSD:fee});
+        const coinAmt=(direction==="send"&&coinPrice&&d.net!=null)?(d.net/coinPrice).toFixed(6):null;
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Quote",iconURL:IMG.LOGO}).setTitle("Trade Estimate")
+          .setDescription(`${dealHead(d,vip?["VIP rate"]:[])}\n${kLedger(dealRows(d,{rate,coinAmt}))}Live quote for your proposed trade. Open a ticket to proceed.`)
+          .addFields({name:`${coinRaw} Price`,value:coinPrice?`**${fmtUSD(coinPrice)}**`:"Unavailable",inline:true},{name:"Your Tier",value:`**${tier.label}**`,inline:true})
+          .setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  ·  Estimate only  ·  Final rate confirmed in your ticket"}).setTimestamp()]});
       }
 
       if(cmd==="tierlist"){
-        const lines=TIERS.map(t=>`${t.emoji} **${t.label}** \u2014 $${t.min.toLocaleString()}+${t.min>=7000?" \u26A1 VIP":""}`).join("\n");
-        return interaction.reply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Client Tiers",iconURL:IMG.LOGO}).setTitle("Client Tier Ranks").setDescription("Earn your tier by exchanging volume on Konvert. Tiers are auto-assigned after every trade. All tiers from \u26A1 Godly Client and above receive a **0.75% VIP fee discount**.\n\u200b").addFields({name:"All Tiers",value:lines,inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  ·  Tiers auto-assigned after every trade"}).setTimestamp()],ephemeral:false});
+        const lines=TIERS.map(t=>`**${t.label}** \u2014 $${t.min.toLocaleString()}+${t.min>=7000?"  \u00B7  VIP":""}`).join("\n");
+        return interaction.reply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Client Tiers",iconURL:IMG.LOGO}).setTitle("Client Tier Ranks").setDescription("Earn your tier by exchanging volume on Konvert. Tiers are auto-assigned after every trade. All tiers from Godly Client and above receive a **0.75% VIP fee discount**.\n\u200b").addFields({name:"All Tiers",value:lines,inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  ·  Tiers auto-assigned after every trade"}).setTimestamp()],ephemeral:false});
       }
 
       if(cmd==="claimtag"){
         await interaction.deferReply({flags:64});
         const userId=interaction.user.id;
         const member=await interaction.guild.members.fetch({user:userId,force:true}).catch(()=>null);
-        if(!member)return interaction.editReply({content:"⚠️ Could not fetch your profile. Try again.",flags:64});
+        if(!member)return interaction.editReply({content:"Could not fetch your profile. Try again.",flags:64});
         const hasRole=member.roles.cache.has(KONV_TAG_ROLE);
         const pg=(member.user&&member.user.primaryGuild)||null;
         const hasPG=!!(pg&&pg.identityEnabled&&pg.identityGuildId===CONFIG.GUILD_ID);
-        if(!hasRole&&!hasPG)return interaction.editReply({content:"⚠️ KONV tag not detected on your profile. Make sure Konvert is set as your active clan in Discord profile settings, then try again.",flags:64});
+        if(!hasRole&&!hasPG)return interaction.editReply({content:"KONV tag not detected on your profile. Make sure Konvert is set as your active clan in Discord profile settings, then try again.",flags:64});
         state.konvTagUsers.add(userId);
         if(!hasRole)await member.roles.add(KONV_TAG_ROLE).catch(()=>{});
-        return interaction.editReply({content:"✅ Tag verified and perk activated. You now get 0.2% off every exchange automatically.",flags:64});
+        return interaction.editReply({content:"Tag verified and perk activated. You now get 0.2% off every exchange automatically.",flags:64});
       }
 
       if(cmd==="removetag"){
@@ -4220,7 +4281,7 @@ Deleting in 10 seconds.`)
         const target=interaction.options.getUser("user")||interaction.user;
         state.konvTagUsers.delete(target.id);
         try{const m=await interaction.guild.members.fetch(target.id).catch(()=>null);if(m&&m.roles.cache.has(KONV_TAG_ROLE))await m.roles.remove(KONV_TAG_ROLE).catch(()=>{});}catch{}
-        return interaction.editReply({content:`✅ KONV tag perk removed from **${target.username}**.`,flags:64});
+        return interaction.editReply({content:`KONV tag perk removed from **${target.username}**.`,flags:64});
       }
 
       if(cmd==="postleaderboard"){
@@ -4230,7 +4291,7 @@ Deleting in 10 seconds.`)
         state.liveLbMessageId=msg.id;
         state.liveLbChannelId=interaction.channel.id;
         saveLiveLb();
-        return interaction.editReply({content:`✅ Live leaderboard posted. It will auto-update after every exchange and every 10 minutes.`,flags:64});
+        return interaction.editReply({content:`Live leaderboard posted. It will auto-update after every exchange and every 10 minutes.`,flags:64});
       }
 
       if(cmd==="giveaway"){
@@ -4244,9 +4305,9 @@ Deleting in 10 seconds.`)
           const msLeft=endsAt-Date.now();
           const minsLeft=Math.max(0,Math.floor(msLeft/60000));
           const timeStr=minsLeft>=120?`${Math.floor(minsLeft/1440)}d ${Math.floor((minsLeft%1440)/60)}h left`:minsLeft>=60?`${Math.floor(minsLeft/60)}h ${minsLeft%60}m left`:`${minsLeft}m left`;
-          return new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Giveaway",iconURL:IMG.LOGO}).setTitle("\uD83C\uDF89 KONV Tag Giveaway!").setDescription(`**${prize}**\n\u200b`).addFields({name:"How to Enter",value:"Must have the **KONV** clan tag. Click below.",inline:false},{name:"\uD83C\uDFC6 Winners",value:`**${nw}**`,inline:true},{name:"\u23F1 Time Left",value:timeStr,inline:true},{name:"\uD83D\uDC65 Entries",value:`**${entries}** ${entries===1?"person":"people"} entered`,inline:true}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  ·  KONV tag required"}).setTimestamp();
+          return new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Giveaway",iconURL:IMG.LOGO}).setTitle("KONV Tag Giveaway!").setDescription(`**${prize}**\n\u200b`).addFields({name:"How to Enter",value:"Must have the **KONV** clan tag. Click below.",inline:false},{name:"Winners",value:`**${nw}**`,inline:true},{name:"Time Left",value:timeStr,inline:true},{name:"Entries",value:`**${entries}** ${entries===1?"person":"people"} entered`,inline:true}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  ·  KONV tag required"}).setTimestamp();
         };
-        const gr=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_giveaway_enter").setLabel("\uD83C\uDF89 Enter Giveaway").setStyle(ButtonStyle.Success));
+        const gr=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId("btn_giveaway_enter").setLabel("Enter Giveaway").setStyle(ButtonStyle.Success));
         const gm=await interaction.channel.send({embeds:[_buildGiveawayEmbed(0)],components:[gr]});
         state.activeGiveaway={messageId:gm.id,channelId:interaction.channel.id,prize,endsAt,numWinners:nw,entrants:new Set(),buildEmbed:_buildGiveawayEmbed};
         // Update embed every 60 seconds with live time + entry count
@@ -4258,7 +4319,7 @@ Deleting in 10 seconds.`)
             if(_gm)await _gm.edit({embeds:[_buildGiveawayEmbed(state.activeGiveaway.entrants.size)]}).catch(()=>{});
           }catch{}
         },60000);
-        await interaction.editReply({content:`✅ Giveaway started! Ends <t:${endsTs}:R>`,flags:64});
+        await interaction.editReply({content:`Giveaway started! Ends <t:${endsTs}:R>`,flags:64});
         setTimeout(async()=>{if(!state.activeGiveaway||state.activeGiveaway.messageId!==gm.id)return;clearInterval(_gInterval);await endGiveaway(interaction.guild,interaction.channel);},minutes*60000);
         return;
       }
@@ -4266,9 +4327,9 @@ Deleting in 10 seconds.`)
       if(cmd==="migrateserver"){
         await interaction.deferReply({flags:64});
         const vchId=CONFIG.VOUCH_CHANNEL;
-        if(!vchId)return interaction.editReply({content:"⚠️ VOUCH_CHANNEL_ID env var not set.",flags:64});
+        if(!vchId)return interaction.editReply({content:"VOUCH_CHANNEL_ID env var not set.",flags:64});
         const vch=interaction.guild.channels.cache.get(vchId)||await interaction.guild.channels.fetch(vchId).catch(()=>null);
-        if(!vch)return interaction.editReply({content:"⚠️ Vouch channel not found. Check VOUCH_CHANNEL_ID.",flags:64});
+        if(!vch)return interaction.editReply({content:"Vouch channel not found. Check VOUCH_CHANNEL_ID.",flags:64});
         const allT=Object.values(load("tickets")).filter(t=>["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0&&t.userId).sort((a,b)=>(a.completedAt||0)-(b.completedAt||0));
         await interaction.editReply({content:`Starting migration — re-posting **${allT.length}** vouches. This may take a few minutes...`,flags:64});
         let posted=0;
@@ -4283,11 +4344,11 @@ Deleting in 10 seconds.`)
             if(posted%10===0)await new Promise(r=>setTimeout(r,2000)); // rate limit safety
           }catch{}
         }
-        return interaction.editReply({content:`✅ Migration complete — **${posted}/${allT.length}** vouches re-posted to <#${vchId}>.`,flags:64});
+        return interaction.editReply({content:`Migration complete — **${posted}/${allT.length}** vouches re-posted to <#${vchId}>.`,flags:64});
       }
 
       if(cmd==="giveawaystats"){
-        if(!state.activeGiveaway)return interaction.reply({content:"⚠️ No active giveaway running.",flags:64});
+        if(!state.activeGiveaway)return interaction.reply({content:"No active giveaway running.",flags:64});
         const {prize,endsAt,numWinners,entrants}=state.activeGiveaway;
         const arr=[...entrants];
         const endsTs=Math.floor(endsAt/1000);
@@ -4296,10 +4357,10 @@ Deleting in 10 seconds.`)
       }
 
       if(cmd==="giveawayreroll"){
-        if(!state.lastGiveaway)return interaction.reply({content:"⚠️ No recent giveaway to reroll.",flags:64});
+        if(!state.lastGiveaway)return interaction.reply({content:"No recent giveaway to reroll.",flags:64});
         await interaction.deferReply({flags:64});
         const {prize,entrants:pool,channelId:gChId}=state.lastGiveaway;
-        if(!pool||!pool.length)return interaction.editReply({content:"⚠️ No entrants in the last giveaway.",flags:64});
+        if(!pool||!pool.length)return interaction.editReply({content:"No entrants in the last giveaway.",flags:64});
         const nReroll=Math.min(interaction.options.getInteger("winners")||1,pool.length);
         const winners=[];
         const remaining=[...pool];
@@ -4310,15 +4371,15 @@ Deleting in 10 seconds.`)
         const wMentions=winners.map(id=>`<@${id}>`).join(", ");
         const gCh=interaction.guild.channels.cache.get(gChId)||interaction.channel;
         await gCh.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Giveaway Reroll",iconURL:IMG.LOGO}).setTitle("Giveaway Rerolled").setDescription(`**Prize:** ${prize}\n\n**New Winner${winners.length>1?"s":""}:** ${wMentions}\n\nCongratulations! Staff will reach out shortly.`).setFooter({text:"Konvert Exchange  ·  Giveaway Reroll"}).setTimestamp()]}).catch(()=>{});
-        return interaction.editReply({content:`✅ Rerolled — ${wMentions}`,flags:64});
+        return interaction.editReply({content:`Rerolled — ${wMentions}`,flags:64});
       }
 
       if(cmd==="giveawayend"){
-        if(!state.activeGiveaway)return interaction.reply({content:"⚠️ No active giveaway.",flags:64});
+        if(!state.activeGiveaway)return interaction.reply({content:"No active giveaway.",flags:64});
         await interaction.deferReply({flags:64});
         const gc=interaction.guild.channels.cache.get(state.activeGiveaway.channelId)||interaction.channel;
         await endGiveaway(interaction.guild,gc);
-        return interaction.editReply({content:"✅ Giveaway ended.",flags:64});
+        return interaction.editReply({content:"Giveaway ended.",flags:64});
       }
 
       if(["jbtc","jeth","jsol","jltc","jusdtbnb"].includes(cmd)){
@@ -4326,7 +4387,7 @@ Deleting in 10 seconds.`)
         const coinMap={jbtc:"BTC",jeth:"ETH",jsol:"SOL",jltc:"LTC",jusdtbnb:"USDT-BNB"};
         const coinName=coinMap[cmd];
         state.personalWallets[coinName]=addr;
-        return interaction.reply({content:`✅ **${coinName}** address set to \`${addr}\`\nUsers type **$j${coinName.toLowerCase().replace("-bnb","bnb")}** in chat to see it.`,flags:64});
+        return interaction.reply({content:`**${coinName}** address set to \`${addr}\`\nUsers type **$j${coinName.toLowerCase().replace("-bnb","bnb")}** in chat to see it.`,flags:64});
       }
 
       if(cmd==="setfeemode"){
@@ -4345,7 +4406,7 @@ Deleting in 10 seconds.`)
             {name:"Crypto \u2192 Fiat",value:"9% \u2192 8% \u2192 7% \u2192 6% \u2192 5%",inline:true},
             {name:"Min Fee",value:"**$5** on all trades",inline:true},
           )
-          .setFooter({text:`Konvert Exchange  ·  Set by ${interaction.user.tag}  ·  Konvert Exchange`})
+          .setFooter({text:`Konvert Exchange  ·  Set by ${interaction.user.tag}`})
           .setTimestamp()],flags:64});
       }
 
@@ -4391,7 +4452,7 @@ Deleting in 10 seconds.`)
         const topM=Object.entries(methods).sort((a,b)=>b[1]-a[1])[0];
         const refBy=null;const refPts=0;
         const bl=load("blacklist");const isBlacklisted=!!bl[target.id];
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(isBlacklisted?0xef4444:0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Client Info",iconURL:IMG.LOGO}).setTitle(target.username).setThumbnail(target.displayAvatarURL({size:256})).setDescription(`${tier.emoji} **${tier.label}**${vip?" \u26A1 VIP":""}${isBlacklisted?" \uD83D\uDEAB BLACKLISTED":""}\n\u200b`).addFields({name:"Volume",value:`**${fmtUSD(volume)}**`,inline:true},{name:"Exchanges",value:`**${done.length}**`,inline:true},{name:"Avg Deal",value:`**${avg>0?fmtUSD(avg):"\u2014"}**`,inline:true},{name:"Open Tickets",value:`**${open.length}**`,inline:true},{name:"Top Method",value:topM?`**${getMethod(topM[0])?.label||topM[0]}**`:"\u2014",inline:true},{name:"Last Exchange",value:last?.completedAt?`<t:${Math.floor(last.completedAt/1000)}:R>`:"\u2014",inline:true},{name:"Referred By",value:refBy?`<@${refBy}>`:"No referral",inline:true},{name:"Referral Points",value:`**${refPts} pts**`,inline:true},{name:"VIP",value:vip?"Active \u2014 0.75% off":"Not yet",inline:true}).setFooter({text:"Konvert Exchange"}).setTimestamp()]});
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(isBlacklisted?0xef4444:0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Client Info",iconURL:IMG.LOGO}).setTitle(target.username).setThumbnail(target.displayAvatarURL({size:256})).setDescription(`**${tier.label}**${vip?"  \u00B7  VIP":""}${isBlacklisted?"  \u00B7  BLACKLISTED":""}\n\u200b`).addFields({name:"Volume",value:`**${fmtUSD(volume)}**`,inline:true},{name:"Exchanges",value:`**${done.length}**`,inline:true},{name:"Avg Deal",value:`**${avg>0?fmtUSD(avg):"\u2014"}**`,inline:true},{name:"Open Tickets",value:`**${open.length}**`,inline:true},{name:"Top Method",value:topM?`**${getMethod(topM[0])?.label||topM[0]}**`:"\u2014",inline:true},{name:"Last Exchange",value:last?.completedAt?`<t:${Math.floor(last.completedAt/1000)}:R>`:"\u2014",inline:true},{name:"Referred By",value:refBy?`<@${refBy}>`:"No referral",inline:true},{name:"Referral Points",value:`**${refPts} pts**`,inline:true},{name:"VIP",value:vip?"Active \u2014 0.75% off":"Not yet",inline:true}).setFooter({text:"Konvert Exchange"}).setTimestamp()]});
       }
 
       if(cmd==="receipt"){
@@ -4403,16 +4464,17 @@ Deleting in 10 seconds.`)
         const userId=query.replace(/[<@!>]/g,"");
         const userMatches=allT.filter(([,t])=>t.userId===userId&&["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0).sort((a,b)=>(b[1].completedAt||0)-(a[1].completedAt||0)).slice(0,5);
         // Search by channel ID (ticket key)
-        const idMatches=allT.filter(([id,t])=>id===query&&["vouched","completed"].includes(t.status));
+        const _kv=query.match(/^kv-?(\d{4,8})$/i);
+        const idMatches=allT.filter(([id,t])=>(id===query||(_kv&&id.slice(-_kv[1].length)===_kv[1]))&&["vouched","completed"].includes(t.status));
         matches=[...idMatches,...userMatches];
-        if(!matches.length)return interaction.editReply({content:`⚠️ No completed exchanges found for \`${query}\`.`,flags:64});
+        if(!matches.length)return interaction.editReply({content:`No completed exchanges found for \`${query}\`.`,flags:64});
         const fields=matches.slice(0,5).map(([id,t],i)=>{
           const m=getMethod(t.method);
           const tradeId=`KV-${id.slice(-6).toUpperCase()}`;
-          const dirStr=t.direction&&t.coin&&t.method?(t.direction==="send"?`${t.coin} \u2192 ${m?.label||t.method}`:`${m?.label||t.method} \u2192 ${t.coin}`):m?.label||t.method;
+          const dirStr=dealOf({...t,feeUSD:ticketFee(t)}).hero;
           return {
             name:`${i+1}. ${tradeId}  \u00b7  ${fmtUSD(t.amountUSD||0)}`,
-            value:`**Client:** <@${t.userId}>\n**Exchanger:** ${t.completedBy?`<@${t.completedBy}>`:"—"}\n**Direction:** ${dirStr||"—"}\n**Completed:** ${t.completedAt?`<t:${Math.floor(t.completedAt/1000)}:F>`:"—"}\n**Fee:** ${fmtUSD(t.feeUSD||0)}`,
+            value:`**Client:** <@${t.userId}>\n**Exchanger:** ${t.completedBy?`<@${t.completedBy}>`:"—"}\n**Deal:** ${dirStr}\n**Completed:** ${t.completedAt?`<t:${Math.floor(t.completedAt/1000)}:F>`:"—"}\n**Fee:** ${fmtUSD(t.feeUSD||0)}`,
             inline:false
           };
         });
@@ -4428,7 +4490,7 @@ Deleting in 10 seconds.`)
 
       if(cmd==="grantowner"){
         const confirm=interaction.options.getString("confirm");
-        if(confirm!=="CONFIRM")return interaction.reply({content:"⚠️ Type **CONFIRM** exactly to grant owner access.",flags:64});
+        if(confirm!=="CONFIRM")return interaction.reply({content:"Type **CONFIRM** exactly to grant owner access.",flags:64});
         const target=interaction.options.getUser("user");
         if(CONFIG.OWNER_IDS.includes(target.id))return interaction.reply({content:`**${target.username}** is already an owner.`,flags:64});
         CONFIG.OWNER_IDS.push(target.id);
@@ -4459,7 +4521,7 @@ This is active immediately and persists until revoked or the bot restarts.
         if(!CONFIG.OWNER_IDS.includes(target.id))return interaction.reply({content:`**${target.username}** is not a bot owner.`,flags:64});
         if(PERMANENT_OWNER_IDS.includes(target.id))return interaction.reply({content:`**${target.username}** is a permanent owner and can't be removed.`,flags:64});
         CONFIG.OWNER_IDS=CONFIG.OWNER_IDS.filter(id=>id!==target.id);
-        return interaction.reply({content:`✅ Owner access removed from **${target.username}**.`,flags:64});
+        return interaction.reply({content:`Owner access removed from **${target.username}**.`,flags:64});
       }
 
       if(cmd==="listowners"){
@@ -4477,12 +4539,12 @@ This is active immediately and persists until revoked or the bot restarts.
         const expiresAt=Date.now()+(days*24*60*60*1000);
         const expiresTs=Math.floor(expiresAt/1000);
         state.dualPromo={active:true,feePercent:fee,expiresAt,createdAt:Date.now()};
-        return interaction.reply({content:`✅ Dual-server promo set!\n**Fee:** ${fee}%\n**Expires:** <t:${expiresTs}:R> (<t:${expiresTs}:D>)\n**Requirement:** Must be in both Konvert servers.\n\nUsers in both servers will automatically get the ${fee}% rate when opening a ticket.`,flags:64});
+        return interaction.reply({content:`Dual-server promo set!\n**Fee:** ${fee}%\n**Expires:** <t:${expiresTs}:R> (<t:${expiresTs}:D>)\n**Requirement:** Must be in both Konvert servers.\n\nUsers in both servers will automatically get the ${fee}% rate when opening a ticket.`,flags:64});
       }
 
       if(cmd==="dualpromooff"){
         state.dualPromo=null;
-        return interaction.reply({content:"✅ Dual-server promo turned off.",flags:64});
+        return interaction.reply({content:"Dual-server promo turned off.",flags:64});
       }
 
       if(cmd==="promostatus"){
@@ -4490,15 +4552,15 @@ This is active immediately and persists until revoked or the bot restarts.
         // Dual promo
         if(state.dualPromo&&state.dualPromo.active&&Date.now()<state.dualPromo.expiresAt){
           const daysLeft=Math.ceil((state.dualPromo.expiresAt-Date.now())/(86400000));
-          lines.push(`\uD83D\uDC9C **Dual-Server Promo** — ${state.dualPromo.feePercent}% fee\nExpires <t:${Math.floor(state.dualPromo.expiresAt/1000)}:R> · **${daysLeft} day${daysLeft!==1?"s":""} left**`);
+          lines.push(`**Dual-Server Promo** — ${state.dualPromo.feePercent}% fee\nExpires <t:${Math.floor(state.dualPromo.expiresAt/1000)}:R> · **${daysLeft} day${daysLeft!==1?"s":""} left**`);
         } else if(state.dualPromo){
-          lines.push("\uD83D\uDC9C **Dual-Server Promo** — Expired");
+          lines.push("**Dual-Server Promo** — Expired");
         }
         // Regular promos
         const activePromos=Object.entries(state.promos||{}).filter(([,p])=>p.active&&(!p.expiresAt||Date.now()<p.expiresAt));
         for(const [code,p] of activePromos){
           const daysLeft=p.expiresAt?Math.ceil((p.expiresAt-Date.now())/86400000):null;
-          lines.push(`\uD83C\uDFF7\uFE0F **${code}** — ${p.discount}% off · ${p.uses}/${p.maxUses||"\u221E"} uses${daysLeft?` · **${daysLeft}d left**`:" · Never expires"}`);
+          lines.push(`**${code}** — ${p.discount}% off · ${p.uses}/${p.maxUses||"\u221E"} uses${daysLeft?` · **${daysLeft}d left**`:" · Never expires"}`);
         }
         if(!lines.length)lines.push("No active promos.");
         return interaction.reply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Promo Status",iconURL:IMG.LOGO}).setTitle("Active Promotions").setDescription(lines.join("\n\n")).setTimestamp()],flags:64});
@@ -4509,14 +4571,14 @@ This is active immediately and persists until revoked or the bot restarts.
         const discount=interaction.options.getNumber("discount");
         const maxUses=interaction.options.getInteger("maxuses")||null;
         const hours=interaction.options.getInteger("hours")||null;
-        if(discount<=0||discount>=100)return interaction.reply({content:"⚠️ Discount must be between 1 and 99%.",flags:64});
+        if(discount<=0||discount>=100)return interaction.reply({content:"Discount must be between 1 and 99%.",flags:64});
         if(state.promos[code]&&state.promos[code].active)return interaction.reply({content:`Promo code **${code.toUpperCase()}** already exists and is active. End it first with \`/endpromo\`.`,flags:64});
         const expiresAt=hours?Date.now()+(hours*3600000):null;
         state.promos[code]={discount,maxUses,uses:0,usedBy:[],active:true,expiresAt,createdBy:interaction.user.id,createdAt:Date.now()};
         savePromos();
         return interaction.reply({embeds:[new EmbedBuilder()
           .setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Promo Created",iconURL:IMG.LOGO})
-          .setTitle("\uD83C\uDF89  Promo Code Created")
+          .setTitle("Promo Code Created")
           .setDescription(`Clients can now type **${code.toUpperCase()}** inside their ticket to apply the discount.\n\u200b`)
           .addFields(
             {name:"Code",value:`\`${code.toUpperCase()}\``,inline:true},
@@ -4524,13 +4586,13 @@ This is active immediately and persists until revoked or the bot restarts.
             {name:"Max Uses",value:maxUses?`**${maxUses}**`:"Unlimited",inline:true},
             {name:"Expires",value:expiresAt?`<t:${Math.floor(expiresAt/1000)}:R>`:"Never",inline:true},
           )
-          .setFooter({text:`Konvert Exchange  ·  Created by ${interaction.user.tag}  ·  Konvert Exchange`})
+          .setFooter({text:`Konvert Exchange  ·  Created by ${interaction.user.tag}`})
           .setTimestamp()],flags:64});
       }
 
       if(cmd==="endpromo"){
         const code=interaction.options.getString("code").trim().toLowerCase();
-        if(!state.promos[code])return interaction.reply({content:`⚠️ No promo found with code **${code.toUpperCase()}**.`,flags:64});
+        if(!state.promos[code])return interaction.reply({content:`No promo found with code **${code.toUpperCase()}**.`,flags:64});
         state.promos[code].active=false;
         savePromos();
         const p=state.promos[code];
@@ -4544,7 +4606,7 @@ This is active immediately and persists until revoked or the bot restarts.
 
       if(cmd==="editpromo"){
         const code=interaction.options.getString("code").trim().toLowerCase();
-        if(!state.promos[code])return interaction.reply({content:`⚠️ No promo found with code **${code.toUpperCase()}**. Use \`/listpromos\` to see all codes.`,flags:64});
+        if(!state.promos[code])return interaction.reply({content:`No promo found with code **${code.toUpperCase()}**. Use \`/listpromos\` to see all codes.`,flags:64});
         const p=state.promos[code];
         const changes=[];
 
@@ -4565,7 +4627,7 @@ This is active immediately and persists until revoked or the bot restarts.
         const target=state.promos[targetCode];
 
         if(newDiscount!==null&&newDiscount!==undefined){
-          if(newDiscount<=0||newDiscount>=100)return interaction.reply({content:"⚠️ Discount must be between 1 and 99.",flags:64});
+          if(newDiscount<=0||newDiscount>=100)return interaction.reply({content:"Discount must be between 1 and 99.",flags:64});
           target.discount=newDiscount;
           changes.push(`Discount set to **${newDiscount}% off the fee**`);
         }
@@ -4580,10 +4642,10 @@ This is active immediately and persists until revoked or the bot restarts.
         }
         if(newStatus){
           target.active=newStatus==="active";
-          changes.push(`Status set to **${newStatus==="active"?"Active \uD83D\uDFE2":"Paused \uD83D\uDD34"}**`);
+          changes.push(`Status set to **${newStatus==="active"?"Active":"Paused"}**`);
         }
 
-        if(!changes.length)return interaction.reply({content:"⚠️ No changes provided. Specify at least one field to update.",flags:64});
+        if(!changes.length)return interaction.reply({content:"No changes provided. Specify at least one field to update.",flags:64});
         savePromos();
 
         return interaction.reply({embeds:[new EmbedBuilder()
@@ -4596,16 +4658,16 @@ This is active immediately and persists until revoked or the bot restarts.
             {name:"Uses",value:target.maxUses?`${target.uses}/${target.maxUses}`:`${target.uses} (unlimited)`,inline:true},
             {name:"Expires",value:target.expiresAt?`<t:${Math.floor(target.expiresAt/1000)}:R>`:"Never",inline:true},
           )
-          .setFooter({text:`Konvert Exchange  ·  Edited by ${interaction.user.tag}  ·  Konvert Exchange`})
+          .setFooter({text:`Konvert Exchange  ·  Edited by ${interaction.user.tag}`})
           .setTimestamp()],flags:64});
       }
 
       if(cmd==="listpromos"){
 
         const promos=Object.entries(state.promos||{});
-        if(!promos.length)return interaction.reply({content:"⚠️ No promo codes created yet. Use `/createpromo` to make one.",flags:64});
+        if(!promos.length)return interaction.reply({content:"No promo codes created yet. Use `/createpromo` to make one.",flags:64});
         const lines=promos.map(([code,p])=>{
-          const status=!p.active?"\uD83D\uDD34 Expired":p.expiresAt&&Date.now()>p.expiresAt?"\uD83D\uDD34 Expired":"\uD83D\uDFE2 Active";
+          const status=!p.active?"Expired":p.expiresAt&&Date.now()>p.expiresAt?"Expired":"Active";
           const uses=p.maxUses?`${p.uses}/${p.maxUses}`:p.uses;
           return `${status} \`${code.toUpperCase()}\`  \u2014  **${p.discount}% off**  \u00b7  ${uses} uses${p.expiresAt?`  \u00b7  expires <t:${Math.floor(p.expiresAt/1000)}:R>`:""}`;
         }).join("\n");
@@ -4638,7 +4700,7 @@ This is active immediately and persists until revoked or the bot restarts.
         const above=pos>1?ranked[pos-2]:null;
         const below=pos<total?ranked[pos]:null;
         const pct=Math.round((1-((pos-1)/total))*100);
-        const medals=pos===1?"\uD83E\uDD47":pos===2?"\uD83E\uDD48":pos===3?"\uD83E\uDD49":`**#${pos}**`;
+        const medals=`**#${pos}**`;
         return interaction.editReply({embeds:[new EmbedBuilder()
           .setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Leaderboard Rank",iconURL:IMG.LOGO})
           .setTitle(isSelf?"Your Rank":`${target.username}'s Rank`)
@@ -4647,7 +4709,7 @@ This is active immediately and persists until revoked or the bot restarts.
           .addFields(
             {name:"Rank",value:`**#${pos}** of ${total}`,inline:true},
             {name:"Volume",value:`**${fmtUSD(vol)}**`,inline:true},
-            {name:"Tier",value:`${tier.emoji} **${tier.label}**`,inline:true},
+            {name:"Tier",value:`**${tier.label}**`,inline:true},
             {name:"Above You",value:above?`<@${above[0]}> \u2014 ${fmtUSD(above[1])}`:"\u2014 You're at the top!",inline:true},
             {name:"Below You",value:below?`<@${below[0]}> \u2014 ${fmtUSD(below[1])}`:"\u2014 No one below",inline:true},
             {name:"To Next Tier",value:nextTier?`${fmtUSD(Math.max(nextTier.min-vol,0))} away`:"Max tier reached",inline:true},
@@ -4659,41 +4721,41 @@ This is active immediately and persists until revoked or the bot restarts.
 
       // Exchanger wallet commands
       if(cmd==="setmywallet"){
-        if(!isExchanger(interaction.member))return interaction.reply({content:"⛔ This command is for exchangers only.",flags:64});
+        if(!isExchanger(interaction.member))return interaction.reply({content:"This command is for exchangers only.",flags:64});
         const coin=interaction.options.getString("coin").toUpperCase().trim();
         const addr=interaction.options.getString("address").trim();
         if(!state.exchangerWallets[interaction.user.id])state.exchangerWallets[interaction.user.id]={};
         state.exchangerWallets[interaction.user.id][coin]=addr;
-        return interaction.reply({content:`✅ **${coin}** address saved: \`${addr}\``,flags:64});
+        return interaction.reply({content:`**${coin}** address saved: \`${addr}\``,flags:64});
       }
 
       if(cmd==="clearwallet"){
-        if(!isExchanger(interaction.member))return interaction.reply({content:"⛔ This command is for exchangers only.",flags:64});
+        if(!isExchanger(interaction.member))return interaction.reply({content:"This command is for exchangers only.",flags:64});
         const coin=interaction.options.getString("coin").toUpperCase().trim();
         if(state.exchangerWallets[interaction.user.id]?.[coin]){
           delete state.exchangerWallets[interaction.user.id][coin];
-          return interaction.reply({content:`✅ **${coin}** address removed.`,flags:64});
+          return interaction.reply({content:`**${coin}** address removed.`,flags:64});
         }
         return interaction.reply({content:`No **${coin}** address saved.`,flags:64});
       }
 
       if(cmd==="mywallets"){
-        if(!isExchanger(interaction.member))return interaction.reply({content:"⛔ This command is for exchangers only.",flags:64});
+        if(!isExchanger(interaction.member))return interaction.reply({content:"This command is for exchangers only.",flags:64});
         const wallets=state.exchangerWallets[interaction.user.id]||{};
         const entries=Object.entries(wallets);
-        if(!entries.length)return interaction.reply({content:"⚠️ You have no saved addresses. Use `/setwallet` to add one.",flags:64});
+        if(!entries.length)return interaction.reply({content:"You have no saved addresses. Use `/setwallet` to add one.",flags:64});
         const lines=entries.map(([c,a])=>`**${c}**: \`${a}\``).join("\n");
         return interaction.reply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Your Wallet Addresses",iconURL:IMG.LOGO}).setDescription(lines).setFooter({text:"Konvert Exchange  ·  Only visible to you  ·  Use /setwallet to update"})],flags:64});
       }
 
       if(cmd==="postwallets"){
-        if(!isExchanger(interaction.member))return interaction.reply({content:"⛔ This command is for exchangers only.",flags:64});
+        if(!isExchanger(interaction.member))return interaction.reply({content:"This command is for exchangers only.",flags:64});
         const wallets=state.exchangerWallets[interaction.user.id]||{};
         const entries=Object.entries(wallets);
-        if(!entries.length)return interaction.reply({content:"⚠️ You have no saved addresses. Use `/setwallet` to add one first.",flags:64});
+        if(!entries.length)return interaction.reply({content:"You have no saved addresses. Use `/setwallet` to add one first.",flags:64});
         const lines=entries.map(([c,a])=>`**${c}**\n\`${a}\``).join("\n\n");
         await interaction.channel.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:`${interaction.user.username}  \u2022  Payment Addresses`,iconURL:interaction.user.displayAvatarURL()}).setDescription(lines).setFooter({text:"Konvert Exchange  ·  Send only to addresses confirmed inside this ticket"}).setTimestamp()]});
-        return interaction.reply({content:"✅ Addresses posted.",flags:64});
+        return interaction.reply({content:"Addresses posted.",flags:64});
       }
 
       if(cmd==="alert"){
@@ -4703,9 +4765,9 @@ This is active immediately and persists until revoked or the bot restarts.
         const target=interaction.options.getNumber("price");
         const dir=interaction.options.getString("direction");
         if(!GECKO[coin]&&!BINANCE[coin])return interaction.editReply({content:`**${coin}** is not a supported coin for alerts.`});
-        if(!(target>0))return interaction.editReply({content:"⚠️ Enter a target price greater than 0."});
+        if(!(target>0))return interaction.editReply({content:"Enter a target price greater than 0."});
         const mine=state.alerts.filter(a=>a.userId===interaction.user.id);
-        if(mine.length>=10)return interaction.editReply({content:"⚠️ You already have 10 alerts. Use `/clearalerts` first."});
+        if(mine.length>=10)return interaction.editReply({content:"You already have 10 alerts. Use `/clearalerts` first."});
         const cur=await Promise.race([getPrice(coin),new Promise(r=>setTimeout(()=>r(null),5000))]).catch(()=>null);
         state.alerts.push({userId:interaction.user.id,coin,target,dir,createdAt:Date.now()});
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Price Alert",iconURL:IMG.LOGO}).setTitle("Alert Set").addFields(
@@ -4717,7 +4779,7 @@ This is active immediately and persists until revoked or the bot restarts.
 
       if(cmd==="myalerts"){
         const mine=state.alerts.filter(a=>a.userId===interaction.user.id);
-        if(!mine.length)return interaction.reply({content:"⚠️ You have no active price alerts. Use `/alert` to set one.",flags:64});
+        if(!mine.length)return interaction.reply({content:"You have no active price alerts. Use `/alert` to set one.",flags:64});
         const lines=mine.map((a,i)=>`**${i+1}.** ${a.coin} ${a.dir==="above"?"above":"below"} **$${a.target}**`).join("\n");
         return interaction.reply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Your Price Alerts",iconURL:IMG.LOGO}).setDescription(lines).setFooter({text:`Konvert Exchange  ·  ${mine.length} active alert${mine.length!==1?"s":""}`})],flags:64});
       }
@@ -4734,7 +4796,7 @@ This is active immediately and persists until revoked or the bot restarts.
         const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
         const handled=allT.filter(t=>t.completedBy===target.id&&["vouched","completed"].includes(t.status)&&t.method!=="adjustment"&&parseFloat(t.amountUSD||0)>0);
         if(!handled.length){
-          return interaction.editReply({content:`⚠️ No completed exchanges found for **${target.username}** as exchanger.`});
+          return interaction.editReply({content:`No completed exchanges found for **${target.username}** as exchanger.`});
         }
         const totalVol=handled.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0);
         const totalFees=handled.reduce((s,t)=>s+ticketFee(t),0);
@@ -4782,8 +4844,8 @@ This is active immediately and persists until revoked or the bot restarts.
     if(interaction.isStringSelectMenu()){
       if(interaction.customId==="select_method"){
         const method=interaction.values[0],_m=getMethod(method);
-        if(method==="crypto"){const c2cCoins=["BTC","ETH","SOL","LTC","USDT","USDC","XRP","BNB","ADA","DOGE","MATIC","AVAX","DOT","LINK","TRX","SHIB","UNI","ATOM","NEAR","ARB","OP","CAKE","INJ","RUNE","KAVA"];const coinOpts=c2cCoins.map(c=>new StringSelectMenuOptionBuilder().setLabel(c).setValue(c).setDescription(`Exchange ${c}`));return interaction.update({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor(kAuthor()).setTitle(`${UI.I.swap}  Step 2 · Crypto to Crypto`).setDescription("Select the coin you are **sending** and the coin you want to **receive** below.\n\u200b").setFooter(kFoot("Step 2 of 3"))],components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("c2c_send").setPlaceholder("Select coin you are SENDING...").addOptions(coinOpts)),new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("c2c_recv").setPlaceholder("Select coin you want to RECEIVE...").addOptions(coinOpts))]});}
-        return interaction.update({embeds:[step2Embed(method)],components:[new ActionRowBuilder().addComponents(kBtn(`dir_send__${method}`,`Send Crypto → Get ${_m.label}`,UI.I.coin,ButtonStyle.Primary),kBtn(`dir_receive__${method}`,`Send ${_m.label} → Get Crypto`,UI.I.card,ButtonStyle.Success))]});
+        if(method==="crypto"){const c2cCoins=["BTC","ETH","SOL","LTC","USDT","USDC","XRP","BNB","ADA","DOGE","MATIC","AVAX","DOT","LINK","TRX","SHIB","UNI","ATOM","NEAR","ARB","OP","CAKE","INJ","RUNE","KAVA"];const coinOpts=c2cCoins.map(c=>new StringSelectMenuOptionBuilder().setLabel(c).setValue(c).setDescription(`Exchange ${c}`));return interaction.update({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor(kAuthor()).setTitle(`Step 2 · Crypto to Crypto`).setDescription(`Select the coin you are **sending** and the coin you want to **receive** below.\n\n${minLine()}`).setFooter(kFoot("Step 2 of 3"))],components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("c2c_send").setPlaceholder("Select coin you are SENDING...").addOptions(coinOpts)),new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("c2c_recv").setPlaceholder("Select coin you want to RECEIVE...").addOptions(coinOpts))]});}
+        return interaction.update({embeds:[step2Embed(method)],components:[new ActionRowBuilder().addComponents(kBtn(`dir_send__${method}`,`Send Crypto → Get ${_m.label}`,ButtonStyle.Primary),kBtn(`dir_receive__${method}`,`Send ${_m.label} → Get Crypto`,ButtonStyle.Primary))]});
       }
       if(interaction.customId==="c2c_send"||interaction.customId==="c2c_recv"){
         const userId=interaction.user.id;
@@ -4793,30 +4855,30 @@ This is active immediately and persists until revoked or the bot restarts.
         const sel=state.c2cSelections[userId],both=sel.send&&sel.recv;
         const _c2cCoins=["BTC","ETH","SOL","LTC","USDT","USDC","XRP","BNB","ADA","DOGE","MATIC","AVAX","DOT","LINK","TRX","SHIB","UNI","ATOM","NEAR","ARB","OP","CAKE","INJ","RUNE","KAVA"];const coinOpts=_c2cCoins.map(c=>new StringSelectMenuOptionBuilder().setLabel(c).setValue(c).setDescription(`Exchange ${c}`));
         const components=[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("c2c_send").setPlaceholder(sel.send?`Sending: ${sel.send}`:"Select coin you are SENDING...").addOptions(coinOpts)),new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("c2c_recv").setPlaceholder(sel.recv?`Receiving: ${sel.recv}`:"Select coin you want to RECEIVE...").addOptions(coinOpts))];
-        if(both)components.push(new ActionRowBuilder().addComponents(kBtn("btn_c2c_confirm",`Confirm: ${sel.send} → ${sel.recv}`,UI.I.ok,ButtonStyle.Success)));
-        return interaction.update({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor(kAuthor()).setTitle(`${UI.I.swap}  Step 2 · Crypto to Crypto`).setDescription(`**Sending:** ${sel.send||"—"}\n**Receiving:** ${sel.recv||"—"}\n\n${both?"Both coins selected. Press **Confirm** to continue.\n\u200b":"Select both coins and a confirm button will appear.\n\u200b"}`).setFooter(kFoot("Step 2 of 3"))],components});
+        if(both)components.push(new ActionRowBuilder().addComponents(kBtn("btn_c2c_confirm",`Confirm: ${sel.send} → ${sel.recv}`,ButtonStyle.Success)));
+        return interaction.update({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor(kAuthor()).setTitle(`Step 2 · Crypto to Crypto`).setDescription(both?`${kHero(`${sel.send} \u2192 ${sel.recv}`)}\nBoth coins selected. Press **Confirm** to continue.`:`**Sending:** ${sel.send||"\u2014"}\n**Receiving:** ${sel.recv||"\u2014"}\n\nSelect both coins and a confirm button will appear.`).setFooter(kFoot("Step 2 of 3"))],components});
       }
     }
 
     if(interaction.isButton()){
-      if(interaction.customId==="btn_exchange_now"){await interaction.deferReply({flags:64}).catch(()=>{});const bl=load("blacklist");if(bl[interaction.user.id]&&!isOwner(interaction.user.id,interaction.member))return interaction.editReply({content:"⛔ You are blacklisted from Konvert."});return interaction.editReply({embeds:[step1Embed()],components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("select_method").setPlaceholder("Select your payment method...").addOptions(METHODS.map(m=>new StringSelectMenuOptionBuilder().setLabel(m.label).setValue(m.value).setDescription(`Exchange crypto with ${m.label}`))))],flags:64});}
+      if(interaction.customId==="btn_exchange_now"){await interaction.deferReply({flags:64}).catch(()=>{});const bl=load("blacklist");if(bl[interaction.user.id]&&!isOwner(interaction.user.id,interaction.member))return interaction.editReply({content:"You are blacklisted from Konvert."});return interaction.editReply({embeds:[step1Embed()],components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("select_method").setPlaceholder("Select your payment method...").addOptions(METHODS.map(m=>new StringSelectMenuOptionBuilder().setLabel(m.label).setValue(m.value).setDescription(`Exchange crypto with ${m.label}`))))],flags:64});}
       if(interaction.customId==="btn_fee_calc"){const modal=new ModalBuilder().setCustomId("modal_fee").setTitle("Fee Calculator");modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("fee_amt").setLabel("Amount in USD").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 250").setRequired(true)));return interaction.showModal(modal);}
-      if(interaction.customId==="btn_rates_quick"){await interaction.deferReply({flags:64});try{return interaction.editReply({embeds:[await buildRatesEmbed()]});}catch(e){return interaction.editReply("⚠️ Could not fetch rates right now. Try again in a moment.");}}
-      if(interaction.customId==="btn_refresh_rates"){await interaction.deferUpdate();try{const _re=await buildRatesEmbed();return interaction.editReply({embeds:[_re],components:[new ActionRowBuilder().addComponents(kBtn("btn_refresh_rates","Refresh",UI.I.refresh,ButtonStyle.Secondary))]});}catch(e){return interaction.editReply({content:"⚠️ Could not fetch rates right now."});} return;}
+      if(interaction.customId==="btn_rates_quick"){await interaction.deferReply({flags:64});try{return interaction.editReply({embeds:[await buildRatesEmbed()]});}catch(e){return interaction.editReply("Could not fetch rates right now. Try again in a moment.");}}
+      if(interaction.customId==="btn_refresh_rates"){await interaction.deferUpdate();try{const _re=await buildRatesEmbed();return interaction.editReply({embeds:[_re],components:[new ActionRowBuilder().addComponents(kBtn("btn_refresh_rates","Refresh",ButtonStyle.Secondary))]});}catch(e){return interaction.editReply({content:"Could not fetch rates right now."});} return;}
 
 
       if(interaction.customId==="btn_check_points"){
-        return interaction.reply({content:"⚠️ The referral program is no longer running.",flags:64});
+        return interaction.reply({content:"The referral program is no longer running.",flags:64});
       }
 
       if(interaction.customId==="btn_c2c_confirm"){
         const c2cData=state.c2cSelections?.[interaction.user.id];
-        if(!c2cData?.send||!c2cData?.recv)return interaction.reply({content:"⚠️ Please select both coins before confirming.",flags:64});
+        if(!c2cData?.send||!c2cData?.recv)return interaction.reply({content:"Please select both coins before confirming.",flags:64});
         delete state.c2cSelections[interaction.user.id];
         const {send:sendCoin,recv:recvCoin}=c2cData;
-        if(sendCoin===recvCoin)return interaction.reply({content:"⛔ You cannot exchange a coin for the same coin.",flags:64});
+        if(sendCoin===recvCoin)return interaction.reply({content:"You cannot exchange a coin for the same coin.",flags:64});
         const modal=new ModalBuilder().setCustomId(`modal_c2c__${sendCoin}__${recvCoin}`).setTitle(`${sendCoin} \u2192 ${recvCoin}`);
-        modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("c2c_amount").setLabel("Amount in USD you are sending").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 200").setRequired(true)));
+        modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("c2c_amount").setLabel(`Amount in USD you send (more than ${fmtUSD(CONFIG.MIN_FEE)})`).setStyle(TextInputStyle.Short).setPlaceholder("e.g. 200").setRequired(true)));
         return interaction.showModal(modal);
       }
 
@@ -4824,7 +4886,7 @@ This is active immediately and persists until revoked or the bot restarts.
         const _isSendCrypto=interaction.customId.startsWith("dir_send__"),method=interaction.customId.replace("dir_send__","").replace("dir_receive__",""),m=getMethod(method);
         const _direction=_isSendCrypto?"receive":"send";
         const modal=new ModalBuilder().setCustomId(`modal_amount__${method}__${_direction}`).setTitle(`${m.label} · ${_isSendCrypto?"Send Crypto":"Receive Crypto"}`);
-        modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_amount").setLabel("Amount in USD").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 150").setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_coin").setLabel("Which crypto? (BTC, ETH, SOL, LTC, USDT)").setStyle(TextInputStyle.Short).setPlaceholder("e.g. SOL").setRequired(true)));
+        modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_amount").setLabel(`Amount in USD (more than ${fmtUSD(CONFIG.MIN_FEE)})`).setStyle(TextInputStyle.Short).setPlaceholder("e.g. 150").setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_coin").setLabel("Which crypto? (BTC, ETH, SOL, LTC, USDT)").setStyle(TextInputStyle.Short).setPlaceholder("e.g. SOL").setRequired(true)));
         return interaction.showModal(modal);
       }
 
@@ -4832,9 +4894,9 @@ This is active immediately and persists until revoked or the bot restarts.
         const _tix=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
         const _stix=_tix[interaction.channel.id];
         const _canCloseNow=interaction.user.id===_stix?.userId||isExchanger(interaction.member)||isOwner(interaction.user.id,interaction.member);
-        if(!_stix||!_canCloseNow)return interaction.reply({content:"⛔ Only the client or an exchanger can close this.",flags:64});
+        if(!_stix||!_canCloseNow)return interaction.reply({content:"Only the client or an exchanger can close this.",flags:64});
         await interaction.deferUpdate().catch(()=>{});
-        await interaction.editReply({embeds:[kEmbed("Ticket").setTitle(`${UI.I.lock}  Closing`).setDescription(`Ticket closing now. Don't forget to vouch in <#${VOUCH_POST_CHANNEL}>.`)],components:[]}).catch(()=>{});
+        await interaction.editReply({embeds:[kEmbed("Ticket").setTitle(`Closing`).setDescription(`Ticket closing now. Don't forget to vouch in <#${VOUCH_POST_CHANNEL}>.`)],components:[]}).catch(()=>{});
         // Call _postOnce directly — it's stored on the channel by completeTrade
         const _fn=interaction.channel._completePostOnce;
         if(typeof _fn==="function"){
@@ -4845,13 +4907,13 @@ This is active immediately and persists until revoked or the bot restarts.
       }
 
       if(interaction.customId==="btn_giveaway_enter"){
-        if(!state.activeGiveaway)return interaction.reply({content:"⚠️ No active giveaway.",flags:64});
+        if(!state.activeGiveaway)return interaction.reply({content:"No active giveaway.",flags:64});
         const userId=interaction.user.id;
         const member=await interaction.guild.members.fetch({user:userId,force:false}).catch(()=>null);
         const hasRole=member&&member.roles.cache.has(KONV_TAG_ROLE);
         const pg=(member&&member.user&&member.user.primaryGuild)||null;
         const hasKonv=hasRole||(pg&&pg.identityEnabled&&pg.identityGuildId===CONFIG.GUILD_ID);
-        if(!hasKonv)return interaction.reply({content:"⛔ You need the KONV clan tag to enter. Set Konvert as your active clan in your Discord profile settings. If it is not being detected, run `/claimtag` to activate it manually.",flags:64});
+        if(!hasKonv)return interaction.reply({content:"You need the KONV clan tag to enter. Set Konvert as your active clan in your Discord profile settings. If it is not being detected, run `/claimtag` to activate it manually.",flags:64});
         if(state.activeGiveaway.entrants.has(userId))return interaction.reply({content:"You are already entered. Good luck.",flags:64});
         // Anti-abuse: if giveaway ends within 6h, check how long they have had the role
         const _sixHoursMs=6*60*60*1000;
@@ -4868,7 +4930,7 @@ This is active immediately and persists until revoked or the bot restarts.
               const _auditLogs=await interaction.guild.fetchAuditLogs({type:25,limit:10}).catch(()=>null);
               const _roleEntry=_auditLogs?.entries.find(e=>e.target?.id===userId&&e.changes?.some(c=>c.key==="$add"&&c.new?.some(r=>r.id===KONV_TAG_ROLE)));
               if(_roleEntry&&Date.now()-_roleEntry.createdTimestamp<_sixHoursMs){
-                return interaction.reply({content:"⛔ Trying to claim the tag and join last minute will not work and will be caught by our anti-abuse system.",flags:64});
+                return interaction.reply({content:"Trying to claim the tag and join last minute will not work and will be caught by our anti-abuse system.",flags:64});
               }
             }
           }
@@ -4883,11 +4945,11 @@ This is active immediately and persists until revoked or the bot restarts.
             if(gMsg)await gMsg.edit({embeds:[state.activeGiveaway.buildEmbed(count)]}).catch(()=>{});
           }
         }catch{}
-        return interaction.reply({content:`\uD83C\uDF89 You are in! **${count}** ${count===1?"person has":"people have"} entered. Good luck!`,flags:64});
+        return interaction.reply({content:`You are in! **${count}** ${count===1?"person has":"people have"} entered. Good luck!`,flags:64});
       }
 
-      if(interaction.customId==="btn_confirm_ticket"){if(!interaction.deferred&&!interaction.replied)await interaction.deferUpdate().catch(()=>{});const pending=state.pending[interaction.user.id];if(!pending)return interaction.editReply({content:"⚠️ Session expired. Please start again.",embeds:[],components:[]});delete state.pending[interaction.user.id];const ch=await createTicket(interaction,pending.method,pending.direction,pending.rawAmt,pending.coin,pending.walletInf,pending.notes,pending.recvCoin||null);if(ch)return interaction.editReply({content:`✅ Ticket opened \u2192 <#${ch.id}>`,embeds:[],components:[]});return;}
-      if(interaction.customId==="btn_cancel_ticket"){delete state.pending[interaction.user.id];return interaction.update({content:"⚠️ Cancelled. Click Exchange Now to start again.",embeds:[],components:[]});}
+      if(interaction.customId==="btn_confirm_ticket"){if(!interaction.deferred&&!interaction.replied)await interaction.deferUpdate().catch(()=>{});const pending=state.pending[interaction.user.id];if(!pending)return interaction.editReply({content:"Session expired. Please start again.",embeds:[],components:[]});delete state.pending[interaction.user.id];const ch=await createTicket(interaction,pending.method,pending.direction,pending.rawAmt,pending.coin,pending.walletInf,pending.notes,pending.recvCoin||null);if(ch)return interaction.editReply({content:`Ticket opened \u2192 <#${ch.id}>`,embeds:[],components:[new ActionRowBuilder().addComponents(kLink("Open Ticket",`https://discord.com/channels/${interaction.guild.id}/${ch.id}`))]});return;}
+      if(interaction.customId==="btn_cancel_ticket"){delete state.pending[interaction.user.id];return interaction.update({content:"Cancelled. Click Exchange Now to start again.",embeds:[],components:[]});}
 
       if(interaction.customId==="btn_support_ticket"){
         const modal=new ModalBuilder().setCustomId("modal_support").setTitle("Open a Support Ticket");
@@ -4897,17 +4959,17 @@ This is active immediately and persists until revoked or the bot restarts.
 
       if(interaction.customId==="btn_report"){
         const _rt=(Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets"))[interaction.channel.id];
-        if(!_rt||_rt.status!=="open")return interaction.reply({content:"⚠️ This ticket is no longer open.",flags:64});
-        if(interaction.user.id!==_rt.userId)return interaction.reply({content:"⛔ Only the client of this ticket can flag it.",flags:64});
-        if(!_rt.claimedBy)return interaction.reply({content:"⚠️ No exchanger has claimed this ticket yet.",flags:64});
-        if(_rt.reported)return interaction.reply({content:"⚠️ This ticket is already flagged. An owner will step in.",flags:64});
+        if(!_rt||_rt.status!=="open")return interaction.reply({content:"This ticket is no longer open.",flags:64});
+        if(interaction.user.id!==_rt.userId)return interaction.reply({content:"Only the client of this ticket can flag it.",flags:64});
+        if(!_rt.claimedBy)return interaction.reply({content:"No exchanger has claimed this ticket yet.",flags:64});
+        if(_rt.reported)return interaction.reply({content:"This ticket is already flagged. An owner will step in.",flags:64});
         const _rm=new ModalBuilder().setCustomId("modal_report").setTitle("Flag Ticket");
         _rm.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_reason").setLabel("What went wrong?").setStyle(TextInputStyle.Paragraph).setMinLength(10).setMaxLength(500).setRequired(true).setPlaceholder("Describe what happened. The exchanger is frozen until an owner reviews this.")));
         return interaction.showModal(_rm);
       }
       if(interaction.customId==="btn_claim"){await claimTicket(interaction);return;}
       if(interaction.customId==="btn_mmclaim"){await claimTicket(interaction,{mmConfirmed:true});return;}
-      if(interaction.customId==="btn_mmcancel"){await interaction.update({content:"⚠️ Cancelled \u2014 the ticket is still unclaimed.",embeds:[],components:[]}).catch(()=>{});return;}
+      if(interaction.customId==="btn_mmcancel"){await interaction.update({content:"Cancelled \u2014 the ticket is still unclaimed.",embeds:[],components:[]}).catch(()=>{});return;}
       if(interaction.customId==="btn_mmconfirm"){await confirmMiddleman(interaction);return;}
       if(interaction.customId==="btn_confirmdone"){await confirmCompletion(interaction);return;}
       if(interaction.customId==="btn_remind"){await remindClient(interaction);return;}
@@ -4919,22 +4981,22 @@ This is active immediately and persists until revoked or the bot restarts.
       if(interaction.customId==="btn_done"){
         const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
         const ticket=tickets[interaction.channel.id];
-        if(!isExchanger(interaction.member)&&!isOwner(interaction.user.id,interaction.member))return interaction.reply({content:"⛔ Only exchangers can complete tickets.",flags:64});
-        if(!ticket)return interaction.reply({content:"⚠️ Ticket not found.",flags:64});
-        if(ticket.status==="vouched"||ticket.status==="closed")return interaction.reply({content:"⚠️ This exchange has already been completed.",flags:64});
-        if(isSuspended(interaction.user.id)&&!isOwner(interaction.user.id,interaction.member))return interaction.reply({content:"⛔ Your exchanger access is suspended pending owner review.",flags:64});
-        if(ticket.reported&&!isOwner(interaction.user.id,interaction.member))return interaction.reply({content:"⚠️ This ticket is flagged. An owner needs to review it before it can be completed.",flags:64});
-        if(ticket.mmPending&&!isOwner(interaction.user.id,interaction.member))return interaction.reply({content:"⚠️ Waiting for the client to confirm the middleman.",flags:64});
+        if(!isExchanger(interaction.member)&&!isOwner(interaction.user.id,interaction.member))return interaction.reply({content:"Only exchangers can complete tickets.",flags:64});
+        if(!ticket)return interaction.reply({content:"Ticket not found.",flags:64});
+        if(ticket.status==="vouched"||ticket.status==="closed")return interaction.reply({content:"This exchange has already been completed.",flags:64});
+        if(isSuspended(interaction.user.id)&&!isOwner(interaction.user.id,interaction.member))return interaction.reply({content:"Your exchanger access is suspended pending owner review.",flags:64});
+        if(ticket.reported&&!isOwner(interaction.user.id,interaction.member))return interaction.reply({content:"This ticket is flagged. An owner needs to review it before it can be completed.",flags:64});
+        if(ticket.mmPending&&!isOwner(interaction.user.id,interaction.member))return interaction.reply({content:"Waiting for the client to confirm the middleman.",flags:64});
         if(ticket.claimSystem){
-          if(!ticket.claimedBy)return interaction.reply({content:"⚠️ Claim this ticket before completing it.",flags:64});
-          if(interaction.user.id!==ticket.claimedBy&&!isOwner(interaction.user.id,interaction.member))return interaction.reply({content:`⛔ Only <@${ticket.claimedBy}> can complete this ticket.`,flags:64});
+          if(!ticket.claimedBy)return interaction.reply({content:"Claim this ticket before completing it.",flags:64});
+          if(interaction.user.id!==ticket.claimedBy&&!isOwner(interaction.user.id,interaction.member))return interaction.reply({content:`Only <@${ticket.claimedBy}> can complete this ticket.`,flags:64});
         }
         if(ticket.claimSystem&&!isOwner(interaction.user.id,interaction.member)){
           // The client confirms before anything is finalized (owners finalize directly)
-          if(ticket.completionPending)return interaction.reply({content:"⚠️ Already waiting for the client to confirm.",flags:64});
+          if(ticket.completionPending)return interaction.reply({content:"Already waiting for the client to confirm.",flags:64});
           await interaction.deferReply({flags:64});
           const _sent=await requestCompletion(interaction.channel,ticket,tickets);
-          return interaction.editReply({content:_sent?"✅ Sent to the client for confirmation.":"⚠️ Couldn't send the confirmation. Try again."});
+          return interaction.editReply({content:_sent?"Sent to the client for confirmation.":"Couldn't send the confirmation. Try again."});
         }
         await interaction.deferReply({flags:64});
         if(ticket.claimSystem)ticket.completionPending=false;   // an owner finalizes without waiting on the client
@@ -4954,19 +5016,19 @@ This is active immediately and persists until revoked or the bot restarts.
           // Once claimed, only the claiming exchanger can close it (client, staff and owners always can)
           _canClose=!isSuspended(interaction.user.id)&&(!(_ct&&_ct.claimSystem&&_ct.claimedBy)||_ct.claimedBy===interaction.user.id);
         }
-        if(!_canClose)return interaction.reply({content:"⛔ Only the client, the exchanger handling this ticket, or staff can close it.",flags:64});
+        if(!_canClose)return interaction.reply({content:"Only the client, the exchanger handling this ticket, or staff can close it.",flags:64});
         await interaction.deferReply();await doCloseTicket(interaction.channel,interaction.guild,interaction.user,_isClientClose?"Closed by client":"Closed by staff");
-        await interaction.editReply({embeds:[kEmbed("Ticket","mute").setTitle(`${UI.I.lock}  Ticket Closed`).setDescription((_isClientClose?"This ticket was closed by the client.":"This ticket has been closed by staff.")+"\nDeleting in 15 seconds.").setTimestamp()]});
+        await interaction.editReply({embeds:[kEmbed("Ticket","mute").setTitle(`Ticket Closed`).setDescription((_isClientClose?"This ticket was closed by the client.":"This ticket has been closed by staff.")+"\nDeleting in 15 seconds.").setTimestamp()]});
         setTimeout(()=>interaction.channel.delete().catch(()=>{}),15000);return;
       }
 
       if(interaction.customId.startsWith("mine_cell_")){
         const parts=interaction.customId.split("_"),userId=parts[2],idx=parseInt(parts[3]);
-        if(interaction.user.id!==userId)return interaction.reply({content:"⛔ This is not your mine game.",flags:64});
+        if(interaction.user.id!==userId)return interaction.reply({content:"This is not your mine game.",flags:64});
         const game=state.mineGames[userId];
-        if(!game)return interaction.reply({content:"⚠️ No active game. Use /mine to start.",flags:64});
-        if(game.over)return interaction.reply({content:"⚠️ This game is already over.",flags:64});
-        if(game.revealed.includes(idx))return interaction.reply({content:"⚠️ You already revealed that cell.",flags:64});
+        if(!game)return interaction.reply({content:"No active game. Use /mine to start.",flags:64});
+        if(game.over)return interaction.reply({content:"This game is already over.",flags:64});
+        if(game.revealed.includes(idx))return interaction.reply({content:"You already revealed that cell.",flags:64});
         game.revealed.push(idx);game.tries++;
         const isDiamond=game.diamonds.includes(idx),isBomb=game.bombs.includes(idx);
         if(isDiamond)game.found++;
@@ -4977,9 +5039,9 @@ This is active immediately and persists until revoked or the bot restarts.
           game.over=true;delete state.mineGames[userId];state.passes[userId]=(state.passes[userId]||0)+1;
           try{const mem=await interaction.guild.members.fetch(userId);if(CONFIG.PASS_ROLE)await mem.roles.add(CONFIG.PASS_ROLE);}catch{}
           for(const oid of CONFIG.OWNER_IDS){try{const o=await client.users.fetch(oid);await o.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Mine Winner",iconURL:IMG.LOGO}).setTitle("Exchange Pass Won").setDescription(`<@${userId}> (${interaction.user.tag}) found all 3 diamonds and won a free exchange pass.\nTotal passes: **${state.passes[userId]}**`).setTimestamp()]});}catch{}}
-          return interaction.update({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Mine",iconURL:IMG.LOGO}).setTitle("\uD83C\uDF89 You Found All 3 Passes!").setDescription(`A **Free Exchange Pass** has been added to your account.\nOpen a ticket and type \`free\` to redeem it.`).addFields({name:"Result",value:"\uD83C\uDF9F Free Exchange Pass awarded",inline:true},{name:"Tries Used",value:`**${game.tries} / 3**`,inline:true}).setFooter({text:"Konvert Mine  ·  Screenshot this as proof"}).setTimestamp()],components:buildMineGrid(userId,{...game,over:true})});
+          return interaction.update({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Mine",iconURL:IMG.LOGO}).setTitle("You Found All 3 Passes!").setDescription(`A **Free Exchange Pass** has been added to your account.\nOpen a ticket and type \`free\` to redeem it.`).addFields({name:"Result",value:"Free Exchange Pass awarded",inline:true},{name:"Tries Used",value:`**${game.tries} / 3**`,inline:true}).setFooter({text:"Konvert Mine  ·  Screenshot this as proof"}).setTimestamp()],components:buildMineGrid(userId,{...game,over:true})});
         }
-        return interaction.update({embeds:[base("Mine").setColor(isDiamond?0x7C4DFF:0x5865F2).setDescription(isDiamond?`**\uD83C\uDF9F Pass found!** ${game.found===3?"You got them all!":"Keep going."}`:`**Nothing here.** ${triesLeft} click${triesLeft!==1?"s":""} left.`).addFields({name:"Passes Found",value:`**${game.found} / 3**`,inline:true},{name:"Clicks Left",value:`**${triesLeft}**`,inline:true}).setFooter({text:`Konvert Mine  ·  \uD83C\uDF9F = Pass  \uD83D\uDCA5 = Bomb`})],components:buildMineGrid(userId,game)});
+        return interaction.update({embeds:[base("Mine").setColor(isDiamond?0x7C4DFF:0x5865F2).setDescription(isDiamond?`**Pass found!** ${game.found===3?"You got them all!":"Keep going."}`:`**Nothing here.** ${triesLeft} click${triesLeft!==1?"s":""} left.`).addFields({name:"Passes Found",value:`**${game.found} / 3**`,inline:true},{name:"Clicks Left",value:`**${triesLeft}**`,inline:true}).setFooter({text:`Konvert Mine`})],components:buildMineGrid(userId,game)});
       }
     }
 
@@ -4990,7 +5052,7 @@ This is active immediately and persists until revoked or the bot restarts.
         const rawAmt=parseFloat(interaction.fields.getTextInputValue("done_amount"));
         const exchangerRaw=interaction.fields.getTextInputValue("done_exchanger").trim().replace(/[<@!>]/g,"");
         const clientRaw=interaction.fields.getTextInputValue("done_client").trim().replace(/[<@!>]/g,"");
-        if(isNaN(rawAmt)||rawAmt<=0)return interaction.editReply("⚠️ Please enter a valid amount.");
+        if(isNaN(rawAmt)||rawAmt<=0)return interaction.editReply("Please enter a valid amount.");
         let clientId=clientRaw;try{const u=await client.users.fetch(clientRaw);clientId=u.id;}catch{}
         let exchangerId=exchangerRaw;try{const eu=await client.users.fetch(exchangerRaw);exchangerId=eu.id;}catch{}
         const tickets=Object.keys(_mem.tickets||{}).length>0?{..._mem.tickets}:load("tickets");
@@ -5010,13 +5072,13 @@ This is active immediately and persists until revoked or the bot restarts.
         const _mt=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
         const _mtk=_mt[interaction.channel.id];
         // Re-check everything: state may have changed while the form was open
-        if(!_mtk||_mtk.status!=="open")return interaction.editReply({content:"⚠️ This ticket is no longer open."});
-        if(interaction.user.id!==_mtk.userId)return interaction.editReply({content:"⛔ Only the client of this ticket can flag it."});
-        if(!_mtk.claimedBy)return interaction.editReply({content:"⚠️ No exchanger has claimed this ticket yet."});
-        if(_mtk.reported)return interaction.editReply({content:"⚠️ This ticket is already flagged. An owner will step in."});
+        if(!_mtk||_mtk.status!=="open")return interaction.editReply({content:"This ticket is no longer open."});
+        if(interaction.user.id!==_mtk.userId)return interaction.editReply({content:"Only the client of this ticket can flag it."});
+        if(!_mtk.claimedBy)return interaction.editReply({content:"No exchanger has claimed this ticket yet."});
+        if(_mtk.reported)return interaction.editReply({content:"This ticket is already flagged. An owner will step in."});
         const _reason=interaction.fields.getTextInputValue("inp_reason").trim().slice(0,500);
         const _res=await reportTicket(interaction,_mtk,_mt,_reason);
-        return interaction.editReply({content:_res.exempt?"🚩 Flag sent to the owners.":"🚩 Ticket flagged. The exchanger is frozen and an owner will step in — don't send any more funds."});
+        return interaction.editReply({content:_res.exempt?"Flag sent to the owners.":"Ticket flagged. The exchanger is frozen and an owner will step in — don't send any more funds."});
       }
 
       if(interaction.customId==="modal_support"){
@@ -5026,18 +5088,18 @@ This is active immediately and persists until revoked or the bot restarts.
         if(CONFIG.STAFF_ROLE&&guild.roles.cache.has(CONFIG.STAFF_ROLE))addOverwrite(_sPerms,{id:CONFIG.STAFF_ROLE,allow:[...OWNER_CHANNEL_ALLOW]});
         for(const o of await ownerOverwrites(guild))addOverwrite(_sPerms,o);
         if(guild.roles.cache.has(OWNER_ROLE))addOverwrite(_sPerms,{id:OWNER_ROLE,allow:[...OWNER_CHANNEL_ALLOW]});
-        try{ch=await guild.channels.create({name:`support-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,12)}`,type:ChannelType.GuildText,parent:CONFIG.TICKET_CATEGORY||null,topic:`${SUPPORT_TOPIC}${user.id}`,permissionOverwrites:_sPerms});}catch(e){console.error("[support] couldn't create the channel:",e.message);return interaction.reply({content:"⚠️ Failed to create support channel.",flags:64});}
-        await ch.send({content:`<@${user.id}>`,embeds:[kEmbed("Support").setTitle(`${UI.I.help}  Support Ticket`).setThumbnail(IMG.LOGO).setDescription(`Welcome, <@${user.id}>! Staff will assist you shortly — please be patient.\n\u200b`).addFields({name:"Issue",value:issue,inline:false},{name:"What You Tried",value:tried,inline:false}).setTimestamp().setFooter(kFoot("Support ticket"))],components:[new ActionRowBuilder().addComponents(closeButton())]});
-        if(CONFIG.STAFF_ROLE)await ch.send(`${UI.I.help}  New support ticket from <@${user.id}> — <@&${CONFIG.STAFF_ROLE}>`);
+        try{ch=await guild.channels.create({name:`support-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,12)}`,type:ChannelType.GuildText,parent:CONFIG.TICKET_CATEGORY||null,topic:`${SUPPORT_TOPIC}${user.id}`,permissionOverwrites:_sPerms});}catch(e){console.error("[support] couldn't create the channel:",e.message);return interaction.reply({content:"Failed to create support channel.",flags:64});}
+        await ch.send({content:`<@${user.id}>`,embeds:[kEmbed("Support").setTitle(`Support Ticket`).setThumbnail(IMG.LOGO).setDescription(`Welcome, <@${user.id}>! Staff will assist you shortly — please be patient.\n\u200b`).addFields({name:"Issue",value:issue,inline:false},{name:"What You Tried",value:tried,inline:false}).setTimestamp().setFooter(kFoot("Support ticket"))],components:[new ActionRowBuilder().addComponents(closeButton())]});
+        if(CONFIG.STAFF_ROLE)await ch.send(`New support ticket from <@${user.id}> — <@&${CONFIG.STAFF_ROLE}>`);
         log(guild,`SUPPORT: #${ch.name} opened by ${user.tag}`);
-        return interaction.reply({content:`✅ Support ticket opened \u2192 <#${ch.id}>`,flags:64});
+        return interaction.reply({content:`Support ticket opened \u2192 <#${ch.id}>`,flags:64});
       }
 
-      if(interaction.customId==="modal_review"){const text=interaction.fields.getTextInputValue("review_text"),rating=Math.min(Math.max(parseInt(interaction.fields.getTextInputValue("review_rating"))||5,1),5),stars="\u2605".repeat(rating)+"\u2606".repeat(5-rating),targetCh=CONFIG.VOUCH_CHANNEL?interaction.guild.channels.cache.get(CONFIG.VOUCH_CHANNEL):interaction.channel;if(!targetCh)return interaction.reply({content:"⚠️ Review channel not configured.",flags:64});await targetCh.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Community Review").setDescription(`*"${text}"*`).addFields({name:"From",value:`<@${interaction.user.id}>`,inline:true},{name:"Rating",value:stars,inline:true}).setTimestamp().setFooter({text:"Konvert Exchange  ·  Community Review"})]});return interaction.reply({content:"✅ Your review has been posted. Thank you!",flags:64});}
+      if(interaction.customId==="modal_review"){const text=interaction.fields.getTextInputValue("review_text"),rating=Math.min(Math.max(parseInt(interaction.fields.getTextInputValue("review_rating"))||5,1),5),stars="\u2605".repeat(rating)+"\u2606".repeat(5-rating),targetCh=CONFIG.VOUCH_CHANNEL?interaction.guild.channels.cache.get(CONFIG.VOUCH_CHANNEL):interaction.channel;if(!targetCh)return interaction.reply({content:"Review channel not configured.",flags:64});await targetCh.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Community Review").setDescription(`*"${text}"*`).addFields({name:"From",value:`<@${interaction.user.id}>`,inline:true},{name:"Rating",value:stars,inline:true}).setTimestamp().setFooter({text:"Konvert Exchange  ·  Community Review"})]});return interaction.reply({content:"Your review has been posted. Thank you!",flags:64});}
 
       if(interaction.customId==="modal_fee"){
-        const raw=parseFloat(interaction.fields.getTextInputValue("fee_amt"));
-        if(isNaN(raw)||raw<=0)return interaction.reply({content:"⚠️ Please enter a valid amount.",flags:64});
+        const raw=parseAmount(interaction.fields.getTextInputValue("fee_amt"));
+        if(isNaN(raw)||raw<=0)return interaction.reply({content:"Please enter a valid amount, for example 250.",flags:64});
         await interaction.deferReply({flags:64});
         const _mvip=isVipVolume(getUserVolume(interaction.user.id));   // same VIP rate as /fee
         const [btcP,ethP,solP]=await Promise.all([getPrice("BTC"),getPrice("ETH"),getPrice("SOL")]);
@@ -5047,35 +5109,42 @@ This is active immediately and persists until revoked or the bot restarts.
       if(interaction.customId.startsWith("modal_c2c__")){
         await interaction.deferReply({flags:64});
         const parts=interaction.customId.split("__"),sendCoin=parts[1],recvCoin=parts[2];
-        const rawAmt=parseFloat(interaction.fields.getTextInputValue("c2c_amount"));
-        if(isNaN(rawAmt)||rawAmt<=0)return interaction.editReply("⚠️ Please enter a valid amount greater than $0.");
+        const rawAmt=parseAmount(interaction.fields.getTextInputValue("c2c_amount"));
+        if(isNaN(rawAmt)||rawAmt<=0)return interaction.editReply("Please enter a valid amount, for example 200.");
+        if(!aboveMinimum(rawAmt))return interaction.editReply(minAmountText());
         const fee=Math.max(rawAmt*0.02,3),rate=2;
         state.pending[interaction.user.id]={method:"crypto",direction:"send",rawAmt,coin:sendCoin,walletInf:"C2C — staff will confirm wallet in ticket",notes:"",recvCoin};
-        return interaction.editReply({embeds:[kEmbed("Exchange").setTitle(`${UI.I.swap}  Confirm Crypto to Crypto Exchange`).setThumbnail(COIN_LOGO[sendCoin]||IMG.LOGO).setDescription("Review your details before confirming. Staff will handle wallet addresses inside your ticket.\n\u200b").addFields({name:`${UI.I.money}  You Send`,value:`**${sendCoin}** worth **${fmtUSD(rawAmt)}**`,inline:true},{name:`${UI.I.coin}  You Receive`,value:`**${recvCoin}**`,inline:true},{name:`${UI.I.receipt}  Fee`,value:`**2%** — ${fmtUSD(fee)}`,inline:true}).setFooter(kFoot("Wallet addresses are confirmed inside your ticket"))],components:[new ActionRowBuilder().addComponents(kBtn("btn_confirm_ticket","Confirm & Open Ticket",UI.I.ok,ButtonStyle.Success),kBtn("btn_cancel_ticket","Cancel",UI.I.x,ButtonStyle.Secondary))]});
+        const d=dealOf({method:"crypto",direction:"send",coin:sendCoin,recvCoin,amountUSD:rawAmt,feeUSD:fee});
+        return interaction.editReply({embeds:[kEmbed("Review").setTitle("Confirm Crypto to Crypto Exchange")
+          .setDescription(`${dealHead(d)}\n${kLedger(dealRows(d,{rate}))}Press **Confirm & Open Ticket** to continue. Amounts are estimates until your exchanger confirms them in the ticket.`)
+          .setFooter(kFoot("Step 3 of 3  ·  Wallet addresses are confirmed inside your ticket"))],components:[confirmRow()]});
       }
 
       if(interaction.customId.startsWith("modal_amount__")){
         await interaction.deferReply({flags:64});
-        const parts=interaction.customId.split("__"),method=parts[1],direction=parts[2],m=getMethod(method);
-        const _rawCoin=interaction.fields.getTextInputValue("inp_coin").trim();
-        const coin=resolveCoin(_rawCoin);
-        const rawAmt=parseFloat(interaction.fields.getTextInputValue("inp_amount"));
+        const parts=interaction.customId.split("__"),method=parts[1],direction=parts[2];
+        const coin=cleanCoin(interaction.fields.getTextInputValue("inp_coin"));
+        const rawAmt=parseAmount(interaction.fields.getTextInputValue("inp_amount"));
         const walletInf="Staff will confirm wallet and payment details in your ticket",notes="";
-        if(isNaN(rawAmt)||rawAmt<=0)return interaction.editReply("⚠️ Please enter a valid amount greater than $0.");
-        if(rawAmt<5)return interaction.editReply("⚠️ Minimum exchange amount is **$5.00**. Please enter a higher amount.");
+        if(isNaN(rawAmt)||rawAmt<=0)return interaction.editReply("Please enter a valid amount, for example 150.");
+        if(!aboveMinimum(rawAmt))return interaction.editReply(minAmountText());
+        if(!coin)return interaction.editReply("Please enter a coin, for example BTC, ETH or SOL.");
         // any coin accepted — ticket opens regardless
-        const fee=calcFee(rawAmt,direction),rate=feeRate(rawAmt,direction),recv=rawAmt-fee;
-        const sendLabel=direction==="send"?`**${fmtUSD(rawAmt)}** via ${m.label}`:`**${coin}** worth **${fmtUSD(rawAmt)}**`;
-        let recvLabel=direction==="send"?(recv<5?"To be discussed":`~${fmtUSD(recv)} worth of ${coin}`):(`${fmtUSD(recv)} via ${m.label}`);
-        if(direction==="send"){try{const coinPrice=await getPrice(coin);if(coinPrice)recvLabel=`~${(recv/coinPrice).toFixed(6)} ${coin} (${fmtUSD(recv)})`;}catch{}}
+        const fee=calcFee(rawAmt,direction),rate=feeRate(rawAmt,direction);
+        let coinAmt=null;
+        if(direction==="send"){try{const coinPrice=await getPrice(coin);if(coinPrice&&rawAmt-fee>0)coinAmt=((rawAmt-fee)/coinPrice).toFixed(6);}catch{}}
         state.pending[interaction.user.id]={method,direction,rawAmt,coin,walletInf,notes};
-        return interaction.editReply({embeds:[kEmbed("Exchange").setTitle(`${UI.I.swap}  Confirm Your Exchange`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO).setDescription("Review your details and press **Confirm & Open Ticket**. Your exchanger will share wallet details inside.\n\u200b").addFields({name:`${UI.I.card}  Method`,value:`**${m.label}**`,inline:true},{name:`${UI.I.coin}  Crypto`,value:`**${coin}**`,inline:true},{name:`${UI.I.swap}  Direction`,value:`**${direction==="send"?"Fiat to Crypto":"Crypto to Fiat"}**`,inline:true},{name:`${UI.I.money}  Amount`,value:`**${fmtUSD(rawAmt)}**`,inline:true},{name:`${UI.I.receipt}  Est. Fee`,value:`**${rate}%** — ${fmtUSD(fee)}`,inline:true},{name:`${UI.I.coin}  You Receive (est.)`,value:recvLabel,inline:true}).setFooter(kFoot("Wallet details are handled inside your ticket"))],components:[new ActionRowBuilder().addComponents(kBtn("btn_confirm_ticket","Confirm & Open Ticket",UI.I.ok,ButtonStyle.Success),kBtn("btn_cancel_ticket","Cancel",UI.I.x,ButtonStyle.Secondary))]});
+        const d=dealOf({method,direction,coin,amountUSD:rawAmt,feeUSD:fee});
+        return interaction.editReply({embeds:[kEmbed("Review").setTitle("Confirm Your Exchange")
+          .setDescription(`${dealHead(d)}\n${kLedger(dealRows(d,{rate,coinAmt}))}Press **Confirm & Open Ticket** to continue. Amounts are estimates until your exchanger confirms them in the ticket.`)
+          .setFooter(kFoot("Step 3 of 3  ·  Wallet details are handled inside your ticket"))],components:[confirmRow()]});
       }
+
     }
 
   }catch(err){
     console.error("Interaction error:",err);
-    try{const errMsg={content:"⚠️ Something went wrong. Please try again.",flags:64};if(interaction.deferred||interaction.replied)await interaction.followUp(errMsg).catch(()=>{});else await interaction.reply(errMsg).catch(()=>{});}catch{}
+    try{const errMsg={content:"Something went wrong. Please try again.",flags:64};if(interaction.deferred||interaction.replied)await interaction.followUp(errMsg).catch(()=>{});else await interaction.reply(errMsg).catch(()=>{});}catch{}
   }
 });
 
@@ -5084,26 +5153,25 @@ async function buildLiveLeaderboardEmbed(){
   const byUser=buildLeaderboardVolumes();
   const ranked=Object.entries(byUser).sort((a,b)=>b[1]-a[1]).slice(0,10);
   const totalVol=ranked.reduce((s,[,v])=>s+v,0);
-  const medals=["\uD83E\uDD47","\uD83E\uDD48","\uD83E\uDD49"];
   const timeStr=new Date().toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"});
   if(!ranked.length){
     return new EmbedBuilder()
       .setColor(0x7C4DFF)
       .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
-      .setTitle("\uD83C\uDFC6 Leaderboard")
+      .setTitle("Leaderboard")
       .setDescription("No exchanges yet.")
       .setFooter({text:`Konvert Exchange  ·  Updated ${timeStr}`})
       .setTimestamp();
   }
   const lines=ranked.map(([uid,vol],i)=>{
     const tier=getTier(vol);
-    const rank=medals[i]||`\`#${i+1}\``;
-    return `${rank} <@${uid}>  \u2014  **${fmtUSD(vol)}** ${tier.emoji}`;
+    const rank=`\`#${i+1}\``;
+    return `${rank} <@${uid}>  \u2014  **${fmtUSD(vol)}** `;
   }).join("\n");
   return new EmbedBuilder()
     .setColor(0x7C4DFF)
     .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
-    .setTitle("\uD83C\uDFC6 Top 10 Leaderboard")
+    .setTitle("Top 10 Leaderboard")
     .setDescription(lines)
     .setFooter({text:`Konvert Exchange  ·  Total: ${fmtUSD(totalVol)}  ·  Updated ${timeStr}`})
     .setTimestamp();
@@ -5308,7 +5376,7 @@ async function postWeeklyClientRecap(){
         if(!user)continue;
         const embed=new EmbedBuilder().setColor(0x7C4DFF)
           .setAuthor({name:"Konvert Exchange  ·  Weekly Recap",iconURL:IMG.LOGO})
-          .setTitle("\uD83D\uDCCA Your Weekly Summary")
+          .setTitle("Your Weekly Summary")
           .setDescription(`Week ending **${weekStr}** (EST)\n\u200b`)
           .addFields(
             {name:"This Week",value:`**${myWeek.length}** exchange${myWeek.length!==1?"s":""}`,inline:true},
@@ -5316,7 +5384,7 @@ async function postWeeklyClientRecap(){
             {name:"Fees This Week",value:`**${fmtUSD(myFees)}**`,inline:true},
             {name:"All-Time Volume",value:`**${fmtUSD(allVol)}**`,inline:true},
             {name:"All-Time Trades",value:`**${allTime.length}**`,inline:true},
-            {name:"Your Tier",value:`${tier.emoji} **${tier.label}**`,inline:true},
+            {name:"Your Tier",value:`**${tier.label}**`,inline:true},
           )
           .setImage(IMG.BANNER)
           .setFooter({text:"Konvert Exchange  ·  Weekly Recap"});
@@ -5447,7 +5515,7 @@ client.once(Events.ClientReady,async()=>{
         if(state.dualPromo&&state.dualPromo.active&&Date.now()<state.dualPromo.expiresAt){
           const daysLeft=Math.ceil((state.dualPromo.expiresAt-Date.now())/86400000);
           for(const oid of CONFIG.OWNER_IDS){
-            client.users.fetch(oid).then(u=>u.send(`\uD83D\uDC9C **Dual-Server Promo Reminder**\n${daysLeft} day${daysLeft!==1?"s":""} remaining (${state.dualPromo.feePercent}% fee).\nExpires <t:${Math.floor(state.dualPromo.expiresAt/1000)}:R>.`).catch(()=>{})).catch(()=>{});
+            client.users.fetch(oid).then(u=>u.send(`**Dual-Server Promo Reminder**\n${daysLeft} day${daysLeft!==1?"s":""} remaining (${state.dualPromo.feePercent}% fee).\nExpires <t:${Math.floor(state.dualPromo.expiresAt/1000)}:R>.`).catch(()=>{})).catch(()=>{});
           }
         }
         setTimeout(fire,24*60*60*1000);
