@@ -270,6 +270,43 @@ function topOf(list,kind){
 }
 const noTop=list=>(list&&list.length)?"Unknown":"\u2014";      // there are trades but they do not say: "Unknown". No trades at all: a dash
 
+// ── Several payment methods on one ticket ────────────────────────────────────────────────────────────────────
+// A client can open one ticket for up to MAX_TICKET_METHODS payment methods ("Cash App or Venmo"). Exchangers for ANY of them can see and claim it, and
+// the exchanger who claims it fixes the method the deal is done in. Until then ticket.methods lists what it accepts (ticket.method is the first of them).
+// Gift Card, Buy For You and Custom Exchange are their own flows and are never mixed with another method.
+const MAX_TICKET_METHODS=3;
+const SOLO_METHODS=["giftcard","buyforyou","custom"];
+const isSoloMethod=v=>SOLO_METHODS.includes(v);
+const methodIndex=v=>METHODS.findIndex(m=>m.value===v);
+// Open to several methods: more than one accepted, and no exchanger has fixed the one in use yet
+const isMultiMethod=t=>!!t&&Array.isArray(t.methods)&&t.methods.length>1&&!t.methodLocked;
+// What a ticket accepts right now, first choice first
+const ticketMethods=t=>isMultiMethod(t)?t.methods.slice():(t&&t.method?[t.method]:[]);
+const joinOr=names=>names.length<2?names.join(""):names.slice(0,-1).join(", ")+" or "+names[names.length-1];
+// "Cash App / Venmo" (and "Cash App / Venmo +2" past three, which a ticket never has at the moment)
+function methodsLabel(list){
+  const names=(list||[]).map(methodLabel);
+  return names.length>MAX_TICKET_METHODS?`${names.slice(0,2).join(" / ")} +${names.length-2}`:names.join(" / ");
+}
+// How a ticket's method reads on a card: "Cash App / Venmo" while it accepts several, the one method otherwise
+const ticketMethodText=t=>isMultiMethod(t)?methodsLabel(t.methods):methodLabel(t&&t.method);
+// What a client picked in the method menu: real payment methods only, in menu order, no repeats, at most MAX_TICKET_METHODS. A solo flow (Gift Card...) only counts on its own.
+function pickedMethods(values){
+  const all=[...new Set((values||[]).filter(v=>getMethod(v)))];
+  const std=all.filter(v=>!isSoloMethod(v));
+  return (std.length?std:all.slice(0,1)).sort((a,b)=>methodIndex(a)-methodIndex(b)).slice(0,MAX_TICKET_METHODS);
+}
+// A method (or several) inside a button or modal id: one method is just its name, as before; several are "m:" and one character each (the method's place in the menu)
+const methodCode=v=>methodIndex(v).toString(36);
+const methodTag=list=>list.length>1?"m:"+list.map(methodCode).join(""):String(list[0]||"");
+function parseMethodTag(tag){
+  tag=String(tag||"");
+  if(!tag.startsWith("m:"))return tag?[tag]:[];
+  const out=[];
+  for(const c of tag.slice(2)){const m=METHODS[parseInt(c,36)];if(m&&!isSoloMethod(m.value)&&!out.includes(m.value))out.push(m.value);}
+  return out.slice(0,MAX_TICKET_METHODS);
+}
+
 const COINS=["BTC","ETH","SOL","LTC","USDT","USDC","XRP","BNB","ADA","DOGE","MATIC","AVAX","DOT","LINK","TRX","SHIB","UNI","ATOM","FTM","NEAR","ARB","OP","MANA","SAND","APE","IMX","GALA","AXS","ENJ","CHZ","FLOW","ICP","HBAR","VET","EOS","ZEC","DASH","XMR","XLM","ALGO","EGLD","THETA","KLAY","ROSE","ONE","CELO","QTUM","ZIL","ICX","ONT","WAVES","BAT","GRT","MKR","AAVE","COMP","SNX","YFI","SUSHI","CRV","1INCH","BAL","BAND","KNC","ZRX","REN","NMR","ANKR","CELR","SKL","STORJ","ORN","OGN","LRC","PERP","DYDX","CAKE","TWT","ALPHA","AUTO","BAKE","BNX","C98","CHESS","MBOX","MDX","SFP","TKO","XVS","BIFI","ELF","FOR","FRONT","HARD","INJ","KAVA","LINA","MITH","NAV","NULS","PAXG","PEARL","QNT","RAY","RSR","RUNE","SRM","STX","TFUEL","VGX","WAXP","WRX","XTZ","ZEN"];
 const COIN_NAMES={bitcoin:"BTC",ethereum:"ETH",solana:"SOL",litecoin:"LTC",tether:"USDT","usd coin":"USDC","usdc":"USDC",ripple:"XRP","binance coin":"BNB",cardano:"ADA",dogecoin:"DOGE",polygon:"MATIC",avalanche:"AVAX",polkadot:"DOT",chainlink:"LINK",tron:"TRX","shiba inu":"SHIB",uniswap:"UNI",cosmos:"ATOM",fantom:"FTM","near protocol":"NEAR",near:"NEAR",arbitrum:"ARB",optimism:"OP",decentraland:"MANA",sandbox:"SAND",apecoin:"APE","immutable x":"IMX",gala:"GALA","axie infinity":"AXS",enjin:"ENJ",chiliz:"CHZ",flow:"FLOW","internet computer":"ICP",hedera:"HBAR",vechain:"VET",stellar:"XLM",algorand:"ALGO",elrond:"EGLD",theta:"THETA",klaytn:"KLAY",rose:"ROSE",harmony:"ONE",celo:"CELO",qtum:"QTUM",zilliqa:"ZIL",icon:"ICX",ontology:"ONT",waves:"WAVES","basic attention token":"BAT",bat:"BAT","the graph":"GRT",maker:"MKR",aave:"AAVE",compound:"COMP",synthetix:"SNX","yearn finance":"YFI",sushiswap:"SUSHI",sushi:"SUSHI",curve:"CRV","1inch":"1INCH",balancer:"BAL",band:"BAND",kyber:"KNC","0x":"ZRX",ren:"REN",numerai:"NMR",ankr:"ANKR",celer:"CELR",skale:"SKL",storj:"STORJ",loopring:"LRC",perpetual:"PERP",dydx:"DYDX",pancakeswap:"CAKE",cake:"CAKE",injective:"INJ",kava:"KAVA",stacks:"STX",thorchain:"RUNE",rune:"RUNE",tezos:"XTZ",quant:"QNT","pax gold":"PAXG","horizen":"ZEN","theta fuel":"TFUEL",wazirx:"WRX",wax:"WAXP",eos:"EOS",zcash:"ZEC",dash:"DASH",monero:"XMR"};
 function resolveCoin(input){const s=(input||"").trim().toLowerCase();const byName=COIN_NAMES[s];if(byName)return byName;const up=(input||"").trim().toUpperCase();if(COINS.includes(up))return up;return up;}
@@ -476,7 +513,7 @@ function aboveMinimum(n){return Number.isFinite(n)&&n>CONFIG.MIN_FEE;}
 const minAmountText=()=>`The amount has to be **more than ${fmtUSD(CONFIG.MIN_FEE)}**. The minimum fee is ${fmtUSD(CONFIG.MIN_FEE)}, so anything at or below that leaves nothing to exchange. Enter a higher amount.`;
 function dealOf(t){
   t=t||{};
-  const label=t.method?methodLabel(t.method):"Exchange";
+  const label=isMultiMethod(t)?methodsLabel(t.methods):(t.method?methodLabel(t.method):"Exchange");
   const amt=Number(t.amountUSD)||0;
   const feeN=(t.feeUSD==null||t.feeUSD==="")?NaN:Number(t.feeUSD);
   const fee=Number.isFinite(feeN)?feeN:null;
@@ -497,7 +534,7 @@ function dealOf(t){
   const hero=plain?(amt>0?`${fmtUSD(amt)} · ${label}`:label):`${give} → ${get}`;
   const verb=c2c?`Swap ${giveName} for ${getName}`:plain?label:(t.direction==="receive"?`Sell ${coin} for ${label}`:`Buy ${coin} with ${label}`);
   const pair=`${giveName} \u2192 ${getName}`;
-  return {label,coin,giveName,getName,amount:amt,fee,net,estimable,custom,plain,gift,c2c,give,get,hero,pair,verb};
+  return {label,coin,giveName,getName,amount:amt,fee,net,estimable,custom,plain,gift,c2c,give,get,hero,pair,verb,...(isMultiMethod(t)?{multi:true}:{})};
 }
 // The receipt rows of a deal. opts.rate = the tier % (shown beside the fee) · opts.coinAmt = how much coin that is, when a live price is known · opts.final = a finished deal (no "est.")
 function dealRows(d,opts){
@@ -507,14 +544,14 @@ function dealRows(d,opts){
     if(!d.custom&&d.amount>0&&d.fee!=null)rows.push(["Fee",fmtUSD(d.fee)]);
     return rows;
   }
-  const rows=[[opts.final?"You sent":"You send",d.give]];
+  const rows=[[opts.final?"You sent":"You send",(d.multi&&d.giveName===d.label&&d.amount>0)?fmtUSD(d.amount):d.give]];
   if(d.gift){rows.push(["Fee","Agreed in ticket"]);return rows;}
   if(d.fee!=null){
     const rate=opts.rate!=null?opts.rate:null,atMin=rate!=null&&d.fee>d.amount*rate/100+0.005;
     rows.push([atMin?"Fee · minimum":(rate!=null?`Fee · ${rate}%`:"Fee"),fmtUSD(d.fee)]);
   }
   if(d.estimable){
-    rows.push([opts.final?"You received":"You receive",d.net!=null?d.get:"To be discussed"]);
+    rows.push([opts.final?"You received":"You receive",d.net!=null?((d.multi&&d.getName===d.label)?fmtUSD(d.net):d.get):"To be discussed"]);
     if(opts.coinAmt&&!opts.final&&d.net!=null)rows.push(["Coin amount",`${opts.coinAmt} ${d.getName}`]);        // never next to "To be discussed"
   }
   return rows;
@@ -765,8 +802,20 @@ function describeLimit(lim){
 // ---- One panel message; its buttons always follow the ticket's real state ----
 // Green = go ahead · red = report a problem (Flag Ticket is the only red button on a ticket, so it is easy to find in a hurry) · grey = everything else.
 function closeButton(){return kBtn("btn_close","Close Ticket",ButtonStyle.Secondary);}
-function claimRow(){
-  return new ActionRowBuilder().addComponents(kBtn("btn_claim","Claim Ticket",ButtonStyle.Success),closeButton());
+// Why a ticket can't take another payment method (null = it can). Only ordinary payment methods, only while nobody has claimed it, only up to the limit.
+function addMethodBlock(t){
+  if(!t||(t.status&&t.status!=="open"))return "This ticket is no longer open.";
+  if(t.claimedBy)return "An exchanger already has this ticket, so the method is set.";
+  const cur=ticketMethods(t);
+  if(!cur.length||cur.some(v=>!getMethod(v)||isSoloMethod(v)))return "This kind of ticket takes one method only.";
+  if(cur.length>=MAX_TICKET_METHODS)return `This ticket already accepts ${MAX_TICKET_METHODS} methods, the most it can.`;
+  return null;
+}
+const canAddMethod=t=>addMethodBlock(t)===null;
+function claimRow(ticket){
+  const row=new ActionRowBuilder().addComponents(kBtn("btn_claim","Claim Ticket",ButtonStyle.Success));
+  if(ticket&&canAddMethod(ticket))row.addComponents(kBtn("btn_addmethod","Add Method",ButtonStyle.Secondary));    // the client can widen who may take it
+  return row.addComponents(closeButton());
 }
 function flagButton(){return kBtn("btn_report","Flag Ticket",ButtonStyle.Danger);}
 function remindButton(){return kBtn("btn_remind","Remind",ButtonStyle.Secondary);}
@@ -780,7 +829,7 @@ function completionRow(){
 function hopButton(){return kBtn("btn_hopin","Hop In",ButtonStyle.Primary);}
 function panelRow(ticket){
   if(ticket.status&&ticket.status!=="open")return null;           // finished: no buttons
-  if(!ticket.claimedBy)return claimRow();                          // waiting for an exchanger
+  if(!ticket.claimedBy)return claimRow(ticket);                          // waiting for an exchanger
   const close=closeButton();
   if(ticket.reported)return new ActionRowBuilder().addComponents(close);                       // frozen, waiting on an owner
   const hop=ticket.openToAll?[hopButton()]:[];                      // opened to all exchangers ($all): anyone can join
@@ -816,28 +865,30 @@ async function clearConfirmButtons(channel,ticket){
 }
 
 // ---- The "claimed" announcement ----
+// A line for the client when the exchanger picked one of the methods they offered
+const methodNote=t=>t.methodPicked?`Handled through **${methodLabel(t.method)}**, one of the methods you picked.\n\n`:"";
 function buildClaimEmbed(ticket,mode){
   const ex=ticket.claimedBy,cl=ticket.userId,hero=kHero(dealOf(ticket).hero);
   const e=kEmbed("Ticket");
   if(mode==="normal"){
     const {rule}=describeLimit(ticket.claimLimit||null);
     return e.setTitle("Ticket Claimed")
-      .setDescription(`${hero}\n<@${cl}>, your ticket was claimed by <@${ex}>.\n\n${rule}`)
+      .setDescription(`${hero}\n<@${cl}>, your ticket was claimed by <@${ex}>.\n\n${methodNote(ticket)}${rule}`)
       .setFooter(kFoot("Something wrong? Press Flag Ticket")).setTimestamp();
   }
   if(mode==="owner"){
     return kEmbed("Ticket","ok").setTitle("Owner Verified")
-      .setDescription(`${hero}\n<@${cl}>, your ticket was claimed by <@${ex}>.\n\n<@${ex}> is a Konvert owner \u2014 **safe to go first**. You can trade with full confidence.`)
+      .setDescription(`${hero}\n<@${cl}>, your ticket was claimed by <@${ex}>.\n\n${methodNote(ticket)}<@${ex}> is a Konvert owner \u2014 **safe to go first**. You can trade with full confidence.`)
       .setFooter(kFoot("Verified Konvert owner")).setTimestamp();
   }
   if(mode==="mmConfirmed"){
     return kEmbed("Ticket","ok").setTitle("Middleman Confirmed")
-      .setDescription(`${hero}\n<@${cl}> and <@${ex}> both confirmed a middleman (${MM_SERVICES}).\n\nDon't send anything to each other directly.`)
+      .setDescription(`${hero}\n<@${cl}> and <@${ex}> both confirmed a middleman (${MM_SERVICES}).\n\n${methodNote(ticket)}Don't send anything to each other directly.`)
       .setFooter(kFoot("Something wrong? Press Flag Ticket")).setTimestamp();
   }
   const why=ticket.mmReason||"This trade needs a middleman.";
   return kEmbed("Ticket","warn").setTitle("Middleman Required")
-    .setDescription(`${hero}\n<@${cl}>, your ticket was claimed by <@${ex}>.\n\n${why} Use ${MM_SERVICES} \u2014 **don't send anything to the exchanger directly.**\n\n<@${cl}>, press **Confirm Middleman** to continue.`)
+    .setDescription(`${hero}\n<@${cl}>, your ticket was claimed by <@${ex}>.\n\n${methodNote(ticket)}${why} Use ${MM_SERVICES} \u2014 **don't send anything to the exchanger directly.**\n\n<@${cl}>, press **Confirm Middleman** to continue.`)
     .setFooter(kFoot("Exchanger confirmed  \u00b7  waiting for the client")).setTimestamp();
 }
 
@@ -929,7 +980,7 @@ async function reportTicket(interaction,ticket,tickets,reason,opts={}){
 
 // ---- Claiming ----
 async function claimTicket(interaction,opts={}){
-  const fromEphemeral=!!opts.mmConfirmed;   // came from the exchanger's "Claim with Middleman" confirmation
+  const fromEphemeral=!!(opts.mmConfirmed||opts.fromPicker);   // came from an ephemeral step: the method picker or the "Claim with Middleman" confirmation
   const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
   const ch=interaction.channel;
   const ticket=tickets[ch.id];
@@ -944,6 +995,15 @@ async function claimTicket(interaction,opts={}){
     return interaction.reply({content:"Your exchanger access is suspended pending owner review, so you can't claim tickets.",flags:64});
   if(isOnHold(interaction.user.id)&&!owner)
     return interaction.reply({content:"New claims are paused while an owner reviews recent activity on your account. You can keep working your open tickets.",flags:64});
+
+  // A ticket open to several methods: the exchanger says which one they'll use (decided for them when only one of its methods is theirs)
+  let chosen=null;
+  if(isMultiMethod(ticket)){
+    const mine=exchangerMethods(interaction.member,ticket),options=mine.length?mine:ticketMethods(ticket);
+    if(opts.method&&options.includes(opts.method))chosen=opts.method;
+    else if(options.length===1)chosen=options[0];
+    else return methodPicker(interaction,ticket,options);
+  }
 
   // Does this claim need a middleman? Over their limit, over it in total across open tickets, or "Use MM Always".
   const lim=parseExchangerLimit(interaction.member);
@@ -973,19 +1033,20 @@ async function claimTicket(interaction,opts={}){
 
   // Step 1 for a middleman claim: the exchanger has to knowingly opt in
   if(needsMm&&!opts.mmConfirmed){
-    return interaction.reply({
+    const prompt={
       embeds:[kEmbed("Ticket","warn").setTitle(`Middleman Required`)
         .setDescription(`${warnText}\n\nYou can still take it through a middleman (${MM_SERVICES}). The client must confirm first, and you can't message until they do.`)],
       components:[new ActionRowBuilder().addComponents(
-        kBtn("btn_mmclaim","Claim with Middleman",ButtonStyle.Success),
-        kBtn("btn_mmcancel","Cancel",ButtonStyle.Secondary))],
-      flags:64});
+        kBtn(chosen?`btn_mmclaim__${chosen}`:"btn_mmclaim","Claim with Middleman",ButtonStyle.Success),     // the button remembers the method they picked
+        kBtn("btn_mmcancel","Cancel",ButtonStyle.Secondary))]};
+    return opts.fromPicker?interaction.update(prompt):interaction.reply({...prompt,flags:64});
   }
 
   if(!ticket.panelMessageId&&interaction.message&&!fromEphemeral)ticket.panelMessageId=interaction.message.id;
   // Lock synchronously, before any await, so two simultaneous clicks can't both claim it
   ticket.claimedBy=interaction.user.id;
   ticket.claimedAt=Date.now();
+  if(chosen)lockTicketMethod(ticket,chosen);
   ticket.claimLimit=(!owner&&lim)?(lim.mm?{mm:true}:{amount:lim.amount}):null;
   if(owner)ticket.ownerClaim=true;else delete ticket.ownerClaim;   // owners are trusted: no limits, no middleman wording
   if(needsMm){ticket.mmRequired=true;ticket.mmPending=true;ticket.mmReason=mmReason;}
@@ -996,12 +1057,15 @@ async function claimTicket(interaction,opts={}){
     }catch(e){
       // Roll back so the ticket isn't left locked with nobody able to talk
       delete ticket.claimedBy;delete ticket.claimedAt;delete ticket.claimLimit;delete ticket.ownerClaim;
+      if(chosen)unlockTicketMethod(ticket);
       console.error("[claim] permission edit failed:",e.message);
       return interaction.followUp({content:"Couldn't claim this ticket (permission update failed). Try again.",flags:64}).catch(()=>{});
     }
   }
   _mem.tickets=tickets;save("tickets",tickets);
   await refreshPanel(ch,ticket);
+  if(chosen)await syncTicketMethod(ch,ticket);          // channel name, topic and the ticket card now say the method in use
+  else await refreshTicketCard(ch,ticket);              // (and the card drops its "Add Method" tip)
 
   const payload={
     content:`<@${interaction.user.id}> <@${ticket.userId}>`,
@@ -1011,8 +1075,9 @@ async function claimTicket(interaction,opts={}){
   if(needsMm)payload.components=[mmConfirmRow()];
   const sent=await ch.send(payload).catch(()=>null);
   if(sent){ticket.claimMessageId=sent.id;_mem.tickets=tickets;save("tickets",tickets);}
-  if(fromEphemeral)await interaction.editReply({content:needsMm?"You claimed this ticket. Waiting for the client to confirm the middleman.":"You claimed this ticket.",embeds:[],components:[]}).catch(()=>{});
-  log(interaction.guild,`CLAIM: #${ch.name} | ${interaction.user.tag} | client <@${ticket.userId}> | ${needsMm?"MIDDLEMAN":owner?"OWNER":"limit "+describeLimit(ticket.claimLimit).limitText}`);
+  const via=chosen?` through ${methodLabel(chosen)}`:"";
+  if(fromEphemeral)await interaction.editReply({content:needsMm?`You claimed this ticket${via}. Waiting for the client to confirm the middleman.`:`You claimed this ticket${via}.`,embeds:[],components:[]}).catch(()=>{});
+  log(interaction.guild,`CLAIM: #${ch.name} | ${interaction.user.tag} | client <@${ticket.userId}> | ${needsMm?"MIDDLEMAN":owner?"OWNER":"limit "+describeLimit(ticket.claimLimit).limitText}${chosen?" | "+methodLabel(chosen):""}`);
 }
 
 // Client presses "Confirm Middleman": unlocks the exchanger
@@ -1067,13 +1132,17 @@ async function confirmCompletion(interaction){
   const ch=interaction.channel;
   const ticket=tickets[ch.id];
   if(!ticket||ticket.status!=="open")return interaction.reply({content:"This ticket is no longer open.",flags:64});
-  if(interaction.user.id!==ticket.userId)return interaction.reply({content:"Only the client can confirm this.",flags:64});
+  const byOwner=interaction.user.id!==ticket.userId&&isOwner(interaction.user.id,interaction.member);       // an owner can confirm in the client's place
+  if(interaction.user.id!==ticket.userId&&!byOwner)return interaction.reply({content:"Only the client or an owner can confirm this.",flags:64});
   if(!ticket.completionPending||!ticket.claimedBy)return interaction.reply({content:"There's nothing to confirm right now.",flags:64});
-  if(ticket.reported)return interaction.reply({content:"This ticket is flagged \u2014 an owner needs to review it first.",flags:64});
-  await interaction.deferUpdate().catch(()=>{});
+  if(ticket.reported&&!byOwner)return interaction.reply({content:"This ticket is flagged \u2014 an owner needs to review it first.",flags:64});
+  // Settled before the first await: the client and an owner pressing together (or a double tap) must not both finish the trade
   ticket.completionPending=false;ticket.completionConfirmedAt=Date.now();delete ticket.completionMessageId;
+  if(byOwner)ticket.completionConfirmedBy=interaction.user.id;else delete ticket.completionConfirmedBy;
+  await interaction.deferUpdate().catch(()=>{});
   await interaction.editReply({embeds:[kEmbed("Ticket","ok").setTitle(`Completion Confirmed`)
-    .setDescription(`**${dealOf(ticket).hero}**\n<@${ticket.userId}> confirmed the exchange.`).setTimestamp()],components:[]}).catch(()=>{});
+    .setDescription(`${kHero(dealOf(ticket).hero)}\n${byOwner?`<@${interaction.user.id}> confirmed the exchange for <@${ticket.userId}>.`:`<@${ticket.userId}> confirmed the exchange.`}`).setTimestamp()],components:[]}).catch(()=>{});
+  if(byOwner)log(interaction.guild,`OWNER CONFIRM: #${ch.name} | ${interaction.user.tag} confirmed for client <@${ticket.userId}> | exchanger <@${ticket.claimedBy}>`);
   // Finalize as the exchanger who handled it, so stats, receipts and the profit DM all credit the right person
   ticket._overrideExchangerId=ticket.claimedBy;
   const exUser=await client.users.fetch(ticket.claimedBy).catch(()=>({id:ticket.claimedBy,tag:ticket.claimedBy,username:ticket.claimedBy}));
@@ -1172,6 +1241,7 @@ async function releaseClaim(channel,ticket,tickets,{by=null}={}){
   delete ticket.completionPending;delete ticket.completionRequestedAt;delete ticket.completionMessageId;
   delete ticket.checkinAt;delete ticket.checkinSentAt;delete ticket.checkinMessageId;delete ticket.checkinAnswered;
   delete ticket.hoppedIn;
+  const relabel=unlockTicketMethod(ticket);                         // a several-method ticket accepts all its methods again
   resetSafetyFields(ticket);_safety.delete(channel.id);
   ticket.reopenedAt=Date.now();
   tickets[channel.id]=ticket;_mem.tickets=tickets;save("tickets",tickets);
@@ -1183,19 +1253,20 @@ async function releaseClaim(channel,ticket,tickets,{by=null}={}){
   const fresh=await postOpenPanel(channel,ticket,{title:`Ticket Open Again`,lead:`<@${prev}> released this ticket. It is back in the queue — any exchanger can claim it.`});
   if(fresh){if(oldPanel&&oldPanel.id!==fresh.id)await oldPanel.edit({components:[]}).catch(()=>{});}
   else await refreshPanel(channel,ticket);                          // couldn't post: at least put the buttons back on the old panel
+  if(relabel)await syncTicketMethod(channel,ticket);                 // the channel name, topic and card list every method again
   log(channel.guild,`RELEASE: #${channel.name} | ${prev}${by&&by!==prev?" | by "+by:""}`);
   return true;
 }
 // A fresh panel for a ticket that needs an exchanger: an embed plus the buttons for its current state. It pings the roles that can take the
 // ticket and becomes the ticket's panel, so later claims / completions keep its buttons up to date.
-async function postOpenPanel(channel,ticket,{title,lead,known}){
-  const roles=ticketPingRoles(channel,ticket,known);
+async function postOpenPanel(channel,ticket,{title,lead,known,only,pingClient=true}){
+  const roles=only?_rolesThatSee(channel,only,known):ticketPingRoles(channel,ticket,known);       // `only` = just these roles (a method was added: only its exchangers need to hear)
   const row=panelRow(ticket);
   const embed=kEmbed("Ticket").setTitle(title)
     .setDescription(`${kHero(dealOf(ticket).hero)}\n${lead}`)
     .setFooter(kFoot(ticket.claimedBy?"Press Hop In to join this ticket":"Press Claim Ticket to take it")).setTimestamp();
-  const content=[...roles.map(r=>`<@&${r}>`),`<@${ticket.userId}>`].join(" ");
-  const sent=await channel.send({content,embeds:[embed],components:row?[row]:[],allowedMentions:{roles,users:[ticket.userId]}}).catch(e=>{console.error("[panel] couldn't post:",e.message);return null;});
+  const content=[...roles.map(r=>`<@&${r}>`),...(pingClient?[`<@${ticket.userId}>`]:[])].join(" ");
+  const sent=await channel.send({content,embeds:[embed],components:row?[row]:[],allowedMentions:{roles,users:pingClient?[ticket.userId]:[]}}).catch(e=>{console.error("[panel] couldn't post:",e.message);return null;});
   if(sent){ticket.panelMessageId=sent.id;save("tickets",_mem.tickets);}
   return sent;
 }
@@ -1218,8 +1289,7 @@ function _rolesThatSee(channel,ids,known){
 // role once it has been opened to all. Only roles that can see the channel are pinged (Discord notifies nobody else anyway).
 function ticketPingRoles(channel,ticket,known){
   const want=[];
-  const mr=CONFIG.ROLES&&CONFIG.ROLES[ticket.method];
-  if(mr)want.push(mr);
+  want.push(...rolesForMethods(ticketMethods(ticket)));         // the role of every method the ticket accepts
   if(CONFIG.STAFF_ROLE)want.push(CONFIG.STAFF_ROLE);
   if((ticket.method==="custom"||ticket.method==="buyforyou")&&CONFIG.HELPER_ROLE)want.push(CONFIG.HELPER_ROLE);
   if(ticket.openToAll)want.push(...exchangerRoleIds());
@@ -1279,6 +1349,140 @@ async function hopIn(interaction){
     .setDescription(`<@${uid}> hopped in to help <@${ticket.claimedBy}>.`).setTimestamp()],allowedMentions:{parse:[]}}).catch(()=>{});
   log(interaction.guild,`HOP IN: #${ch.name} | ${uid} | claimed by ${ticket.claimedBy}`);
 }
+
+// ── Several payment methods: the ticket's side ───────────────────────────────────────────────────────────────
+// The exchanger roles of some payment methods (the ones that are set up, each once)
+const rolesForMethods=list=>[...new Set((list||[]).map(v=>CONFIG.ROLES&&CONFIG.ROLES[v]).filter(Boolean))];
+// Which of a ticket's accepted methods this exchanger handles, going by their roles
+function exchangerMethods(member,ticket){
+  const has=r=>!!(r&&member&&member.roles&&member.roles.cache&&member.roles.cache.has(r));
+  return ticketMethods(ticket).filter(v=>has(CONFIG.ROLES&&CONFIG.ROLES[v]));
+}
+// An exchanger claimed a ticket open to several methods: the method they will use becomes the deal's method
+function lockTicketMethod(ticket,method){ticket.method=method;ticket.methodLocked=true;ticket.methodPicked=true;}
+// The ticket went back to the queue, or the claim failed: it accepts all its methods again. true = something changed
+function unlockTicketMethod(ticket){
+  if(!(Array.isArray(ticket.methods)&&ticket.methods.length>1&&ticket.methodLocked))return false;
+  ticket.method=ticket.methods[0];delete ticket.methodLocked;delete ticket.methodPicked;
+  return true;
+}
+const ticketChannelName=(t,suffix)=>`${ticketMethods(t).join("-")}-${suffix}`;
+// The ticket's first card (title, the deal, what happens next). It is drawn again whenever the ticket's methods change or it is claimed, from what
+// createTicket kept in t.card. opts.hint = the "Add Method" tip, shown only on the card as it is first drawn (its button sits right under it).
+function buildTicketCard(t,opts){
+  const d=dealOf(t),c=t.card||{};
+  const intro=(t.method==="buyforyou"||t.method==="custom")
+    ?`${CONFIG.HELPER_ROLE?`<@&${CONFIG.HELPER_ROLE}>`:"@Helper"} — New **${d.label}** ticket opened.`
+    :`Welcome, <@${t.userId}>. Your ticket is open and an exchanger will claim it shortly.`;
+  const next=isMultiMethod(t)
+    ?"1. An exchanger for any of your methods claims this ticket.\n2. They confirm the method, wallet and payment details here.\n3. Final amounts are agreed in this ticket before anything is sent."
+    :"1. An exchanger claims this ticket.\n2. They confirm the wallet and payment details here.\n3. Final amounts are agreed in this ticket before anything is sent.";
+  return kEmbed("Ticket").setTitle(t.method==="crypto"?"Crypto to Crypto Exchange":`${d.label} Exchange`)
+    .setDescription(`${dealHead(d,c.notes||[])}\n${kLedger(dealRows(d,{rate:c.rate!=null?c.rate:null,coinAmt:c.coinAmt||null}))}${intro}${opts&&opts.hint&&canAddMethod(t)?"\n*Nobody yet? Press Add Method to reach more exchangers.*":""}`)
+    .addFields(...(isMultiMethod(t)?[{name:"Accepted Methods",value:t.methods.map(methodLabel).join("  ·  "),inline:false}]:[]),{name:"What happens next",value:next,inline:false})
+    .setImage(IMG.BANNER).setTimestamp(t.createdAt||Date.now()).setFooter(kFoot("All communication stays in this ticket"));
+}
+// Redraws the ticket's first card (best effort: a failed edit never stops the ticket)
+async function refreshTicketCard(ch,ticket){
+  if(!ticket.card||!ticket.cardMessageId)return;
+  try{
+    const msg=await ch.messages.fetch(ticket.cardMessageId).catch(()=>null);
+    if(!msg)return;
+    await msg.edit({embeds:[buildTicketCard(ticket),...(msg.embeds||[]).slice(1)]});
+  }catch(e){console.error("[card] refresh failed:",e.message);}
+}
+// Brings the channel's name and topic, and the ticket card, in line with the ticket's methods. The rename is not awaited: Discord allows two of them
+// per channel every ten minutes, and a queued one must never hold the ticket up.
+const _methodSync=new Map();           // channel id -> the name and topic last asked for (a rename still queued must not make the next one look unnecessary)
+async function syncTicketMethod(ch,ticket){
+  try{
+    const name=ticketChannelName(ticket,String(ch.name||"").split("-").pop()),topic=dealOf(ticket).hero.slice(0,1024),patch={};
+    const last=_methodSync.get(ch.id)||{name:ch.name,topic:ch.topic};
+    if(name!==last.name)patch.name=name;
+    if(topic!==last.topic)patch.topic=topic;
+    if(Object.keys(patch).length&&typeof ch.edit==="function"){
+      _methodSync.set(ch.id,{name,topic});
+      Promise.resolve(ch.edit(patch)).catch(e=>console.error("[method] channel edit failed:",e.message));
+    }
+  }catch(e){console.error("[method] sync failed:",e.message);}
+  await refreshTicketCard(ch,ticket);
+}
+// An exchanger who could take a ticket by more than one of its methods says which one they will use (ephemeral; the choice comes back to claimTicket)
+function methodPicker(interaction,ticket,options){
+  return interaction.reply({
+    embeds:[kEmbed("Ticket").setTitle(`Which Method Will You Use?`)
+      .setDescription(`${kHero(dealOf(ticket).hero)}\nThe client accepts more than one method. Pick the one you'll handle — it becomes the method for this exchange.`)],
+    components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("sel_claimmethod").setPlaceholder("Choose your method...")
+      .addOptions(options.map(v=>new StringSelectMenuOptionBuilder().setLabel(methodLabel(v)).setValue(v))))],
+    flags:64});
+}
+// ---- The client widens their ticket: "Add Method" ----
+const ADD_METHOD_COOLDOWN_MS=2*60*1000;          // each addition pings the new methods' exchangers, so once every 2 minutes per ticket
+const _addMethodAt=new Map();
+async function addMethodPrompt(interaction){
+  const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
+  const ticket=tickets[interaction.channel.id];
+  if(!ticket)return interaction.reply({content:"This ticket is no longer open.",flags:64});
+  if(interaction.user.id!==ticket.userId&&!isOwner(interaction.user.id,interaction.member))return interaction.reply({content:"Only the client can add a payment method.",flags:64});
+  const why=addMethodBlock(ticket);
+  if(why)return interaction.reply({content:why,flags:64});
+  const cur=ticketMethods(ticket),room=MAX_TICKET_METHODS-cur.length;
+  const opts=METHODS.filter(m=>!isSoloMethod(m.value)&&!cur.includes(m.value));
+  const menu=new StringSelectMenuBuilder().setCustomId("sel_addmethod").setPlaceholder(room===1?"Choose a method to add...":`Add up to ${room} more...`).setMinValues(1).setMaxValues(Math.min(room,opts.length))
+    .addOptions(opts.map(m=>new StringSelectMenuOptionBuilder().setLabel(m.label).setValue(m.value).setDescription(`Also accept ${m.label}`)));
+  return interaction.reply({
+    embeds:[kEmbed("Ticket").setTitle(`Add a Payment Method`)
+      .setDescription(`${kHero(dealOf(ticket).hero)}\n${room===1?"Pick one more method. Its exchangers will be notified and can claim this ticket.":`Pick up to ${room} more. Exchangers for each will be notified, and any of them can claim this ticket.`}`)
+      .setFooter(kFoot("Your ticket stays open while you wait"))],
+    components:[new ActionRowBuilder().addComponents(menu)],flags:64});
+}
+async function addMethods(interaction){
+  const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
+  const ch=interaction.channel,ticket=tickets[ch.id];
+  if(!ticket)return interaction.reply({content:"This ticket is no longer open.",flags:64});
+  const owner=isOwner(interaction.user.id,interaction.member);
+  if(interaction.user.id!==ticket.userId&&!owner)return interaction.reply({content:"Only the client can add a payment method.",flags:64});
+  const why=addMethodBlock(ticket);
+  if(why)return interaction.reply({content:why,flags:64});
+  const cur=ticketMethods(ticket);
+  const want=[...new Set(interaction.values||[])].filter(v=>getMethod(v)&&!isSoloMethod(v)&&!cur.includes(v)).sort((a,b)=>methodIndex(a)-methodIndex(b)).slice(0,MAX_TICKET_METHODS-cur.length);
+  if(!want.length)return interaction.reply({content:"Pick a method this ticket doesn't accept yet.",flags:64});
+  const wait=ADD_METHOD_COOLDOWN_MS-(Date.now()-(_addMethodAt.get(ch.id)||0));
+  if(wait>0&&!owner)return interaction.reply({content:`You can add another method in ${Math.ceil(wait/1000)}s.`,flags:64});
+  _addMethodAt.set(ch.id,Date.now());
+  await interaction.deferUpdate().catch(()=>{});
+  // The exchangers of each new method have to be able to see the ticket. A method whose role can't be let in is left out.
+  const granted=new Set(),add=[];
+  for(const v of want){
+    const rid=CONFIG.ROLES&&CONFIG.ROLES[v];
+    if(!rid||_rolesThatSee(ch,[rid]).length){add.push(v);continue;}
+    try{await ch.permissionOverwrites.edit(rid,{ViewChannel:true,ReadMessageHistory:true,SendMessages:false},{type:0});granted.add(rid);add.push(v);}
+    catch(e){console.error("[addmethod] couldn't open the ticket to role",rid+":",e.message);}
+  }
+  if(!add.length){
+    _addMethodAt.delete(ch.id);
+    return interaction.editReply({content:"Couldn't open this ticket to those exchangers. Ask staff for help.",embeds:[],components:[]}).catch(()=>{});
+  }
+  // Letting those roles in took a moment: make sure the ticket is still unclaimed and has room before the methods are recorded
+  const stop=addMethodBlock(ticket),now=ticketMethods(ticket);
+  const fin=stop?[]:add.filter(v=>!now.includes(v)).slice(0,MAX_TICKET_METHODS-now.length);
+  if(!fin.length){
+    for(const rid of granted)await ch.permissionOverwrites.delete(rid).catch(()=>{});       // take back the access just opened
+    _addMethodAt.delete(ch.id);
+    return interaction.editReply({content:stop||"This ticket already accepts those methods.",embeds:[],components:[]}).catch(()=>{});
+  }
+  ticket.methods=[...now,...fin];
+  tickets[ch.id]=ticket;_mem.tickets=tickets;save("tickets",tickets);
+  await syncTicketMethod(ch,ticket);
+  const names=joinOr(fin.map(methodLabel));
+  const oldPanel=await findPanelMessage(ch,ticket);
+  const fresh=await postOpenPanel(ch,ticket,{title:`Methods Added`,lead:`<@${ticket.userId}> now also accepts **${names}**. Exchangers for ${fin.length>1?"these methods":"this method"} can claim this ticket.`,known:granted,only:rolesForMethods(fin),pingClient:false});
+  if(fresh){if(oldPanel&&oldPanel.id!==fresh.id)await oldPanel.edit({components:[]}).catch(()=>{});}
+  else await refreshPanel(ch,ticket);
+  await interaction.editReply({embeds:[kEmbed("Ticket","ok").setTitle(`Method Added`).setDescription(`${kHero(dealOf(ticket).hero)}\n${names} exchangers have been notified.`)],components:[]}).catch(()=>{});
+  log(interaction.guild,`ADD METHOD: #${ch.name} | ${interaction.user.tag} | +${fin.join(",")} | now ${ticket.methods.join(",")}`);
+}
+// ── end Several payment methods ──────────────────────────────────────────────────────────────────────────────
 
 // ── Safety system ────────────────────────────────────────────
 // Reads each claimed ticket for signs an exchanger is scamming the client, and says nothing in the ticket until it really thinks so.
@@ -2453,7 +2657,7 @@ function _gExchanging(c){
     "",
     "## How a trade works",
     `**1.**  Get a quote with ${_gcmd("estimate")} or ${_gcmd("fee")}. An exchange has to be for more than $${CONFIG.MIN_FEE}`,
-    `**2.**  Open a ticket in ${ex}`,
+    `**2.**  Open a ticket in ${ex}. Pick up to ${MAX_TICKET_METHODS} payment methods, so the first exchanger online for any of them can take it`,
     "**3.**  An exchanger claims it. Their go-first limit is in their name (like **Up To $50**). Above it, use a middleman",
     "**4.**  Send only what your ticket tells you to, then confirm once your exchanger marks the deal complete",
     "",
@@ -2718,7 +2922,7 @@ function guideOverview(c,who){
     kHero("How Konvert works"),
     kNote("Crypto to cash and back, in a private ticket with an exchanger."),
     "",
-    `**1.**  Open a ticket in ${ex}`,
+    `**1.**  Open a ticket in ${ex} and pick up to ${MAX_TICKET_METHODS} payment methods`,
     "**2.**  An exchanger claims it and confirms the deal",
     "**3.**  Send only what your ticket says, then confirm",
     _gline("howto","a step-by-step walkthrough"),
@@ -2926,7 +3130,7 @@ function mainEmbed(){
     .addFields(
       {name:"Fee",value:`5% – 10%, tiered\nMinimum fee ${fmtUSD(CONFIG.MIN_FEE)}`,inline:true},
       {name:"Minimum Amount",value:`More than ${fmtUSD(CONFIG.MIN_FEE)}`,inline:true},
-      {name:"Payment Methods",value:"PayPal · Cash App · Zelle · Interac · Venmo · Apple Pay · Google Pay · Skrill · Revolut · Bank · Wire · IBAN · UPI · Gift Card",inline:false},
+      {name:`Payment Methods  ·  pick up to ${MAX_TICKET_METHODS}`,value:"PayPal · Cash App · Zelle · Interac · Venmo · Apple Pay · Google Pay · Skrill · Revolut · Bank · Wire · IBAN · UPI · Gift Card",inline:false},
       {name:"Crypto",value:"BTC · ETH · SOL · LTC · USDT · USDC · XRP · BNB · ADA · DOGE · and more",inline:false},
     ).setThumbnail(IMG.LOGO).setImage(IMG.BANNER).setFooter(kFoot("Fast · Safe · Simple"));
 }
@@ -2939,11 +3143,40 @@ function mainButtons(){
 }
 function step1Embed(){
   return kEmbed().setTitle("Step 1 · Select Payment Method").setThumbnail(IMG.LOGO)
-    .setDescription("Choose how you'd like to pay or receive.\nA private ticket with the right handler opens instantly.\n​")
+    .setDescription(`Choose how you'd like to pay or receive.\n**Pick up to ${MAX_TICKET_METHODS}** and the first exchanger online for any of them can take your ticket.\n${kNote("Gift Card, Buy For You and Custom Exchange are chosen on their own.")}\n​`)
     .setFooter(kFoot("Step 1 of 3"));
 }
+// Step 1's controls: a menu of payment methods (pick up to MAX_TICKET_METHODS) and, under it, the flows that are chosen on their own
+function methodPickRows(){
+  const std=METHODS.filter(m=>!isSoloMethod(m.value));
+  const menu=new StringSelectMenuBuilder().setCustomId("select_method").setPlaceholder(`Select up to ${MAX_TICKET_METHODS} payment methods...`)
+    .setMinValues(1).setMaxValues(Math.min(MAX_TICKET_METHODS,std.length))
+    .addOptions(std.map(m=>new StringSelectMenuOptionBuilder().setLabel(m.label).setValue(m.value).setDescription(`Exchange crypto with ${m.label}`)));
+  const solo=SOLO_METHODS.map(getMethod).filter(Boolean).map(m=>kBtn(`btn_pick__${m.value}`,m.label,ButtonStyle.Secondary));
+  return [new ActionRowBuilder().addComponents(menu),new ActionRowBuilder().addComponents(...solo)];
+}
+// Step 2's two direction buttons for the methods picked. One method keeps the ids and labels it always had; several carry their methods in the id.
+const fitLabel=(s,alt)=>s.length<=80?s:alt;
+function directionRow(list){
+  const tag=methodTag(list),lbl=list.length>1?methodsLabel(list):getMethod(list[0]).label;
+  return new ActionRowBuilder().addComponents(
+    kBtn(`dir_send__${tag}`,fitLabel(`Send Crypto → Get ${lbl}`,"Send Crypto → Get Paid"),ButtonStyle.Primary),
+    kBtn(`dir_receive__${tag}`,fitLabel(`Send ${lbl} → Get Crypto`,"Send Payment → Get Crypto"),ButtonStyle.Primary));
+}
+// A modal title is 45 characters at most
+function modalTitle(label,n,sendCrypto){
+  const tail=sendCrypto?"Send Crypto":"Receive Crypto",t=`${label} · ${tail}`;
+  return t.length<=45?t:`${n} methods · ${tail}`;
+}
 const minLine=()=>kNote(`Every exchange has to be for more than ${fmtUSD(CONFIG.MIN_FEE)}.`);
+function step2MultiEmbed(list){
+  const lbl=methodsLabel(list),or=joinOr(list.map(methodLabel));
+  return kEmbed().setTitle(`Step 2 · ${lbl}`)
+    .setDescription(`${kHero("Choose your direction")}\n**Send Crypto → Get ${lbl}**\nYou send crypto and we pay you through ${or}.\n\n**Send ${lbl} → Get Crypto**\nYou pay through ${or} and we send crypto to your wallet.\n\n${kNote("Exchangers for each method can take your ticket. Whoever claims it sets the method.")}\n\n${minLine()}`)
+    .setFooter(kFoot("Step 2 of 3"));
+}
 function step2Embed(method){
+  if(Array.isArray(method)){if(method.length>1)return step2MultiEmbed(method);method=method[0];}
   const m=getMethod(method);
   if(method==="crypto"){return kEmbed().setTitle("Step 2 · Crypto to Crypto").setDescription(`${kHero("Send one coin, receive another")}\nFor example: send SOL, receive BTC.\n\nSelect your coins below.\n\n${minLine()}`).setFooter(kFoot("Step 2 of 3"));}
   if(method==="buyforyou")return kEmbed().setTitle("Buy For You").setDescription(`Tell us what you want us to purchase and we will handle it.\n\nDescribe the item, link, and amount in your ticket — a helper will reach out.\n\n${minLine()}`).setFooter(kFoot("Step 2 of 3"));
@@ -3083,9 +3316,11 @@ function supportTicketOf(channel){
   }catch{return null;}
 }
 
-async function createTicket(interaction,method,direction,amountUSD,coin,walletInfo,notes,recvCoin){
+async function createTicket(interaction,method,direction,amountUSD,coin,walletInfo,notes,recvCoin,methods){
   const guild=interaction.guild,user=interaction.user,m=getMethod(method)||(method==="crypto"?{label:"Crypto to Crypto",value:"crypto"}:null);
   if(!m){await interaction.editReply({content:"That payment method isn't available any more. Please start again.",embeds:[],components:[]});return null;}
+  const _picked=pickedMethods([method,...(Array.isArray(methods)?methods:[])]),multi=_picked.length>1?_picked:[];     // [] = an ordinary single-method ticket
+  const accepted=multi.length?multi:[method];
   // No ticket for an amount at or below the minimum fee, whatever got us here (the fee alone would be the whole amount)
   if(!aboveMinimum(Number(amountUSD))){await interaction.editReply({content:minAmountText(),embeds:[],components:[]});return null;}
   const tickets=load("tickets");
@@ -3113,31 +3348,27 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   const receiveU=_isGiftCard?amountUSD:amountUSD-feeUSD;
   let coinAmt=null;
   try{const _cp=await Promise.race([getPrice(coin),new Promise(r=>setTimeout(()=>r(null),2000))]);if(_cp)coinAmt=(receiveU/_cp).toFixed(6);}catch{}
-  const d=dealOf({method,direction,coin,recvCoin,amountUSD,feeUSD});              // the deal, worded once and used on every card of this ticket
+  const rec={userId:user.id,userTag:user.tag,method:accepted[0],...(multi.length?{methods:multi}:{}),direction,coin,recvCoin:recvCoin||null,amountUSD,feeUSD,walletInfo,notes:notes||"",status:"open",claimSystem:true,createdAt:Date.now()};
+  const d=dealOf(rec);              // the deal, worded once and used on every card of this ticket
   const _rateShown=_isGiftCard?null:(_dualPromoActive?_dualPromoFee:rate);
   const _coinAmt=(!_isC2C&&direction==="send"&&coinAmt)?coinAmt:null;
   const perms=[{id:guild.roles.everyone,deny:[PermissionFlagsBits.ViewChannel]},{id:user.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]}];
   if(CONFIG.STAFF_ROLE&&guild.roles.cache.has(CONFIG.STAFF_ROLE))perms.push({id:CONFIG.STAFF_ROLE,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]});
-  const mRoleId=CONFIG.ROLES?CONFIG.ROLES[m.value]:null;
-  if(mRoleId&&mRoleId!==CONFIG.STAFF_ROLE&&guild.roles.cache.has(mRoleId))perms.push({id:mRoleId,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.ReadMessageHistory],deny:[PermissionFlagsBits.SendMessages]});
+  const mRoleIds=rolesForMethods(accepted);          // the exchanger role of every method the ticket accepts
+  for(const rid of mRoleIds)if(rid!==CONFIG.STAFF_ROLE&&guild.roles.cache.has(rid))perms.push({id:rid,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.ReadMessageHistory],deny:[PermissionFlagsBits.SendMessages]});
   // Helpers take custom / buy-for-you orders (the embed pings them), so they have to be able to see the channel
   if((method==="custom"||method==="buyforyou")&&CONFIG.HELPER_ROLE&&guild.roles.cache.has(CONFIG.HELPER_ROLE))addOverwrite(perms,{id:CONFIG.HELPER_ROLE,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]});
   for(const o of await ownerOverwrites(guild))addOverwrite(perms,o);        // owners see and talk in every ticket
-  if(guild.roles.cache.has(OWNER_ROLE)&&OWNER_ROLE!==CONFIG.STAFF_ROLE&&OWNER_ROLE!==mRoleId)addOverwrite(perms,{id:OWNER_ROLE,allow:[...OWNER_CHANNEL_ALLOW]});
+  if(guild.roles.cache.has(OWNER_ROLE)&&OWNER_ROLE!==CONFIG.STAFF_ROLE&&!mRoleIds.includes(OWNER_ROLE))addOverwrite(perms,{id:OWNER_ROLE,allow:[...OWNER_CHANNEL_ALLOW]});
   let ch;
-  try{ch=await guild.channels.create({name:`${m.value}-${user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,4)}`,type:ChannelType.GuildText,parent:CONFIG.TICKET_CATEGORY||null,topic:d.hero,permissionOverwrites:perms});}
+  try{ch=await guild.channels.create({name:ticketChannelName(rec,user.username.replace(/[^a-z0-9]/gi,"").toLowerCase().slice(0,4)),type:ChannelType.GuildText,parent:CONFIG.TICKET_CATEGORY||null,topic:d.hero,permissionOverwrites:perms});}
   catch(err){await interaction.editReply({content:`Failed to create ticket: ${err.message}`,embeds:[],components:[]});return null;}
   // Any discount that applies is named under the deal
   const _feeNotes=[];
   if(_dualPromoActive)_feeNotes.push("Dual-member rate");
   else{if(_isVip)_feeNotes.push("VIP rate");if(_hasTag)_feeNotes.push("KONV tag discount");}
-  const _intro=(method==="buyforyou"||method==="custom")
-    ?`${CONFIG.HELPER_ROLE?`<@&${CONFIG.HELPER_ROLE}>`:"@Helper"} — New **${m.label}** ticket opened.`
-    :`Welcome, <@${user.id}>. Your ticket is open and an exchanger will claim it shortly.`;
-  const ticketEmbed=kEmbed("Ticket").setTitle(_isC2C&&recvCoin?"Crypto to Crypto Exchange":`${m.label} Exchange`)
-    .setDescription(`${dealHead(d,_feeNotes)}\n${kLedger(dealRows(d,{rate:_rateShown,coinAmt:_coinAmt}))}${_intro}`)
-    .addFields({name:"What happens next",value:"1. An exchanger claims this ticket.\n2. They confirm the wallet and payment details here.\n3. Final amounts are agreed in this ticket before anything is sent.",inline:false})
-    .setImage(IMG.BANNER).setTimestamp().setFooter(kFoot("All communication stays in this ticket"));
+  rec.card={notes:_feeNotes,rate:_rateShown,coinAmt:_coinAmt};      // what the ticket card needs to be drawn again when the ticket's methods change
+  const ticketEmbed=buildTicketCard(rec,{hint:true});
   const rulesEmbed=kEmbed("Safety","warn")
     .setTitle(`Before You Proceed`)
     .setDescription(
@@ -3146,14 +3377,13 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
       +"**3 · Stay in the ticket**\nKeep every message and every payment detail inside this ticket."
     )
     .setFooter(kFoot("When in doubt, use a middleman"));
-  const btns=claimRow();
+  const btns=claimRow(rec);
   const _panel=await ch.send({content:`<@${user.id}>`,embeds:[ticketEmbed,rulesEmbed],components:[btns]});
-  const pings=[];
-  if(mRoleId)pings.push(`<@&${mRoleId}>`);
-  if(CONFIG.STAFF_ROLE&&CONFIG.STAFF_ROLE!==mRoleId)pings.push(`<@&${CONFIG.STAFF_ROLE}>`);
+  const pings=mRoleIds.map(r=>`<@&${r}>`);
+  if(CONFIG.STAFF_ROLE&&!mRoleIds.includes(CONFIG.STAFF_ROLE))pings.push(`<@&${CONFIG.STAFF_ROLE}>`);
   if(pings.length)await ch.send(`**New ticket**  \u00b7  ${d.hero}  \u00b7  ${pings.join(" ")}`);
   const t=Object.keys(_mem.tickets||{}).length>0?{..._mem.tickets}:load("tickets");
-  t[ch.id]={userId:user.id,userTag:user.tag,method,direction,coin,recvCoin:recvCoin||null,amountUSD,feeUSD,walletInfo,notes:notes||"",status:"open",claimSystem:true,panelMessageId:_panel.id,createdAt:Date.now()};
+  rec.panelMessageId=_panel.id;rec.cardMessageId=_panel.id;t[ch.id]=rec;
   _mem.tickets=t;save("tickets",t);
   log(guild,`TICKET: #${ch.name} | ${user.tag} | ${d.hero}`);
   return ch;
@@ -3200,6 +3430,7 @@ async function sendReceiptDM(clientUserId,exchangerId,ticketData,tradeCount,tota
 
 async function completeTrade(interaction,ticket,tickets){
   const m=getMethod(ticket.method);
+  if(isMultiMethod(ticket))ticket.methodLocked=true;          // finished without a claim (an owner completed it): the first method is the record
   ticket.status="vouched";ticket.completedBy=ticket._overrideExchangerId||interaction.user.id;delete ticket._overrideExchangerId;ticket.completedAt=Date.now();ticket.amountUSD=parseFloat(ticket.amountUSD)||0;
   const ticketKey=interaction.channel.id;tickets[ticketKey]=ticket;
   _mem.tickets={...(_mem.tickets||{}),...tickets};save("tickets",_mem.tickets);
@@ -3372,7 +3603,7 @@ client.on(Events.MessageCreate,async message=>{
       const _mOpen=getMethod(ticket.method);
       if(!_visible.length)return void message.reply("No exchanger role has access to this channel. Add one to the channel permissions first.").catch(()=>{});
       const _pings=_visible.map(r=>"<@&"+r+">").join(" ");
-      await message.channel.send({content:`${_pings} — **${methodLabel(ticket.method)}** ticket needs an exchanger. ${fmtUSD(ticket.amountUSD||0)}`,allowedMentions:{roles:_visible}}).catch(()=>{});
+      await message.channel.send({content:`${_pings} — **${ticketMethodText(ticket)}** ticket needs an exchanger. ${fmtUSD(ticket.amountUSD||0)}`,allowedMentions:{roles:_visible}}).catch(()=>{});
       return;
     }
     // $info — ticket summary
@@ -3954,7 +4185,7 @@ client.on(Events.InteractionCreate,async interaction=>{
       }
 
       if(cmd==="ticket"){const tickets=load("tickets"),found=Object.entries(tickets).find(([,t])=>t.userId===interaction.user.id&&t.status==="open");if(!found)return interaction.reply({content:"You don't have an open ticket. Use **Exchange Now** to start one.",flags:64});const [channelId,t]=found,d=dealOf(t),status=t.reported?"Under owner review":t.mmPending?"Waiting for you to confirm the middleman":t.completionPending?"Waiting for you to confirm completion":t.claimedBy?`Claimed by <@${t.claimedBy}>`:"Waiting for an exchanger";return interaction.reply({embeds:[base("Your Open Ticket").setDescription(`${dealHead(d)}\n\u200b`).addFields({name:"Channel",value:`<#${channelId}>`,inline:true},{name:"Status",value:status,inline:true},{name:"Opened",value:t.createdAt?`<t:${Math.floor(t.createdAt/1000)}:R>`:"Earlier",inline:true}).setFooter({text:"Konvert Exchange  ·  All communication stays in your ticket"})],flags:64});}
-      if(cmd==="howto"){return interaction.reply({embeds:[base("How to Use Konvert").setThumbnail(IMG.LOGO).setDescription("New to Konvert? Here's how a trade works step by step.\n\u200b").addFields({name:"1.  Check Rates",value:"Use **Live Rates** or type `$BTC` / `$ETH` etc. in any channel to see the current price.",inline:false},{name:"2.  Calculate Fee",value:"Use **Calculate Fee** to estimate your cost. Fees range from **5% - 10%** depending on amount.",inline:false},{name:"3.  Open a Ticket",value:"Click **Exchange Now**, pick your payment method, fill in details, confirm. A private ticket opens instantly.",inline:false},{name:"4.  Middleman When Needed",value:"Your exchanger's go-first limit is in their name (like **Up To $50**). Above it, agree on a **middleman** with them inside your ticket.",inline:false},{name:"5.  Send & Confirm",value:"Staff confirms the deal. You send funds and share proof. Once confirmed, you receive your crypto or payment.",inline:false},{name:"Stay Safe",value:"Staff never DM you first. Anyone doing so is an impersonator. All communication stays in your ticket.",inline:false}).setFooter({text:"Konvert Exchange  ·  Questions? Ask in your ticket"})],flags:64});}
+      if(cmd==="howto"){return interaction.reply({embeds:[base("How to Use Konvert").setThumbnail(IMG.LOGO).setDescription("New to Konvert? Here's how a trade works step by step.\n\u200b").addFields({name:"1.  Check Rates",value:"Use **Live Rates** or type `$BTC` / `$ETH` etc. in any channel to see the current price.",inline:false},{name:"2.  Calculate Fee",value:"Use **Calculate Fee** to estimate your cost. Fees range from **5% - 10%** depending on amount.",inline:false},{name:"3.  Open a Ticket",value:"Click **Exchange Now**, pick up to **3 payment methods** (any exchanger online for one of them can take your ticket), fill in details, confirm. A private ticket opens instantly.",inline:false},{name:"4.  Middleman When Needed",value:"Your exchanger's go-first limit is in their name (like **Up To $50**). Above it, agree on a **middleman** with them inside your ticket.",inline:false},{name:"5.  Send & Confirm",value:"Staff confirms the deal. You send funds and share proof. Once confirmed, you receive your crypto or payment.",inline:false},{name:"Stay Safe",value:"Staff never DM you first. Anyone doing so is an impersonator. All communication stays in your ticket.",inline:false}).setFooter({text:"Konvert Exchange  ·  Questions? Ask in your ticket"})],flags:64});}
       if(cmd==="ping"){const sent=Date.now();await interaction.deferReply({flags:64});return interaction.editReply({embeds:[base("Bot Status").setThumbnail(IMG.LOGO).setDescription("**All systems operational.** Konvert is online and ready.\n\u200b").addFields({name:"Status",value:"**Online**",inline:true},{name:"Latency",value:`**${Date.now()-sent}ms**`,inline:true},{name:"API Latency",value:client.ws.ping>=0?`**${client.ws.ping}ms**`:"**—**",inline:true}).setFooter({text:"Konvert Exchange  ·  Bot Status"})]});}
 
       if(cmd==="calc"){await interaction.deferReply({flags:64});if(!CONFIG.RATES_CHANNEL)return interaction.editReply("RATES_CHANNEL_ID not configured.");const ch=interaction.guild.channels.cache.get(CONFIG.RATES_CHANNEL);if(!ch)return interaction.editReply("Rates channel not found.");const embed=await buildRatesEmbed();if(ratesMsgId){const msg=await ch.messages.fetch(ratesMsgId).catch(()=>null);if(msg){await msg.edit({embeds:[embed]});}else{const s=await ch.send({embeds:[embed]});ratesMsgId=s.id;}}else{const s=await ch.send({embeds:[embed]});ratesMsgId=s.id;}return interaction.editReply("Rates posted.");}
@@ -4874,10 +5105,13 @@ This is active immediately and persists until revoked or the bot restarts.
 
     if(interaction.isStringSelectMenu()){
       if(interaction.customId==="select_method"){
-        const method=interaction.values[0],_m=getMethod(method);
+        const _vals=interaction.values||[],_picked=pickedMethods(_vals),method=(_vals.length===1&&_vals[0]==="crypto")?"crypto":_picked[0];
+        if(!method)return interaction.update({embeds:[step1Embed()],components:methodPickRows()});
         if(method==="crypto"){const c2cCoins=["BTC","ETH","SOL","LTC","USDT","USDC","XRP","BNB","ADA","DOGE","MATIC","AVAX","DOT","LINK","TRX","SHIB","UNI","ATOM","NEAR","ARB","OP","CAKE","INJ","RUNE","KAVA"];const coinOpts=c2cCoins.map(c=>new StringSelectMenuOptionBuilder().setLabel(c).setValue(c).setDescription(`Exchange ${c}`));return interaction.update({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor(kAuthor()).setTitle(`Step 2 · Crypto to Crypto`).setDescription(`Select the coin you are **sending** and the coin you want to **receive** below.\n\n${minLine()}`).setFooter(kFoot("Step 2 of 3"))],components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("c2c_send").setPlaceholder("Select coin you are SENDING...").addOptions(coinOpts)),new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("c2c_recv").setPlaceholder("Select coin you want to RECEIVE...").addOptions(coinOpts))]});}
-        return interaction.update({embeds:[step2Embed(method)],components:[new ActionRowBuilder().addComponents(kBtn(`dir_send__${method}`,`Send Crypto → Get ${_m.label}`,ButtonStyle.Primary),kBtn(`dir_receive__${method}`,`Send ${_m.label} → Get Crypto`,ButtonStyle.Primary))]});
+        return interaction.update({embeds:[step2Embed(_picked)],components:[directionRow(_picked)]});
       }
+      if(interaction.customId==="sel_claimmethod"){await claimTicket(interaction,{method:interaction.values[0],fromPicker:true});return;}
+      if(interaction.customId==="sel_addmethod"){await addMethods(interaction);return;}
       if(interaction.customId==="c2c_send"||interaction.customId==="c2c_recv"){
         const userId=interaction.user.id;
         if(!state.c2cSelections[userId])state.c2cSelections[userId]={};
@@ -4892,7 +5126,12 @@ This is active immediately and persists until revoked or the bot restarts.
     }
 
     if(interaction.isButton()){
-      if(interaction.customId==="btn_exchange_now"){await interaction.deferReply({flags:64}).catch(()=>{});const bl=load("blacklist");if(bl[interaction.user.id]&&!isOwner(interaction.user.id,interaction.member))return interaction.editReply({content:"You are blacklisted from Konvert."});return interaction.editReply({embeds:[step1Embed()],components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("select_method").setPlaceholder("Select your payment method...").addOptions(METHODS.map(m=>new StringSelectMenuOptionBuilder().setLabel(m.label).setValue(m.value).setDescription(`Exchange crypto with ${m.label}`))))],flags:64});}
+      if(interaction.customId==="btn_exchange_now"){await interaction.deferReply({flags:64}).catch(()=>{});const bl=load("blacklist");if(bl[interaction.user.id]&&!isOwner(interaction.user.id,interaction.member))return interaction.editReply({content:"You are blacklisted from Konvert."});return interaction.editReply({embeds:[step1Embed()],components:methodPickRows(),flags:64});}
+      if(interaction.customId.startsWith("btn_pick__")){      // Gift Card / Buy For You / Custom Exchange: chosen on their own
+        const _solo=pickedMethods([interaction.customId.slice("btn_pick__".length)]);
+        if(!_solo.length)return interaction.update({embeds:[step1Embed()],components:methodPickRows()});
+        return interaction.update({embeds:[step2Embed(_solo)],components:[directionRow(_solo)]});
+      }
       if(interaction.customId==="btn_fee_calc"){const modal=new ModalBuilder().setCustomId("modal_fee").setTitle("Fee Calculator");modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("fee_amt").setLabel("Amount in USD").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 250").setRequired(true)));return interaction.showModal(modal);}
       if(interaction.customId==="btn_rates_quick"){await interaction.deferReply({flags:64});try{return interaction.editReply({embeds:[await buildRatesEmbed()]});}catch(e){return interaction.editReply("Could not fetch rates right now. Try again in a moment.");}}
       if(interaction.customId==="btn_refresh_rates"){await interaction.deferUpdate();try{const _re=await buildRatesEmbed();return interaction.editReply({embeds:[_re],components:[new ActionRowBuilder().addComponents(kBtn("btn_refresh_rates","Refresh",ButtonStyle.Secondary))]});}catch(e){return interaction.editReply({content:"Could not fetch rates right now."});} return;}
@@ -4914,9 +5153,10 @@ This is active immediately and persists until revoked or the bot restarts.
       }
 
       if(interaction.customId.startsWith("dir_send__")||interaction.customId.startsWith("dir_receive__")){
-        const _isSendCrypto=interaction.customId.startsWith("dir_send__"),method=interaction.customId.replace("dir_send__","").replace("dir_receive__",""),m=getMethod(method);
+        const _isSendCrypto=interaction.customId.startsWith("dir_send__"),_tag=interaction.customId.replace("dir_send__","").replace("dir_receive__",""),_ms=parseMethodTag(_tag),method=_ms[0],m=getMethod(method);
+        if(!m)return interaction.reply({content:"That payment method isn't available any more. Please start again.",flags:64});
         const _direction=_isSendCrypto?"receive":"send";
-        const modal=new ModalBuilder().setCustomId(`modal_amount__${method}__${_direction}`).setTitle(`${m.label} · ${_isSendCrypto?"Send Crypto":"Receive Crypto"}`);
+        const modal=new ModalBuilder().setCustomId(`modal_amount__${_tag}__${_direction}`).setTitle(modalTitle(_ms.length>1?methodsLabel(_ms):m.label,_ms.length,_isSendCrypto));
         modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_amount").setLabel(`Amount in USD (more than ${fmtUSD(CONFIG.MIN_FEE)})`).setStyle(TextInputStyle.Short).setPlaceholder("e.g. 150").setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_coin").setLabel("Which crypto? (BTC, ETH, SOL, LTC, USDT)").setStyle(TextInputStyle.Short).setPlaceholder("e.g. SOL").setRequired(true)));
         return interaction.showModal(modal);
       }
@@ -4979,7 +5219,7 @@ This is active immediately and persists until revoked or the bot restarts.
         return interaction.reply({content:`You are in! **${count}** ${count===1?"person has":"people have"} entered. Good luck!`,flags:64});
       }
 
-      if(interaction.customId==="btn_confirm_ticket"){if(!interaction.deferred&&!interaction.replied)await interaction.deferUpdate().catch(()=>{});const pending=state.pending[interaction.user.id];if(!pending)return interaction.editReply({content:"Session expired. Please start again.",embeds:[],components:[]});delete state.pending[interaction.user.id];const ch=await createTicket(interaction,pending.method,pending.direction,pending.rawAmt,pending.coin,pending.walletInf,pending.notes,pending.recvCoin||null);if(ch)return interaction.editReply({content:`Ticket opened \u2192 <#${ch.id}>`,embeds:[],components:[new ActionRowBuilder().addComponents(kLink("Open Ticket",`https://discord.com/channels/${interaction.guild.id}/${ch.id}`))]});return;}
+      if(interaction.customId==="btn_confirm_ticket"){if(!interaction.deferred&&!interaction.replied)await interaction.deferUpdate().catch(()=>{});const pending=state.pending[interaction.user.id];if(!pending)return interaction.editReply({content:"Session expired. Please start again.",embeds:[],components:[]});delete state.pending[interaction.user.id];const ch=await createTicket(interaction,pending.method,pending.direction,pending.rawAmt,pending.coin,pending.walletInf,pending.notes,pending.recvCoin||null,pending.methods||null);if(ch)return interaction.editReply({content:`Ticket opened \u2192 <#${ch.id}>`,embeds:[],components:[new ActionRowBuilder().addComponents(kLink("Open Ticket",`https://discord.com/channels/${interaction.guild.id}/${ch.id}`))]});return;}
       if(interaction.customId==="btn_cancel_ticket"){delete state.pending[interaction.user.id];return interaction.update({content:"Cancelled. Click Exchange Now to start again.",embeds:[],components:[]});}
 
       if(interaction.customId==="btn_support_ticket"){
@@ -4999,7 +5239,8 @@ This is active immediately and persists until revoked or the bot restarts.
         return interaction.showModal(_rm);
       }
       if(interaction.customId==="btn_claim"){await claimTicket(interaction);return;}
-      if(interaction.customId==="btn_mmclaim"){await claimTicket(interaction,{mmConfirmed:true});return;}
+      if(interaction.customId==="btn_mmclaim"||interaction.customId.startsWith("btn_mmclaim__")){await claimTicket(interaction,{mmConfirmed:true,method:interaction.customId.split("__")[1]||null});return;}
+      if(interaction.customId==="btn_addmethod"){await addMethodPrompt(interaction);return;}
       if(interaction.customId==="btn_mmcancel"){await interaction.update({content:"Cancelled \u2014 the ticket is still unclaimed.",embeds:[],components:[]}).catch(()=>{});return;}
       if(interaction.customId==="btn_mmconfirm"){await confirmMiddleman(interaction);return;}
       if(interaction.customId==="btn_confirmdone"){await confirmCompletion(interaction);return;}
@@ -5153,7 +5394,8 @@ This is active immediately and persists until revoked or the bot restarts.
 
       if(interaction.customId.startsWith("modal_amount__")){
         await interaction.deferReply({flags:64});
-        const parts=interaction.customId.split("__"),method=parts[1],direction=parts[2];
+        const parts=interaction.customId.split("__"),methods=parseMethodTag(parts[1]),method=methods[0],direction=parts[2];
+        if(!method||!getMethod(method))return interaction.editReply("That payment method isn't available any more. Please start again.");
         const coin=cleanCoin(interaction.fields.getTextInputValue("inp_coin"));
         const rawAmt=parseAmount(interaction.fields.getTextInputValue("inp_amount"));
         const walletInf="Staff will confirm wallet and payment details in your ticket",notes="";
@@ -5164,10 +5406,12 @@ This is active immediately and persists until revoked or the bot restarts.
         const fee=calcFee(rawAmt,direction),rate=feeRate(rawAmt,direction);
         let coinAmt=null;
         if(direction==="send"){try{const coinPrice=await getPrice(coin);if(coinPrice&&rawAmt-fee>0)coinAmt=((rawAmt-fee)/coinPrice).toFixed(6);}catch{}}
-        state.pending[interaction.user.id]={method,direction,rawAmt,coin,walletInf,notes};
-        const d=dealOf({method,direction,coin,amountUSD:rawAmt,feeUSD:fee});
+        const _mx=methods.length>1?{methods}:{};          // several methods: the ticket will accept any of them
+        state.pending[interaction.user.id]={method,..._mx,direction,rawAmt,coin,walletInf,notes};
+        const d=dealOf({method,..._mx,direction,coin,amountUSD:rawAmt,feeUSD:fee});
+        const _openTo=methods.length>1?`Open to **${joinOr(methods.map(methodLabel))}** exchangers. Whoever claims it sets the method.\n\n`:"";
         return interaction.editReply({embeds:[kEmbed("Review").setTitle("Confirm Your Exchange")
-          .setDescription(`${dealHead(d)}\n${kLedger(dealRows(d,{rate,coinAmt}))}Press **Confirm & Open Ticket** to continue. Amounts are estimates until your exchanger confirms them in the ticket.`)
+          .setDescription(`${dealHead(d)}\n${kLedger(dealRows(d,{rate,coinAmt}))}${_openTo}Press **Confirm & Open Ticket** to continue. Amounts are estimates until your exchanger confirms them in the ticket.`)
           .setFooter(kFoot("Step 3 of 3  ·  Wallet details are handled inside your ticket"))],components:[confirmRow()]});
       }
 
