@@ -110,7 +110,7 @@ const CONFIG = {
   TICKET_CATEGORY:process.env.TICKET_CATEGORY_ID||null, VOUCH_CHANNEL:process.env.VOUCH_CHANNEL_ID||null, HELPER_ROLE:process.env.HELPER_ROLE_ID||null,
   LOG_CHANNEL:process.env.LOG_CHANNEL_ID||null, RATES_CHANNEL:process.env.RATES_CHANNEL_ID||null,
   EXCHANGE_CHANNEL:"1463731676021784587", PASS_ROLE:"1488344770035060786",
-  SHORTS_CHANNEL:process.env.SHORTS_CHANNEL_ID||null, MIN_FEE:5, COLOR:0x7C4DFF,
+  SHORTS_CHANNEL:process.env.SHORTS_CHANNEL_ID||null, MIN_FEE:5, MIN_AMOUNT:6, COLOR:0x7C4DFF,
   ROLES:{
     paypal:process.env.ROLE_PAYPAL,cashapp:process.env.ROLE_CASHAPP,zelle:process.env.ROLE_ZELLE,
     interac:process.env.ROLE_INTERAC,venmo:process.env.ROLE_VENMO,applepay:process.env.ROLE_APPLEPAY,
@@ -268,7 +268,7 @@ function topOf(list,kind){
   const e=Object.entries(c).sort((a,b)=>b[1]-a[1])[0];
   return e?{name:kind==="coin"?String(e[0]):methodLabel(e[0]),n:e[1]}:null;
 }
-const noTop=list=>(list&&list.length)?"Unknown":"\u2014";      // there are trades but they do not say: "Unknown". No trades at all: a dash
+const noTop=list=>(list&&list.length)?"Unknown":"\u2014";      // there are exchanges but they do not say: "Unknown". No exchanges at all: a dash
 
 // ── Several payment methods on one ticket ────────────────────────────────────────────────────────────────────
 // A client can open one ticket for up to MAX_TICKET_METHODS payment methods ("Cash App or Venmo"). Exchangers for ANY of them can see and claim it, and
@@ -283,6 +283,7 @@ const isMultiMethod=t=>!!t&&Array.isArray(t.methods)&&t.methods.length>1&&!t.met
 // What a ticket accepts right now, first choice first
 const ticketMethods=t=>isMultiMethod(t)?t.methods.slice():(t&&t.method?[t.method]:[]);
 const joinOr=names=>names.length<2?names.join(""):names.slice(0,-1).join(", ")+" or "+names[names.length-1];
+const joinAnd=names=>names.length<2?names.join(""):names.slice(0,-1).join(", ")+" and "+names[names.length-1];
 // "Cash App / Venmo" (and "Cash App / Venmo +2" past three, which a ticket never has at the moment)
 function methodsLabel(list){
   const names=(list||[]).map(methodLabel);
@@ -466,6 +467,7 @@ function getReferrals(){
 function saveReferrals(data){_mem.referrals=data;save("referrals",data);}
 
 const POINTS_PER_100=5,POINTS_PER_DOLLAR=10,MIN_WITHDRAW_POINTS=50;
+function nExchanges(n){n=Number(n)||0;return `${n} exchange${n===1?"":"s"}`;}          // "1 exchange", "2 exchanges"
 function calcReferralPoints(amountUSD){return Math.floor((amountUSD/100)*POINTS_PER_100);}
 function pointsToDollars(pts){return (pts/POINTS_PER_DOLLAR).toFixed(2);}
 
@@ -489,7 +491,7 @@ async function handleReferralTrade(guild,clientUserId,amountUSD){
       await referrer.send({embeds:[new EmbedBuilder()
         .setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
         .setTitle("Points Earned")
-        .setDescription(`<@${referrerId}>, a trade just completed through your referral link.\n\u200b`)
+        .setDescription(`<@${referrerId}>, an exchange just completed through your referral link.\n\u200b`)
         .addFields(
           {name:"Referred User",value:referred?`<@${referred.id}>`:"A referred client",inline:true},
           {name:"Amount",value:`**${fmtUSD(amountUSD)}**`,inline:true},
@@ -499,7 +501,7 @@ async function handleReferralTrade(guild,clientUserId,amountUSD){
         )
         .setImage(IMG.BANNER).setFooter({text:"Konvert Referral Program  ·  10 pts = $1"}).setTimestamp()]});
     }catch{}
-  }catch(e){console.error("[referral trade error]",e.message);}
+  }catch(e){console.error("[referral exchange error]",e.message);}
 }
 
 const fmtUSD=n=>{n=Number(n);if(!Number.isFinite(n)||n===0)return"$0.00";if(n<0)return"-"+fmtUSD(-n);if(n>=1)return`$${n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`;if(n>=0.01)return`$${n.toFixed(4)}`;return`$${n.toFixed(8)}`;};
@@ -507,10 +509,12 @@ function calcFee(usd,dir,isVip=false){const red=state.feeMode==="reduced";const 
 function feeRate(usd,dir,isVip=false){const red=state.feeMode==="reduced";const base=dir==="receive"?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(red?(usd<150?9:usd<350?8:usd<600?7:usd<800?6:5):(usd<150?10:usd<350?9:usd<600?8:usd<800?7:6));return isVip?Math.max(base-0.75,1):base;}
 // ── The deal, worded the same way on every card ─────────────────────────────────────────────────────────────────
 // direction "send" = the client pays with the method and receives crypto · "receive" = the client sends crypto and is paid through the method.
-// A ticket is only ever for MORE than the minimum fee: on anything at or below it the fee alone would take the whole amount.
-const DEAL_SMALL=5;     // below this much left after the fee, what the client gets is agreed in the ticket instead of being quoted
-function aboveMinimum(n){return Number.isFinite(n)&&n>CONFIG.MIN_FEE;}
-const minAmountText=()=>`The amount has to be **more than ${fmtUSD(CONFIG.MIN_FEE)}**. The minimum fee is ${fmtUSD(CONFIG.MIN_FEE)}, so anything at or below that leaves nothing to exchange. Enter a higher amount.`;
+// An exchange is for at least CONFIG.MIN_AMOUNT ($6), and every exchange pays a fee of at least CONFIG.MIN_FEE ($5): a smaller amount would leave nothing to exchange.
+const DEAL_SMALL=CONFIG.MIN_AMOUNT-CONFIG.MIN_FEE;     // below this much left after the fee, what the client gets is agreed in the ticket instead of being quoted (the smallest exchange leaves exactly this)
+function meetsMinimum(n){return Number.isFinite(n)&&n>=CONFIG.MIN_AMOUNT;}
+const aboveMinimum=meetsMinimum;     // (the name older code and tests use)
+const minAmountText=()=>`The minimum amount is **${fmtUSD(CONFIG.MIN_AMOUNT)}**. Every exchange pays a minimum fee of **${fmtUSD(CONFIG.MIN_FEE)}**, so a smaller amount leaves nothing to exchange. Enter ${fmtUSD(CONFIG.MIN_AMOUNT)} or more.`;
+const minFeeText=()=>`Minimum amount ${fmtUSD(CONFIG.MIN_AMOUNT)}  ·  Minimum fee ${fmtUSD(CONFIG.MIN_FEE)} per exchange`;
 function dealOf(t){
   t=t||{};
   const label=isMultiMethod(t)?methodsLabel(t.methods):(t.method?methodLabel(t.method):"Exchange");
@@ -847,13 +851,12 @@ async function findPanelMessage(channel,ticket){
   if(m)ticket.panelMessageId=m.id;
   return m||null;
 }
-async function refreshPanel(channel,ticket){
+async function refreshPanel(channel,ticket,opts){
   try{
     const msg=await findPanelMessage(channel,ticket);
-    if(!msg)return;
-    const row=panelRow(ticket);
-    await msg.edit({components:row?[row]:[]});
+    if(msg){const row=panelRow(ticket);await msg.edit({components:row?[row]:[]});}
   }catch(e){console.error("[panel] refresh failed:",e.message);}
+  if(!(opts&&opts.card===false))await refreshTicketCard(channel,ticket);        // the card's status row follows the ticket (best effort, like the buttons)
 }
 // Strips the buttons off any confirmation message that is no longer relevant
 async function clearConfirmButtons(channel,ticket){
@@ -878,7 +881,7 @@ function buildClaimEmbed(ticket,mode){
   }
   if(mode==="owner"){
     return kEmbed("Ticket","ok").setTitle("Owner Verified")
-      .setDescription(`${hero}\n<@${cl}>, your ticket was claimed by <@${ex}>.\n\n${methodNote(ticket)}<@${ex}> is a Konvert owner \u2014 **safe to go first**. You can trade with full confidence.`)
+      .setDescription(`${hero}\n<@${cl}>, your ticket was claimed by <@${ex}>.\n\n${methodNote(ticket)}<@${ex}> is a Konvert owner \u2014 **safe to go first**. You can exchange with full confidence.`)
       .setFooter(kFoot("Verified Konvert owner")).setTimestamp();
   }
   if(mode==="mmConfirmed"){
@@ -886,7 +889,7 @@ function buildClaimEmbed(ticket,mode){
       .setDescription(`${hero}\n<@${cl}> and <@${ex}> both confirmed a middleman (${MM_SERVICES}).\n\n${methodNote(ticket)}Don't send anything to each other directly.`)
       .setFooter(kFoot("Something wrong? Press Flag Ticket")).setTimestamp();
   }
-  const why=ticket.mmReason||"This trade needs a middleman.";
+  const why=ticket.mmReason||"This exchange needs a middleman.";
   return kEmbed("Ticket","warn").setTitle("Middleman Required")
     .setDescription(`${hero}\n<@${cl}>, your ticket was claimed by <@${ex}>.\n\n${methodNote(ticket)}${why} Use ${MM_SERVICES} \u2014 **don't send anything to the exchanger directly.**\n\n<@${cl}>, press **Confirm Middleman** to continue.`)
     .setFooter(kFoot("Exchanger confirmed  \u00b7  waiting for the client")).setTimestamp();
@@ -1014,7 +1017,7 @@ async function claimTicket(interaction,opts={}){
       mmReason="This exchanger always uses a middleman.";
       warnText="Your name says **Use MM Always**.";
     }else if(amt>lim.amount+0.005){
-      mmReason=`This trade is above their **${_money(lim.amount)}** go-first limit.`;
+      mmReason=`This exchange is above their **${_money(lim.amount)}** go-first limit.`;
       warnText=`This ticket (**${_money(amt)}**) is above your **${_money(lim.amount)}** limit.`;
     }else{
       let held=0;
@@ -1063,7 +1066,7 @@ async function claimTicket(interaction,opts={}){
     }
   }
   _mem.tickets=tickets;save("tickets",tickets);
-  await refreshPanel(ch,ticket);
+  await refreshPanel(ch,ticket,{card:false});
   if(chosen)await syncTicketMethod(ch,ticket);          // channel name, topic and the ticket card now say the method in use
   else await refreshTicketCard(ch,ticket);              // (and the card drops its "Add Method" tip)
 
@@ -1171,6 +1174,26 @@ async function remindClient(interaction){
   await ch.send({content:`<@${ticket.userId}>, <@${ticket.claimedBy}> is waiting for you to ${link?`[${what}](${link})`:what}.`,allowedMentions:{users:[ticket.userId]}}).catch(()=>{});
 }
 
+// ---- A ticket nobody has claimed for ten minutes: its card quietly suggests Add Method (no ping, no new message) ----
+const NUDGE_AFTER_MS=10*60*1000;
+let _nudgeRunning=false;
+async function sweepUnclaimed(guild){
+  if(_nudgeRunning)return;
+  _nudgeRunning=true;
+  try{
+    const now=Date.now(),due=[];
+    for(const [cid,t] of Object.entries(_mem.tickets||{})){
+      if(!t||t.nudged||t.status!=="open"||t.claimedBy||!t.claimSystem||!t.card||!t.cardMessageId)continue;
+      if(now-Math.max(t.createdAt||0,t.reopenedAt||0,t.widenedAt||0)<NUDGE_AFTER_MS||!canAddMethod(t))continue;
+      const ch=guild.channels.cache.get(cid);
+      if(!ch)continue;
+      t.nudged=true;due.push([ch,t]);                              // marked first so overlapping runs can't draw it twice
+    }
+    if(due.length)save("tickets",_mem.tickets);
+    for(const [ch,t] of due)await refreshTicketCard(ch,t);
+  }finally{_nudgeRunning=false;}
+}
+
 // ---- "Is everything okay?" check-in: ONLY for the other clients of an exchanger the safety system really suspects ----
 // There is no routine or random check-in. forceCheckin() (safety section) books one 1-3 minutes out; this sweep delivers it.
 let _checkinSweepRunning=false;
@@ -1240,7 +1263,7 @@ async function releaseClaim(channel,ticket,tickets,{by=null}={}){
   delete ticket.mmRequired;delete ticket.mmPending;delete ticket.mmPendingUntil;delete ticket.mmConfirmedAt;delete ticket.mmReason;delete ticket.claimMessageId;
   delete ticket.completionPending;delete ticket.completionRequestedAt;delete ticket.completionMessageId;
   delete ticket.checkinAt;delete ticket.checkinSentAt;delete ticket.checkinMessageId;delete ticket.checkinAnswered;
-  delete ticket.hoppedIn;
+  delete ticket.hoppedIn;delete ticket.nudged;
   const relabel=unlockTicketMethod(ticket);                         // a several-method ticket accepts all its methods again
   resetSafetyFields(ticket);_safety.delete(channel.id);
   ticket.reopenedAt=Date.now();
@@ -1253,7 +1276,7 @@ async function releaseClaim(channel,ticket,tickets,{by=null}={}){
   const fresh=await postOpenPanel(channel,ticket,{title:`Ticket Open Again`,lead:`<@${prev}> released this ticket. It is back in the queue — any exchanger can claim it.`});
   if(fresh){if(oldPanel&&oldPanel.id!==fresh.id)await oldPanel.edit({components:[]}).catch(()=>{});}
   else await refreshPanel(channel,ticket);                          // couldn't post: at least put the buttons back on the old panel
-  if(relabel)await syncTicketMethod(channel,ticket);                 // the channel name, topic and card list every method again
+  if(relabel)await syncTicketMethod(channel,ticket);else await refreshTicketCard(channel,ticket);                 // the channel name, topic and card list every method again
   log(channel.guild,`RELEASE: #${channel.name} | ${prev}${by&&by!==prev?" | by "+by:""}`);
   return true;
 }
@@ -1266,6 +1289,7 @@ async function postOpenPanel(channel,ticket,{title,lead,known,only,pingClient=tr
     .setDescription(`${kHero(dealOf(ticket).hero)}\n${lead}`)
     .setFooter(kFoot(ticket.claimedBy?"Press Hop In to join this ticket":"Press Claim Ticket to take it")).setTimestamp();
   const content=[...roles.map(r=>`<@&${r}>`),...(pingClient?[`<@${ticket.userId}>`]:[])].join(" ");
+  warnUnpingable(channel.guild,roles);
   const sent=await channel.send({content,embeds:[embed],components:row?[row]:[],allowedMentions:{roles,users:pingClient?[ticket.userId]:[]}}).catch(e=>{console.error("[panel] couldn't post:",e.message);return null;});
   if(sent){ticket.panelMessageId=sent.id;save("tickets",_mem.tickets);}
   return sent;
@@ -1353,6 +1377,24 @@ async function hopIn(interaction){
 // ── Several payment methods: the ticket's side ───────────────────────────────────────────────────────────────
 // The exchanger roles of some payment methods (the ones that are set up, each once)
 const rolesForMethods=list=>[...new Set((list||[]).map(v=>CONFIG.ROLES&&CONFIG.ROLES[v]).filter(Boolean))];
+// "Exchangers for Cash App, Venmo and Zelle were pinged." for the client who just opened a ticket (nothing when no method has an exchanger role set)
+function pingedNote(p){
+  const list=pickedMethods([p&&p.method,...((p&&p.methods)||[])]),names=list.filter(v=>CONFIG.ROLES&&CONFIG.ROLES[v]).map(methodLabel);
+  return names.length?`\nPinged the ${joinAnd(names)} exchanger${names.length>1?"s":""}.`:"";
+}
+// A role that is not mentionable only gets notified when the bot may mention every role. When neither is true the ping looks fine but reaches nobody,
+// so the owners are told (once an hour per role) instead of finding out from a ticket nobody answered.
+const _pingWarned=new Map();
+function warnUnpingable(guild,roleIds){
+  try{
+    const me=guild&&guild.members&&guild.members.me;
+    if(!me||!me.permissions||me.permissions.has(PermissionFlagsBits.MentionEveryone))return;
+    const bad=(roleIds||[]).map(rid=>guild.roles&&guild.roles.cache&&guild.roles.cache.get(rid)).filter(r=>r&&!r.mentionable&&Date.now()-(_pingWarned.get(r.id)||0)>60*60*1000);
+    if(!bad.length)return;
+    bad.forEach(r=>_pingWarned.set(r.id,Date.now()));
+    log(guild,`PING WARNING: ${bad.map(r=>r.name).join(", ")} can't be pinged: the role isn't mentionable and I don't have the Mention Everyone permission. Make the role mentionable (or give me that permission) so ticket pings reach those exchangers.`);
+  }catch{}
+}
 // Which of a ticket's accepted methods this exchanger handles, going by their roles
 function exchangerMethods(member,ticket){
   const has=r=>!!(r&&member&&member.roles&&member.roles.cache&&member.roles.cache.has(r));
@@ -1367,19 +1409,51 @@ function unlockTicketMethod(ticket){
   return true;
 }
 const ticketChannelName=(t,suffix)=>`${ticketMethods(t).join("-")}-${suffix}`;
-// The ticket's first card (title, the deal, what happens next). It is drawn again whenever the ticket's methods change or it is claimed, from what
-// createTicket kept in t.card. opts.hint = the "Add Method" tip, shown only on the card as it is first drawn (its button sits right under it).
-function buildTicketCard(t,opts){
-  const d=dealOf(t),c=t.card||{};
-  const intro=(t.method==="buyforyou"||t.method==="custom")
-    ?`${CONFIG.HELPER_ROLE?`<@&${CONFIG.HELPER_ROLE}>`:"@Helper"} — New **${d.label}** ticket opened.`
-    :`Welcome, <@${t.userId}>. Your ticket is open and an exchanger will claim it shortly.`;
-  const next=isMultiMethod(t)
+// Where the ticket stands, in a few words (the card's Status field)
+function ticketStatusText(t){
+  if(t.status==="vouched")return "Completed";
+  if(t.status&&t.status!=="open")return "Closed";
+  if(t.reported)return "On hold";
+  if(!t.claimedBy)return "Waiting for an exchanger";
+  if(t.mmPending)return "Middleman needed";
+  if(t.completionPending)return "Awaiting confirmation";
+  return "In progress";
+}
+// What happens next, for the stage the ticket is in (null once it is finished)
+function ticketNextSteps(t){
+  if(t.status&&t.status!=="open")return null;
+  if(t.reported)return "An owner is reviewing this ticket. Please wait here and don't send anything until they say so.";
+  if(!t.claimedBy)return isMultiMethod(t)
     ?"1. An exchanger for any of your methods claims this ticket.\n2. They confirm the method, wallet and payment details here.\n3. Final amounts are agreed in this ticket before anything is sent."
     :"1. An exchanger claims this ticket.\n2. They confirm the wallet and payment details here.\n3. Final amounts are agreed in this ticket before anything is sent.";
-  return kEmbed("Ticket").setTitle(t.method==="crypto"?"Crypto to Crypto Exchange":`${d.label} Exchange`)
-    .setDescription(`${dealHead(d,c.notes||[])}\n${kLedger(dealRows(d,{rate:c.rate!=null?c.rate:null,coinAmt:c.coinAmt||null}))}${intro}${opts&&opts.hint&&canAddMethod(t)?"\n*Nobody yet? Press Add Method to reach more exchangers.*":""}`)
-    .addFields(...(isMultiMethod(t)?[{name:"Accepted Methods",value:t.methods.map(methodLabel).join("  ·  "),inline:false}]:[]),{name:"What happens next",value:next,inline:false})
+  if(t.mmPending)return "1. Arrange a middleman with your exchanger.\n2. Press Confirm Middleman once it is agreed.\n3. Don't send anything to each other directly.";
+  if(t.completionPending)return "Your exchanger marked this complete.\nPress Confirm Completion if everything arrived, or Report Issue if it didn't.";
+  return "1. Confirm the wallet and payment details here.\n2. Agree the final amounts before anything is sent.\n3. Your exchanger marks it complete, then you confirm.";
+}
+// The ticket's first card: title, the deal, who has it and where it stands, what happens next. It is drawn again whenever the ticket changes (a claim,
+// a method added, a completion...), from what createTicket kept in t.card. opts.hint = the "Add Method" tip for a one-method ticket, shown as it is first drawn.
+function buildTicketCard(t,opts){
+  const d=dealOf(t),c=t.card||{};
+  const open=!t.status||t.status==="open",waiting=open&&!t.claimedBy;
+  const intro=!open?(t.status==="vouched"?"This exchange is complete. Thank you for using Konvert.":"This ticket is closed.")
+    :!waiting?`Welcome, <@${t.userId}>. <@${t.claimedBy}> is handling your exchange.`
+    :(t.method==="buyforyou"||t.method==="custom")
+      ?`${CONFIG.HELPER_ROLE?`<@&${CONFIG.HELPER_ROLE}>`:"@Helper"} — New **${d.label}** ticket opened.`
+      :`Welcome, <@${t.userId}>. Your ticket is open and an exchanger will claim it shortly.`;
+  // How to reach more exchangers: right after opening for a one-method ticket, and later for any ticket with room that nobody has claimed (t.nudged)
+  const tip=waiting&&canAddMethod(t)
+    ?(t.nudged?"\n*Still unclaimed. Press Add Method so exchangers for other methods can take it.*"
+      :(opts&&opts.hint&&!isMultiMethod(t)?"\n*Tip: press Add Method so exchangers for another method can claim this too.*":""))
+    :"";
+  const next=ticketNextSteps(t);
+  return kEmbed("Ticket").setTitle(t.method==="crypto"?"Crypto to Crypto Exchange":(t.method==="buyforyou"||t.method==="custom")?d.label:`${d.label} Exchange`)
+    .setDescription(`${dealHead(d,c.notes||[])}\n${kLedger(dealRows(d,{rate:c.rate!=null?c.rate:null,coinAmt:c.coinAmt||null}))}${intro}${tip}`)
+    .addFields(
+      {name:"Status",value:ticketStatusText(t),inline:true},
+      {name:"Exchanger",value:t.claimedBy?`<@${t.claimedBy}>`:"Unclaimed",inline:true},
+      {name:"Opened",value:`<t:${Math.floor((t.createdAt||Date.now())/1000)}:R>`,inline:true},
+      ...(isMultiMethod(t)?[{name:"Accepted Methods",value:t.methods.map(methodLabel).join("  ·  "),inline:false}]:[]),
+      ...(next?[{name:"What happens next",value:next,inline:false}]:[]))
     .setImage(IMG.BANNER).setTimestamp(t.createdAt||Date.now()).setFooter(kFoot("All communication stays in this ticket"));
 }
 // Redraws the ticket's first card (best effort: a failed edit never stops the ticket)
@@ -1471,7 +1545,7 @@ async function addMethods(interaction){
     _addMethodAt.delete(ch.id);
     return interaction.editReply({content:stop||"This ticket already accepts those methods.",embeds:[],components:[]}).catch(()=>{});
   }
-  ticket.methods=[...now,...fin];
+  ticket.methods=[...now,...fin];delete ticket.nudged;ticket.widenedAt=Date.now();
   tickets[ch.id]=ticket;_mem.tickets=tickets;save("tickets",tickets);
   await syncTicketMethod(ch,ticket);
   const names=joinOr(fin.map(methodLabel));
@@ -1525,7 +1599,7 @@ const SAFETY={
   noteMax:160,                 // longest note kept on a ticket (and shown to the owners)
   clearedBonus:15,             // a ticket an owner cleared needs stronger evidence to be flagged again
   heldBonus:10,                // an exchanger already on hold is judged a little stricter in their other tickets
-  trustedAfter:10,trustedBonus:10   // an exchanger with this many completed trades gets the benefit of the doubt
+  trustedAfter:10,trustedBonus:10   // an exchanger with this many completed exchanges gets the benefit of the doubt
 };
 const _safety=new Map();       // channelId -> live conversation state (not saved; it rebuilds as people talk)
 let _safetySweepRunning=false;
@@ -1615,7 +1689,7 @@ const _C={
     /\b(?:is|are)\s+(?:it|you|this|that)\s+(?:sent|done|ready|finished|complete|completed|processed|going\s+through|on\s+(?:the|its)\s+way)\b/,
     /\b(?:sent|paid|done|ready|finished|processed)\s+yet\b/,
     /\b(?:are|r)\s+(?:you|u)\s+(?:coming|going\s+to\s+come)\s+back\b|\bwhere(?:'?d|\s+did)\s+(?:you|u)\s+go\b/,
-    /\bhow(?:'?s|\s+is)\s+(?:it|that|the\s+(?:send|payment|transfer|order|trade|swap))\s+(?:coming|progressing|looking)\b|\bhow(?:'?s|\s+is)\s+it\s+going\s+with\b/,
+    /\bhow(?:'?s|\s+is)\s+(?:it|that|the\s+(?:send|payment|transfer|order|trade|exchange|swap))\s+(?:coming|progressing|looking)\b|\bhow(?:'?s|\s+is)\s+it\s+going\s+with\b/,
     /\btaking\s+(?:(?:way|so|too|very|really)\s+)*(?:long|forever|ages|slow)\b/,
     /\b(?:give|need|want|get)\s+(?:me\s+)?(?:an?\s+)?updates?\b/,
     /\bdo\s+(?:it|this)\s+already\b/,
@@ -1910,7 +1984,7 @@ const _STEER=[    // [pattern, points, what it means, tag, ignore-if]  -- every 
   [/\b(?:outside|off|away\s+from)\s+(?:of\s+)?(?:the\s+|this\s+)?(?:ticket|server|discord|platform)\b|\b(?:go|move|switch|come|join|talk|chat|continue|take\s+(?:this|it)|get)\b[^.?!]{0,25}\b(?:another|other|different|separate|my)\s+(?:server|chat|group|platform)\b|\b(?:in|to|use|start|open|make|join|do|have|take)\s+(?:a\s+|the\s+|my\s+)?private\s+(?:chat|convo|conversation|group)\b|\b(?:private\s+(?:chat|convo|conversation|group)|(?:another|other|different|separate|my)\s+(?:server|chat|group|platform|app))\s+(?:is|would\s+be|will\s+be)\s+(?:better|easier|safer|best)\b/,40,"asked to deal outside the ticket"],
   [/\b(?:skip|no\s+need\s+for|don'?t\s+need|do\s+not\s+need|forget|ignore|avoid|bypass|not\s+(?:using|use|need))\s+(?:the\s+|a\s+|an\s+|any\s+)?(?:mm|middle\s*man|escrow)\b/,40,"pushed to skip the middleman","mm"],
   [/\b(?:mm|middle\s*man|escrow)\s+(?:(?:isn'?t|is\s+not|not|aint)\s+(?:needed|necessary|required)|(?:is\s+)?(?:unnecessary|pointless|a\s+waste))\b|\bno\s+(?:mm|middle\s*man|escrow)\s+(?:needed|necessary|required)\b/,40,"pushed to skip the middleman","mm"],
-  [/\b(?:do|doing|go|going|proceed|proceeding|trade|trading|send|sending|deal|dealing|work|working|swap|swapping)\b[^.?!]{0,25}\bwithout\s+(?:the\s+|a\s+|an\s+|any\s+)?(?:mm|middle\s*man|escrow)\b/,40,"pushed to skip the middleman","mm",/\b(?:won'?t|can'?t|cannot|never|not|don'?t|do\s+not|refuse|unless|only)\b/],
+  [/\b(?:do|doing|go|going|proceed|proceeding|trade|trading|exchange|exchanging|send|sending|deal|dealing|work|working|swap|swapping)\b[^.?!]{0,25}\bwithout\s+(?:the\s+|a\s+|an\s+|any\s+)?(?:mm|middle\s*man|escrow)\b/,40,"pushed to skip the middleman","mm",/\b(?:won'?t|can'?t|cannot|never|not|don'?t|do\s+not|refuse|unless|only)\b/],
   [/\btrust\s+me\b(?:(?!\bi(?:'ll|ll|\s+will|\s+am|'m|m)\b)[^.?!]){0,25}\b(?:send|pay)\s+first\b/,40,"pressured the client to send first"]
 ];
 // underLimit: the exchanger is within their go-first limit, so "no middleman needed" is simply true
@@ -2523,12 +2597,12 @@ function feeEmbed(amt,{vip=false,prices={}}={}){
   let tS=_feeText(amt,rS,fS),tR=_feeText(amt,rR,fR);
   if(Math.max(tS.length,tR.length)>15){tS=_feeText(amt,rS,fS,true);tR=_feeText(amt,rR,fR,true);}   // keep each column narrow enough to sit side by side on a phone
   const coins=[["BTC",6],["ETH",5],["SOL",4]].filter(([c])=>prices[c]>0).map(([c,d])=>`${c} ${(getS/prices[c]).toFixed(d)}`);
-  const e=slim("Fee Calculator").setDescription(`Estimate for **${_usd2(amt)}**${vip?"  \u00B7  VIP rate":""}`+(amt>CONFIG.MIN_FEE?"":`\n**Too small for a ticket.** An exchange has to be for more than ${_usd2(CONFIG.MIN_FEE)}.`))
+  const e=slim("Fee Calculator").setDescription(`Estimate for **${_usd2(amt)}**${vip?"  \u00B7  VIP rate":""}`+(amt>=CONFIG.MIN_AMOUNT?"":`\n**Too small for a ticket.** The minimum amount is ${_usd2(CONFIG.MIN_AMOUNT)}.`))
     .addFields(
       {name:"Fiat \u2192 Crypto",value:`Get **${_usd2(getS)}**\n${tS}`,inline:true},
       {name:"Crypto \u2192 Fiat",value:`Get **${_usd2(getR)}**\n${tR}`,inline:true});
   if(coins.length)e.addFields({name:"\u2248 In coins",value:coins.join("\n"),inline:true});
-  return e.setFooter({text:`Konvert Exchange  ·  Exchanges must be more than ${_usd2(CONFIG.MIN_FEE)}  ·  Final fee may vary slightly`});
+  return e.setFooter({text:`Konvert Exchange  ·  Minimum amount ${_usd2(CONFIG.MIN_AMOUNT)}  ·  Minimum fee ${_usd2(CONFIG.MIN_FEE)} per exchange`});
 }
 // == end Compact embeds ==========================================
 function log(guild,msg){if(!CONFIG.LOG_CHANNEL||!guild)return;const ch=guild.channels.cache.get(CONFIG.LOG_CHANNEL);if(ch)ch.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setDescription("```"+msg+"```").setTimestamp()]}).catch(()=>{});}
@@ -2655,20 +2729,20 @@ function _gExchanging(c){
     "# Exchanging",
     "Quote it, open a ticket, get paid. How it works, and every command you need along the way.",
     "",
-    "## How a trade works",
-    `**1.**  Get a quote with ${_gcmd("estimate")} or ${_gcmd("fee")}. An exchange has to be for more than $${CONFIG.MIN_FEE}`,
-    `**2.**  Open a ticket in ${ex}. Pick up to ${MAX_TICKET_METHODS} payment methods, so the first exchanger online for any of them can take it`,
+    "## How an exchange works",
+    `**1.**  Get a quote with ${_gcmd("estimate")} or ${_gcmd("fee")}. The minimum amount is $${CONFIG.MIN_AMOUNT}, with a $${CONFIG.MIN_FEE} minimum fee per exchange`,
+    `**2.**  Open a ticket in ${ex}. Pick 2 or ${MAX_TICKET_METHODS} payment methods (recommended): the first exchanger online for any can take it`,
     "**3.**  An exchanger claims it. Their go-first limit is in their name (like **Up To $50**). Above it, use a middleman",
     "**4.**  Send only what your ticket tells you to, then confirm once your exchanger marks the deal complete",
     "",
-    "## Before you trade",
+    "## Before you exchange",
     _gline("estimate","full quote before you open a ticket"),
     _gline("fee","the fee on any amount, both directions"),
     _gline("convert","convert between crypto and fiat"),
-    _gline("howto","how a trade works, step by step"),
+    _gline("howto","how an exchange works, step by step"),
     _gline("mm","middleman guide"),
     "",
-    "## During your trade",
+    "## During your exchange",
     _gline("ticket","check on your open ticket"),
     _gline("wallets","deposit addresses (only send to what staff confirm in your ticket)"),
     _gline("dispute","something wrong? locks the ticket and alerts staff"),
@@ -2693,10 +2767,10 @@ function _gPrices(){
 function _gStats(){
   return [_gembed([
     "# Stats & Leaderboard",
-    "Every completed trade counts toward your volume, your rank and your tier.",
+    "Every completed exchange counts toward your volume, your rank and your tier.",
     "",
     _gline("stats","your exchange stats (or anyone's: pick a user), with the volume left to your next tier"),
-    _gline("mytrades","your personal trade history"),
+    _gline("myexchanges","your personal exchange history"),
     _gline("rank","your spot on the leaderboard"),
     _gline("leaderboard","the top 10 clients by volume"),
     _gline("tierlist","every client tier and what it takes to reach it"),
@@ -2743,8 +2817,8 @@ function _gFees(){
     .addFields({name:"Amount",value:rows.map(r=>r[0]).join("\n"),inline:true},{name:"Fiat → Crypto",value:col("send"),inline:true},{name:"Crypto → Fiat",value:col("receive"),inline:true});
   const off=_gembed([
     "## Discounts and extras",
-    `**Minimum fee**  —  $${CONFIG.MIN_FEE}`,
-    `**Minimum exchange**  —  more than $${CONFIG.MIN_FEE}`,
+    `**Minimum fee**  —  $${CONFIG.MIN_FEE} per exchange`,
+    `**Minimum amount**  —  $${CONFIG.MIN_AMOUNT}`,
     `**VIP**  —  ${vip.label} and above ($${vip.min.toLocaleString("en-US")}+ volume) pay **0.75% less**`,
     `**KONV tag**  —  **0.2% off** every exchange (${_gcmd("claimtag")})`,
     "**Promo codes**  —  type a valid code in your ticket and the discount applies on the spot",
@@ -2758,7 +2832,7 @@ function _gTiers(c){
   const lines=[...TIERS].reverse().map(t=>`${has(t.role)?`<@&${t.role}>`:`**${t.label}**`}  —  ${t.min>0?`$${t.min.toLocaleString("en-US")}+`:"start here"}${isVipVolume(t.min)?"  \u00B7  VIP":""}`);
   return [_gembed([
     "# Client Tiers",
-    "Earn your tier by exchanging volume on Konvert. Your role is assigned automatically after every trade.",
+    "Earn your tier by exchanging volume on Konvert. Your role is assigned automatically after every exchange.",
     "",
     ...lines,
     "",
@@ -2792,6 +2866,9 @@ function _gExchangers(){
     _gline("postwallets","post your addresses in this ticket"),
     _gline("clearwallet","remove a saved address"),
     _gline("exchangerstats","your performance stats (or another exchanger's)"),
+    "",
+    "## Find tickets",
+    _gline("queue","the tickets waiting for an exchanger that you can take, longest first"),
     "",
     "## Payment steps",
     "`$paypal`  ·  `$cashapp`  ·  `$venmo`  ·  `$zelle`  ·  `$interac`  ·  `$applepay`",
@@ -2843,10 +2920,10 @@ function _gOwners(){
     _gline("resetstats","reset a user's volume adjustment to 0"),
     _gline("transferstats","move all stats from one account to another"),
     _gline("wipestats","wipe all stats and tickets for one user"),
-    _gline("clearleaderboard","wipe all trade data from the leaderboard and stats"),
-    _gline("vouch","manually record a completed trade"),
+    _gline("clearleaderboard","wipe all exchange data from the leaderboard and stats"),
+    _gline("vouch","manually record a completed exchange"),
     _gline("thankclient","send a thank-you DM to a client"),
-    _gline("broadcast","DM every client who traded in the last X days"),
+    _gline("broadcast","DM every client who exchanged in the last X days"),
     _gline("passes","see who holds exchange passes"),
     _gkey("$passes @user","how many passes one person has"),
     _gline("volume","server volume stats"),
@@ -2896,14 +2973,14 @@ function _gOwners(){
 }
 
 const GUIDE_SECTIONS=[
-  {key:"exchanging",label:"Exchanging",blurb:"how a trade works, quotes and tickets",who:"all",build:_gExchanging},
+  {key:"exchanging",label:"Exchanging",blurb:"how an exchange works, quotes and tickets",who:"all",build:_gExchanging},
   {key:"prices",label:"Prices & Market",blurb:"live prices, market mood and alerts",who:"all",build:_gPrices},
-  {key:"stats",label:"Stats & Leaderboard",blurb:"your volume, rank and trade history",who:"all",build:_gStats},
+  {key:"stats",label:"Stats & Leaderboard",blurb:"your volume, rank and exchange history",who:"all",build:_gStats},
   {key:"perks",label:"Perks & Games",blurb:"the KONV tag discount and the Pass game",who:"all",build:_gPerks},
   {key:"shortcuts",label:"Shortcuts",blurb:"quick commands you type in chat",who:"all",build:_gShortcuts},
   {key:"fees",label:"Fees",blurb:"exactly what Konvert charges",who:"all",build:_gFees},
   {key:"tiers",label:"Client Tiers",blurb:"ranks, roles and the VIP rate",who:"all",build:_gTiers},
-  {key:"safety",label:"Stay Safe",blurb:"the rules that keep every trade safe",who:"all",build:_gSafety},
+  {key:"safety",label:"Stay Safe",blurb:"the rules that keep every exchange safe",who:"all",build:_gSafety},
   {key:"exchangers",label:"Exchanger Tools",blurb:"wallets, payment steps and ticket commands",who:"exchanger",build:_gExchangers},
   {key:"owners",label:"Owner Tools",blurb:"everything owners can do",who:"owner",build:_gOwners},
 ];
@@ -2922,13 +2999,13 @@ function guideOverview(c,who){
     kHero("How Konvert works"),
     kNote("Crypto to cash and back, in a private ticket with an exchanger."),
     "",
-    `**1.**  Open a ticket in ${ex} and pick up to ${MAX_TICKET_METHODS} payment methods`,
+    `**1.**  Open a ticket in ${ex} and pick 2 or ${MAX_TICKET_METHODS} payment methods (recommended)`,
     "**2.**  An exchanger claims it and confirms the deal",
     "**3.**  Send only what your ticket says, then confirm",
     _gline("howto","a step-by-step walkthrough"),
     "",
     kHero("Fees"),
-    `**5% – 10%**, lower on bigger exchanges. The minimum fee is **$${CONFIG.MIN_FEE}**, so an exchange has to be for **more than $${CONFIG.MIN_FEE}**.`,
+    `**5% – 10%**, lower on bigger exchanges. The minimum fee is **$${CONFIG.MIN_FEE} per exchange**, and the minimum amount is **$${CONFIG.MIN_AMOUNT}**.`,
     ...(vip?[`VIP (**$${vip.min.toLocaleString("en-US")}+** volume) pays **0.75% less**.`]:[]),
     `${_gcmd("help")} then pick **Fees**  —  the full fee table`,
     "",
@@ -2949,10 +3026,10 @@ function guideOverview(c,who){
     "**You**",
     _gline("stats","your volume, tier and progress"),
     _gline("tierlist","every tier and the VIP rate"),
-    _gline("mytrades","your trade history"),
+    _gline("myexchanges","your exchange history"),
     _gline("leaderboard","the top 10 clients"),
     "",
-    "**During a trade**",
+    "**During an exchange**",
     _gline("ticket","where your ticket stands"),
     _gline("dispute","flag a problem. Locks the ticket and alerts staff"),
     _gline("wallets","deposit addresses"),
@@ -3016,7 +3093,7 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("price").setDescription("Quick live price for any coin").addStringOption(o=>o.setName("coin").setDescription("Coin (BTC, ETH, SOL)").setRequired(true)),
   new SlashCommandBuilder().setName("convert").setDescription("Convert between crypto and fiat").addNumberOption(o=>o.setName("amount").setDescription("Amount").setRequired(true)).addStringOption(o=>o.setName("from").setDescription("From (BTC, USD)").setRequired(true)).addStringOption(o=>o.setName("to").setDescription("To (ETH, CAD)").setRequired(true)),
   new SlashCommandBuilder().setName("stats").setDescription("View exchange stats").addUserOption(o=>o.setName("user").setDescription("User (leave blank for yourself)").setRequired(false)),
-  new SlashCommandBuilder().setName("leaderboard").setDescription("Top traders by volume"),
+  new SlashCommandBuilder().setName("leaderboard").setDescription("Top clients by volume"),
   new SlashCommandBuilder().setName("market").setDescription("Live market summary"),
   new SlashCommandBuilder().setName("wallets").setDescription("View Konvert deposit wallet addresses"),
   new SlashCommandBuilder().setName("mm").setDescription("Middleman guide"),
@@ -3024,7 +3101,7 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("ticket").setDescription("Check your open ticket status"),
   new SlashCommandBuilder().setName("howto").setDescription("How to use Konvert Exchange"),
   new SlashCommandBuilder().setName("ping").setDescription("Check bot status and latency"),
-  new SlashCommandBuilder().setName("vouch").setDescription("Manually record a completed trade").addUserOption(o=>o.setName("client").setDescription("The client").setRequired(true)).addUserOption(o=>o.setName("exchanger").setDescription("The exchanger").setRequired(true)).addStringOption(o=>o.setName("message").setDescription("Review message").setRequired(true)).addStringOption(o=>o.setName("method").setDescription("Payment method").setRequired(true)).addNumberOption(o=>o.setName("amount").setDescription("Amount (USD)").setRequired(true)).addIntegerOption(o=>o.setName("rating").setDescription("Rating 1-5").setMinValue(1).setMaxValue(5).setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("vouch").setDescription("Manually record a completed exchange").addUserOption(o=>o.setName("client").setDescription("The client").setRequired(true)).addUserOption(o=>o.setName("exchanger").setDescription("The exchanger").setRequired(true)).addStringOption(o=>o.setName("message").setDescription("Review message").setRequired(true)).addStringOption(o=>o.setName("method").setDescription("Payment method").setRequired(true)).addNumberOption(o=>o.setName("amount").setDescription("Amount (USD)").setRequired(true)).addIntegerOption(o=>o.setName("rating").setDescription("Rating 1-5").setMinValue(1).setMaxValue(5).setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("postexchange").setDescription("[Owner] Post the exchange embed").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("postsupport").setDescription("[Owner] Post the support embed").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("postmm").setDescription("[Owner] Post the MM info embed").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
@@ -3052,14 +3129,14 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("clearexchanger").setDescription("[Owner] Clear an exchanger of all doubt: lifts any freeze, hold, flag and pending check").addUserOption(o=>o.setName("user").setDescription("The exchanger to clear").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("profittest").setDescription("[Owner] Send a test profit-split notice to everyone who receives them").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("resetstats").setDescription("[Owner] Reset a user's volume adjustment back to 0").addUserOption(o=>o.setName("user").setDescription("User").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  new SlashCommandBuilder().setName("clearleaderboard").setDescription("[Owner] Wipe all trade data from leaderboard and stats").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("clearleaderboard").setDescription("[Owner] Wipe all exchange data from leaderboard and stats").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("wipestats").setDescription("[Owner] Completely wipe ALL stats and tickets for a single user").addUserOption(o=>o.setName("user").setDescription("User to wipe").setRequired(true)).addStringOption(o=>o.setName("confirm").setDescription('Type "CONFIRM" to proceed').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("complete").setDescription("[Owner] Mark this exchange as complete and tag the exchanger").addUserOption(o=>o.setName("exchanger").setDescription("The exchanger who handled this deal").setRequired(true)).addNumberOption(o=>o.setName("amount").setDescription("Override the amount in USD (optional)").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("dispute").setDescription("Flag an issue with your current exchange \u2014 locks ticket and alerts staff"),
   // FIXED: message (required) BEFORE days (optional)
-  new SlashCommandBuilder().setName("broadcast").setDescription("[Owner] DM all clients who traded in the last X days").addStringOption(o=>o.setName("message").setDescription("Message to send").setRequired(true)).addIntegerOption(o=>o.setName("days").setDescription("How many days back to look (default 30)").setMinValue(1).setMaxValue(365).setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  new SlashCommandBuilder().setName("mytrades").setDescription("View your personal trade history and stats"),
-  new SlashCommandBuilder().setName("estimate").setDescription("Get a full quote for a trade before opening a ticket").addNumberOption(o=>o.setName("amount").setDescription("Amount in USD").setRequired(true)).addStringOption(o=>o.setName("method").setDescription("Payment method (e.g. PayPal, Interac)").setRequired(true)).addStringOption(o=>o.setName("coin").setDescription("Crypto (BTC, ETH, SOL)").setRequired(true)).addStringOption(o=>o.setName("direction").setDescription("Which direction?").setRequired(true).addChoices({name:"Send fiat, receive crypto",value:"send"},{name:"Send crypto, receive fiat",value:"receive"})),
+  new SlashCommandBuilder().setName("broadcast").setDescription("[Owner] DM all clients who exchanged in the last X days").addStringOption(o=>o.setName("message").setDescription("Message to send").setRequired(true)).addIntegerOption(o=>o.setName("days").setDescription("How many days back to look (default 30)").setMinValue(1).setMaxValue(365).setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("myexchanges").setDescription("View your personal exchange history and stats"),
+  new SlashCommandBuilder().setName("estimate").setDescription("Get a full quote for an exchange before opening a ticket").addNumberOption(o=>o.setName("amount").setDescription("Amount in USD").setRequired(true)).addStringOption(o=>o.setName("method").setDescription("Payment method (e.g. PayPal, Interac)").setRequired(true)).addStringOption(o=>o.setName("coin").setDescription("Crypto (BTC, ETH, SOL)").setRequired(true)).addStringOption(o=>o.setName("direction").setDescription("Which direction?").setRequired(true).addChoices({name:"Send fiat, receive crypto",value:"send"},{name:"Send crypto, receive fiat",value:"receive"})),
   new SlashCommandBuilder().setName("receipt").setDescription("[Owner] Look up a receipt by exchange ID or user").addStringOption(o=>o.setName("query").setDescription("Exchange ID (e.g. KV-ABC123) or @user mention").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("setlivefeed").setDescription("[Owner] Set a channel to show live exchange notifications").addChannelOption(o=>o.setName("channel").setDescription("Channel to post live feed").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("togglefeed").setDescription("[Owner] Turn the live exchange feed on or off").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
@@ -3098,7 +3175,8 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("jsol").setDescription("[Owner] Set your SOL wallet address").addStringOption(o=>o.setName("address").setDescription("SOL address").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("jltc").setDescription("[Owner] Set your LTC wallet address").addStringOption(o=>o.setName("address").setDescription("LTC address").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("jusdtbnb").setDescription("[Owner] Set your USDT-BNB wallet address").addStringOption(o=>o.setName("address").setDescription("USDT BNB address").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-  new SlashCommandBuilder().setName("setfeemode").setDescription("[Owner] Switch between standard (5-10%) and reduced (5-9%) fee tiers").addStringOption(o=>o.setName("mode").setDescription("Fee mode").setRequired(true).addChoices({name:"Standard (5-10%)",value:"standard"},{name:"Reduced (5-9%)",value:"reduced"})).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),  new SlashCommandBuilder().setName("help").setDescription("How Konvert works and the commands you need").addStringOption(o=>o.setName("topic").setDescription("Open one topic in full (leave blank for the short guide)").setRequired(false).addChoices(...GUIDE_CHOICES)),
+  new SlashCommandBuilder().setName("setfeemode").setDescription("[Owner] Switch between standard (5-10%) and reduced (5-9%) fee tiers").addStringOption(o=>o.setName("mode").setDescription("Fee mode").setRequired(true).addChoices({name:"Standard (5-10%)",value:"standard"},{name:"Reduced (5-9%)",value:"reduced"})).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),  new SlashCommandBuilder().setName("queue").setDescription("[Exchanger] See the tickets waiting for an exchanger"),
+  new SlashCommandBuilder().setName("help").setDescription("How Konvert works and the commands you need").addStringOption(o=>o.setName("topic").setDescription("Open one topic in full (leave blank for the short guide)").setRequired(false).addChoices(...GUIDE_CHOICES)),
   new SlashCommandBuilder().setName("postguide").setDescription("[Owner] Post the short guide in this channel").addStringOption(o=>o.setName("topic").setDescription("Post one topic in full instead (leave blank for the short guide)").setRequired(false).addChoices(...GUIDE_CHOICES)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
 ].map(c=>c.toJSON());
 
@@ -3126,11 +3204,11 @@ async function registerCommands(){
 
 function mainEmbed(){
   return kEmbed().setTitle("Exchange with Konvert")
-    .setDescription(`${kHero("Simple · Smooth · Seamless")}\nPress **Exchange Now** to open a private ticket with the right exchanger.\n​`)
+    .setDescription(`${kHero("Simple · Smooth · Seamless")}\nPress **Exchange Now** to open a private ticket. **Pick 2 or 3 payment methods** and the exchangers for each are pinged at once, so you are claimed faster.\n​`)
     .addFields(
-      {name:"Fee",value:`5% – 10%, tiered\nMinimum fee ${fmtUSD(CONFIG.MIN_FEE)}`,inline:true},
-      {name:"Minimum Amount",value:`More than ${fmtUSD(CONFIG.MIN_FEE)}`,inline:true},
-      {name:`Payment Methods  ·  pick up to ${MAX_TICKET_METHODS}`,value:"PayPal · Cash App · Zelle · Interac · Venmo · Apple Pay · Google Pay · Skrill · Revolut · Bank · Wire · IBAN · UPI · Gift Card",inline:false},
+      {name:"Fee",value:`5% – 10%, tiered\nMinimum fee ${fmtUSD(CONFIG.MIN_FEE)} per exchange`,inline:true},
+      {name:"Minimum Amount",value:`${fmtUSD(CONFIG.MIN_AMOUNT)} per exchange`,inline:true},
+      {name:`Payment Methods  ·  pick 2 or ${MAX_TICKET_METHODS}`,value:"PayPal · Cash App · Zelle · Interac · Venmo · Apple Pay · Google Pay · Skrill · Revolut · Bank · Wire · IBAN · UPI · Gift Card",inline:false},
       {name:"Crypto",value:"BTC · ETH · SOL · LTC · USDT · USDC · XRP · BNB · ADA · DOGE · and more",inline:false},
     ).setThumbnail(IMG.LOGO).setImage(IMG.BANNER).setFooter(kFoot("Fast · Safe · Simple"));
 }
@@ -3142,14 +3220,14 @@ function mainButtons(){
   )];
 }
 function step1Embed(){
-  return kEmbed().setTitle("Step 1 · Select Payment Method").setThumbnail(IMG.LOGO)
-    .setDescription(`Choose how you'd like to pay or receive.\n**Pick up to ${MAX_TICKET_METHODS}** and the first exchanger online for any of them can take your ticket.\n${kNote("Gift Card, Buy For You and Custom Exchange are chosen on their own.")}\n​`)
+  return kEmbed().setTitle("Step 1 · Choose Payment Methods").setThumbnail(IMG.LOGO)
+    .setDescription(`${kHero("Pick 2 or 3 methods")}\n**Recommended.** Exchangers for every method you pick are pinged at once, so the first one available can take your ticket.\n\nTick each method that works for you, then tap outside the menu to continue.\n${kNote("Gift Card, Buy For You and Custom Exchange are chosen on their own.")}\n​`)
     .setFooter(kFoot("Step 1 of 3"));
 }
 // Step 1's controls: a menu of payment methods (pick up to MAX_TICKET_METHODS) and, under it, the flows that are chosen on their own
 function methodPickRows(){
   const std=METHODS.filter(m=>!isSoloMethod(m.value));
-  const menu=new StringSelectMenuBuilder().setCustomId("select_method").setPlaceholder(`Select up to ${MAX_TICKET_METHODS} payment methods...`)
+  const menu=new StringSelectMenuBuilder().setCustomId("select_method").setPlaceholder("Pick 2-3 payment methods (recommended)...")
     .setMinValues(1).setMaxValues(Math.min(MAX_TICKET_METHODS,std.length))
     .addOptions(std.map(m=>new StringSelectMenuOptionBuilder().setLabel(m.label).setValue(m.value).setDescription(`Exchange crypto with ${m.label}`)));
   const solo=SOLO_METHODS.map(getMethod).filter(Boolean).map(m=>kBtn(`btn_pick__${m.value}`,m.label,ButtonStyle.Secondary));
@@ -3163,26 +3241,46 @@ function directionRow(list){
     kBtn(`dir_send__${tag}`,fitLabel(`Send Crypto → Get ${lbl}`,"Send Crypto → Get Paid"),ButtonStyle.Primary),
     kBtn(`dir_receive__${tag}`,fitLabel(`Send ${lbl} → Get Crypto`,"Send Payment → Get Crypto"),ButtonStyle.Primary));
 }
+// Step 2's buttons: the two directions and, when only one ordinary method was picked, a way to add more before the ticket exists
+function step2Rows(list,opts){
+  const rows=[directionRow(list)],one=list.length===1?list[0]:null;
+  if(one&&getMethod(one)&&!isSoloMethod(one)&&!(opts&&opts.noMore))rows.push(new ActionRowBuilder().addComponents(kBtn(`btn_more__${methodTag(list)}`,"Add More Methods",ButtonStyle.Secondary)));
+  return rows;
+}
+// "Add More Methods": the other ordinary methods, up to the limit, and a way to carry on with what was picked
+function moreRows(cur){
+  const room=MAX_TICKET_METHODS-cur.length,opts=METHODS.filter(m=>!isSoloMethod(m.value)&&!cur.includes(m.value));
+  const menu=new StringSelectMenuBuilder().setCustomId(`sel_more__${methodTag(cur)}`).setPlaceholder(room===1?"Add one more method...":`Add up to ${room} more methods...`)
+    .setMinValues(1).setMaxValues(Math.min(room,opts.length))
+    .addOptions(opts.map(m=>new StringSelectMenuOptionBuilder().setLabel(m.label).setValue(m.value).setDescription(`Also accept ${m.label}`)));
+  return [new ActionRowBuilder().addComponents(menu),new ActionRowBuilder().addComponents(kBtn(`btn_nomore__${methodTag(cur)}`,`Keep ${methodsLabel(cur)} Only`,ButtonStyle.Secondary))];
+}
+function moreEmbed(cur){
+  const room=MAX_TICKET_METHODS-cur.length;
+  return kEmbed().setTitle("Add More Methods").setThumbnail(IMG.LOGO)
+    .setDescription(`${kHero(methodsLabel(cur))}\n**Recommended.** Add ${room===1?"one more method":`up to ${room} more`} and exchangers for each are pinged at once, so your ticket is claimed faster.\n\nTick the ones that work for you, then tap outside the menu to continue.`)
+    .setFooter(kFoot("Step 1 of 3"));
+}
 // A modal title is 45 characters at most
 function modalTitle(label,n,sendCrypto){
   const tail=sendCrypto?"Send Crypto":"Receive Crypto",t=`${label} · ${tail}`;
   return t.length<=45?t:`${n} methods · ${tail}`;
 }
-const minLine=()=>kNote(`Every exchange has to be for more than ${fmtUSD(CONFIG.MIN_FEE)}.`);
+const minLine=()=>kNote(minFeeText());
 function step2MultiEmbed(list){
   const lbl=methodsLabel(list),or=joinOr(list.map(methodLabel));
   return kEmbed().setTitle(`Step 2 · ${lbl}`)
-    .setDescription(`${kHero("Choose your direction")}\n**Send Crypto → Get ${lbl}**\nYou send crypto and we pay you through ${or}.\n\n**Send ${lbl} → Get Crypto**\nYou pay through ${or} and we send crypto to your wallet.\n\n${kNote("Exchangers for each method can take your ticket. Whoever claims it sets the method.")}\n\n${minLine()}`)
+    .setDescription(`${kHero("Choose your direction")}\n**Send Crypto → Get ${lbl}**\nYou send crypto and we pay you through ${or}.\n\n**Send ${lbl} → Get Crypto**\nYou pay through ${or} and we send crypto to your wallet.\n\n${kNote("Exchangers for every method are pinged at once. Whoever claims it sets the method.")}\n\n${minLine()}`)
     .setFooter(kFoot("Step 2 of 3"));
 }
-function step2Embed(method){
+function step2Embed(method,opts){
   if(Array.isArray(method)){if(method.length>1)return step2MultiEmbed(method);method=method[0];}
   const m=getMethod(method);
   if(method==="crypto"){return kEmbed().setTitle("Step 2 · Crypto to Crypto").setDescription(`${kHero("Send one coin, receive another")}\nFor example: send SOL, receive BTC.\n\nSelect your coins below.\n\n${minLine()}`).setFooter(kFoot("Step 2 of 3"));}
   if(method==="buyforyou")return kEmbed().setTitle("Buy For You").setDescription(`Tell us what you want us to purchase and we will handle it.\n\nDescribe the item, link, and amount in your ticket — a helper will reach out.\n\n${minLine()}`).setFooter(kFoot("Step 2 of 3"));
   if(method==="custom")return kEmbed().setTitle("Custom Exchange").setDescription(`Something unique? No problem.\n\nExplain what you need in your ticket and a helper will assist you.\n\n${minLine()}`).setFooter(kFoot("Step 2 of 3"));
   return kEmbed().setTitle(`Step 2 · ${m.label}`)
-    .setDescription(`${kHero("Choose your direction")}\n**Send Crypto → Get ${m.label}**\nYou send crypto and we pay you through ${m.label}.\n\n**Send ${m.label} → Get Crypto**\nYou pay through ${m.label} and we send crypto to your wallet.\n\n${minLine()}`)
+    .setDescription(`${kHero("Choose your direction")}\n**Send Crypto → Get ${m.label}**\nYou send crypto and we pay you through ${m.label}.\n\n**Send ${m.label} → Get Crypto**\nYou pay through ${m.label} and we send crypto to your wallet.\n\n${!isSoloMethod(method)&&!(opts&&opts.noTip)?`${kNote(`Tip: only ${m.label} exchangers are pinged. Add more methods and any of them can claim your ticket.`)}\n\n`:""}${minLine()}`)
     .setFooter(kFoot("Step 2 of 3"));
 }
 
@@ -3321,7 +3419,7 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   if(!m){await interaction.editReply({content:"That payment method isn't available any more. Please start again.",embeds:[],components:[]});return null;}
   const _picked=pickedMethods([method,...(Array.isArray(methods)?methods:[])]),multi=_picked.length>1?_picked:[];     // [] = an ordinary single-method ticket
   const accepted=multi.length?multi:[method];
-  // No ticket for an amount at or below the minimum fee, whatever got us here (the fee alone would be the whole amount)
+  // No ticket below the minimum amount, whatever got us here (the minimum fee would leave nothing to exchange)
   if(!aboveMinimum(Number(amountUSD))){await interaction.editReply({content:minAmountText(),embeds:[],components:[]});return null;}
   const tickets=load("tickets");
   // Count open tickets where the channel still actually exists (no ghost tickets)
@@ -3379,13 +3477,16 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
     .setFooter(kFoot("When in doubt, use a middleman"));
   const btns=claimRow(rec);
   const _panel=await ch.send({content:`<@${user.id}>`,embeds:[ticketEmbed,rulesEmbed],components:[btns]});
-  const pings=mRoleIds.map(r=>`<@&${r}>`);
-  if(CONFIG.STAFF_ROLE&&!mRoleIds.includes(CONFIG.STAFF_ROLE))pings.push(`<@&${CONFIG.STAFF_ROLE}>`);
-  if(pings.length)await ch.send(`**New ticket**  \u00b7  ${d.hero}  \u00b7  ${pings.join(" ")}`);
-  const t=Object.keys(_mem.tickets||{}).length>0?{..._mem.tickets}:load("tickets");
-  rec.panelMessageId=_panel.id;rec.cardMessageId=_panel.id;t[ch.id]=rec;
-  _mem.tickets=t;save("tickets",t);
-  log(guild,`TICKET: #${ch.name} | ${user.tag} | ${d.hero}`);
+  const pingIds=[...mRoleIds];
+  if(CONFIG.STAFF_ROLE&&!pingIds.includes(CONFIG.STAFF_ROLE))pingIds.push(CONFIG.STAFF_ROLE);
+  rec.panelMessageId=_panel.id;rec.cardMessageId=_panel.id;          // on record before anyone is pinged, so the first exchanger to press Claim always finds the ticket
+  {const t0=Object.keys(_mem.tickets||{}).length>0?{..._mem.tickets}:load("tickets");t0[ch.id]=rec;_mem.tickets=t0;save("tickets",t0);}
+  if(pingIds.length){            // one line that pings the exchanger role of EVERY method the ticket accepts (named in the allow-list, so it never depends on a default)
+    await ch.send({content:`**New ticket**  ·  ${d.hero}  ·  ${pingIds.map(r=>`<@&${r}>`).join(" ")}`,allowedMentions:{roles:pingIds}}).catch(e=>console.error("[ticket] couldn't ping the exchangers:",e.message));
+    warnUnpingable(guild,pingIds);
+  }
+  const _noRole=accepted.filter(v=>!isSoloMethod(v)&&v!=="crypto"&&!(CONFIG.ROLES&&CONFIG.ROLES[v])).map(methodLabel);          // methods nobody can be pinged for (their ROLE_* setting is empty)
+  log(guild,`TICKET: #${ch.name} | ${user.tag} | ${d.hero}${multi.length?` | pinged ${mRoleIds.length} method role(s)`:""}${_noRole.length?` | no exchanger role set for ${_noRole.join(", ")}`:""}`);
   return ch;
 }
 
@@ -3418,7 +3519,7 @@ async function sendReceiptDM(clientUserId,exchangerId,ticketData,tradeCount,tota
     const tradeId=ticketKey?`KV-${String(ticketKey).slice(-6).toUpperCase()}`:`KV-${Date.now().toString(36).toUpperCase()}`;
     const fee=ticketData.feeUSD!=null?ticketData.feeUSD:calcFee(ticketData.amountUSD,ticketData.direction==="receive"?"receive":"send");
     const d=dealOf({...ticketData,feeUSD:fee});
-    await clientUser.send({embeds:[kEmbed("Trade Receipt","ok").setTitle("Trade Complete")
+    await clientUser.send({embeds:[kEmbed("Receipt","ok").setTitle("Exchange Complete")
       .setDescription(`${dealHead(d)}\n${kLedger([["Receipt ID",tradeId],...dealRows(d,{final:true})])}Your exchange has been verified and completed. This is your official receipt.`)
       .addFields(
         {name:"Date",value:`<t:${Math.floor(Date.now()/1000)}:F>`,inline:true},{name:"Exchanger",value:`<@${exchangerId}>`,inline:true},{name:"​",value:"​",inline:true},
@@ -3470,7 +3571,7 @@ async function completeTrade(interaction,ticket,tickets){
     _vouchPosted=true;
     await postVouch(interaction.guild,{clientId:ticket.userId,exchangerId:ticket.completedBy,method:methodLabel(ticket.method),methodValue:ticket.method,feeUSD:ticket.feeUSD,amountUSD:ticket.amountUSD,direction:ticket.direction,coin:ticket.coin,recvCoin:ticket.recvCoin||null,message:null,rating:5,referredBy:null});
     updateStatChannel(interaction.guild).catch(()=>{});
-    await doCloseTicket(interaction.channel,interaction.guild,interaction.user,"Trade completed");
+    await doCloseTicket(interaction.channel,interaction.guild,interaction.user,"Exchange completed");
     setTimeout(()=>interaction.channel.delete().catch(()=>{}),2000);
   };
   const _vRow=new ActionRowBuilder().addComponents(
@@ -3479,7 +3580,7 @@ async function completeTrade(interaction,ticket,tickets){
   );
   const _vPrompt=kEmbed("Ticket","ok")
     .setTitle(`Exchange Complete`)
-    .setDescription(`<@${ticket.userId}> — thanks for trading with Konvert! Please leave a vouch in <#${VOUCH_POST_CHANNEL}>.`)
+    .setDescription(`<@${ticket.userId}> — thanks for exchanging with Konvert! Please leave a vouch in <#${VOUCH_POST_CHANNEL}>.`)
     .setFooter(kFoot("This ticket closes in 90 seconds"));
   // Post publicly so the client actually sees it (btn_done defers ephemerally)
   await interaction.channel.send({content:`<@${ticket.userId}>`,embeds:[_vPrompt],components:[_vRow]}).catch(()=>{});
@@ -3623,7 +3724,7 @@ client.on(Events.MessageCreate,async message=>{
     }
     // $rate — show fee table
     if(message.content.trim()==="$rate"){
-      await message.reply("Rates: <$150=10% | $150-349=9% | $350-599=8% | $600-799=7% | $800+=6% | Min $5 | VIP -0.75%").catch(()=>{});return;
+      await message.reply("Rates: <$150=10% | $150-349=9% | $350-599=8% | $600-799=7% | $800+=6% | Min fee $5 per exchange | Min amount $6 | VIP -0.75%").catch(()=>{});return;
     }
     // $vol [@user]
     if(message.content.trim().startsWith("$vol")&&(isExchanger(message.member)||isOwner(message.author.id,message.member))){
@@ -3685,7 +3786,7 @@ client.on(Events.MessageCreate,async message=>{
     if(message.content.trim().startsWith("$purge")&&(isOwner(message.author.id,message.member)||(CONFIG.STAFF_ROLE&&message.member?.roles.cache.has(CONFIG.STAFF_ROLE)))){
       const _n=Math.min(parseInt(message.content.trim().split(" ")[1]||"10")||10,100);
       await message.channel.bulkDelete(_n+1,true).catch(()=>{});
-      const _pm=await message.channel.send(`Deleted ${_n} messages.`).catch(()=>null);
+      const _pm=await message.channel.send(`Deleted ${_n} message${_n===1?"":"s"}.`).catch(()=>null);
       if(_pm)setTimeout(()=>_pm.delete().catch(()=>{}),3000);
       return;
     }
@@ -3839,7 +3940,7 @@ client.on(Events.MessageCreate,async message=>{
       const embed=new EmbedBuilder().setColor(color).setAuthor({name:"Konvert Exchange  ·  Converter",iconURL:IMG.LOGO})
         .setTitle(fromSym+rawAmt.toLocaleString("en-US")+" "+fromRaw+"  \u2192  "+toSym+fmtR(result)+" "+toRaw)
         .addFields({name:"You have",value:`**${fromSym}${rawAmt.toLocaleString("en-US")} ${fromRaw}**`,inline:true},{name:"You get",value:`**${toSym}${fmtR(result)} ${toRaw}**`,inline:true},{name:"\u2248 USD Value",value:`**$${amtUSD.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}**`,inline:true})
-        .setFooter({text:"Konvert Exchange  ·  Live rates  ·  Open a ticket to trade"}).setTimestamp();
+        .setFooter({text:"Konvert Exchange  ·  Live rates  ·  Open a ticket to exchange"}).setTimestamp();
       if(isCoin(fromRaw)&&COIN_LOGO[fromRaw])embed.setThumbnail(COIN_LOGO[fromRaw]);
       else if(isCoin(toRaw)&&COIN_LOGO[toRaw])embed.setThumbnail(COIN_LOGO[toRaw]);
       await message.reply({embeds:[embed]}).catch(()=>{});
@@ -4115,7 +4216,7 @@ client.on(Events.InteractionCreate,async interaction=>{
           .addFields(
             {name:"Exchanges",value:`**${realTrades.length}**`,inline:true},
             {name:"Volume",value:`**${volume>0?fmtUSD(volume):"$0.00"}**`,inline:true},
-            {name:"Avg Trade",value:`**${avg>0?fmtUSD(avg):"\u2014"}**`,inline:true},
+            {name:"Avg Exchange",value:`**${avg>0?fmtUSD(avg):"\u2014"}**`,inline:true},
             {name:"Top Method",value:topM?`**${topM.name}**`:noTop(realTrades),inline:true},
             {name:"Top Coin",value:topC?`**${topC.name}**`:noTop(realTrades),inline:true},
             {name:"Last Exchange",value:last?.completedAt?`<t:${Math.floor(last.completedAt/1000)}:R>`:"\u2014",inline:true},
@@ -4129,7 +4230,7 @@ client.on(Events.InteractionCreate,async interaction=>{
       if(cmd==="leaderboard"){
         await interaction.deferReply();
         const byUser=buildLeaderboardVolumes();
-        if(!Object.keys(byUser).length)return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Client Leaderboard").setThumbnail(IMG.LOGO).setDescription("No completed trades on record yet.\n\nComplete a trade to appear here.\n\u200b").setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  ·  Leaderboard"}).setTimestamp()]});
+        if(!Object.keys(byUser).length)return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Client Leaderboard").setThumbnail(IMG.LOGO).setDescription("No completed exchanges on record yet.\n\nComplete an exchange to appear here.\n\u200b").setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  ·  Leaderboard"}).setTimestamp()]});
         const ranked=Object.entries(byUser).sort((a,b)=>b[1]-a[1]).slice(0,10);
         const lines=ranked.map(([uid,vol],i)=>`**${i+1}.**  <@${uid}>  \u2014  **${fmtUSD(vol)}**`).join("\n");
         const totalVol=ranked.reduce((s,[,v])=>s+v,0);
@@ -4137,7 +4238,7 @@ client.on(Events.InteractionCreate,async interaction=>{
           .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
           .setTitle("Leaderboard")
           .setThumbnail(IMG.LOGO)
-          .setDescription(`Top ${ranked.length} clients by volume\n\u200b`)
+          .setDescription(`Top ${ranked.length===1?"client":`${ranked.length} clients`} by volume\n\u200b`)
           .addFields({name:"\u200b",value:lines,inline:false})
           .setFooter({text:`Konvert Exchange  ·  ${fmtUSD(totalVol)} total volume`})
           .setTimestamp()]});
@@ -4157,7 +4258,7 @@ client.on(Events.InteractionCreate,async interaction=>{
       }
 
       if(cmd==="wallets"){const w=load("wallets"),fields=Object.entries(w).length?Object.entries(w).map(([coin,addr])=>({name:coin,value:`\`${addr}\``,inline:true})):[{name:"No wallets set",value:"Owner: use /setwallet to add addresses.",inline:false}];return interaction.reply({embeds:[base("Deposit Wallets").setThumbnail(IMG.LOGO).setDescription("Send funds **only** to addresses confirmed by staff **inside your ticket**.\n__Never send to any address given outside of your ticket.__\n\u200b").addFields(fields).setFooter({text:"Konvert Exchange  ·  Always verify with staff before sending"})],flags:64});}
-      if(cmd==="mm"){return interaction.reply({embeds:[slim("Middleman Guide").setDescription("A **middleman (MM)** holds crypto between both parties during a trade, protecting everyone from scams.").addFields({name:"How to Pick an MM",value:"Agree with your exchanger on a trusted MM you both know.",inline:false},{name:"Owner Override Only",value:"The **only** time you skip an MM is if **@jswaps** or **@3uce** explicitly says so in your ticket.",inline:false},{name:"Stay Safe",value:"**Staff will never DM you first.** All MM arrangements happen in your ticket only.",inline:false}).setFooter({text:"Konvert Exchange  ·  Trade safely, always"})]});}
+      if(cmd==="mm"){return interaction.reply({embeds:[slim("Middleman Guide").setDescription("A **middleman (MM)** holds crypto between both parties during an exchange, protecting everyone from scams.").addFields({name:"How to Pick an MM",value:"Agree with your exchanger on a trusted MM you both know.",inline:false},{name:"Owner Override Only",value:"The **only** time you skip an MM is if **@jswaps** or **@3uce** explicitly says so in your ticket.",inline:false},{name:"Stay Safe",value:"**Staff will never DM you first.** All MM arrangements happen in your ticket only.",inline:false}).setFooter({text:"Konvert Exchange  ·  Exchange safely, always"})]});}
 
       if(cmd==="mine"){
         const userId=interaction.user.id,cooldownMs=3*60*60*1000,remaining=cooldownMs-(Date.now()-(state.cooldowns[userId]||0));
@@ -4185,7 +4286,7 @@ client.on(Events.InteractionCreate,async interaction=>{
       }
 
       if(cmd==="ticket"){const tickets=load("tickets"),found=Object.entries(tickets).find(([,t])=>t.userId===interaction.user.id&&t.status==="open");if(!found)return interaction.reply({content:"You don't have an open ticket. Use **Exchange Now** to start one.",flags:64});const [channelId,t]=found,d=dealOf(t),status=t.reported?"Under owner review":t.mmPending?"Waiting for you to confirm the middleman":t.completionPending?"Waiting for you to confirm completion":t.claimedBy?`Claimed by <@${t.claimedBy}>`:"Waiting for an exchanger";return interaction.reply({embeds:[base("Your Open Ticket").setDescription(`${dealHead(d)}\n\u200b`).addFields({name:"Channel",value:`<#${channelId}>`,inline:true},{name:"Status",value:status,inline:true},{name:"Opened",value:t.createdAt?`<t:${Math.floor(t.createdAt/1000)}:R>`:"Earlier",inline:true}).setFooter({text:"Konvert Exchange  ·  All communication stays in your ticket"})],flags:64});}
-      if(cmd==="howto"){return interaction.reply({embeds:[base("How to Use Konvert").setThumbnail(IMG.LOGO).setDescription("New to Konvert? Here's how a trade works step by step.\n\u200b").addFields({name:"1.  Check Rates",value:"Use **Live Rates** or type `$BTC` / `$ETH` etc. in any channel to see the current price.",inline:false},{name:"2.  Calculate Fee",value:"Use **Calculate Fee** to estimate your cost. Fees range from **5% - 10%** depending on amount.",inline:false},{name:"3.  Open a Ticket",value:"Click **Exchange Now**, pick up to **3 payment methods** (any exchanger online for one of them can take your ticket), fill in details, confirm. A private ticket opens instantly.",inline:false},{name:"4.  Middleman When Needed",value:"Your exchanger's go-first limit is in their name (like **Up To $50**). Above it, agree on a **middleman** with them inside your ticket.",inline:false},{name:"5.  Send & Confirm",value:"Staff confirms the deal. You send funds and share proof. Once confirmed, you receive your crypto or payment.",inline:false},{name:"Stay Safe",value:"Staff never DM you first. Anyone doing so is an impersonator. All communication stays in your ticket.",inline:false}).setFooter({text:"Konvert Exchange  ·  Questions? Ask in your ticket"})],flags:64});}
+      if(cmd==="howto"){return interaction.reply({embeds:[base("How to Use Konvert").setThumbnail(IMG.LOGO).setDescription("New to Konvert? Here's how an exchange works step by step.\n\u200b").addFields({name:"1.  Check Rates",value:"Use **Live Rates** or type `$BTC` / `$ETH` etc. in any channel to see the current price.",inline:false},{name:"2.  Calculate Fee",value:"Use **Calculate Fee** to estimate your cost. Fees range from **5% - 10%** depending on amount.",inline:false},{name:"3.  Open a Ticket",value:"Click **Exchange Now** and pick **2 or 3 payment methods** (recommended). Exchangers for each are pinged at once, so whoever is online first can take your ticket. Fill in the details and confirm. A private ticket opens instantly.",inline:false},{name:"4.  Middleman When Needed",value:"Your exchanger's go-first limit is in their name (like **Up To $50**). Above it, agree on a **middleman** with them inside your ticket.",inline:false},{name:"5.  Send & Confirm",value:"Staff confirms the deal. You send funds and share proof. Once confirmed, you receive your crypto or payment.",inline:false},{name:"Stay Safe",value:"Staff never DM you first. Anyone doing so is an impersonator. All communication stays in your ticket.",inline:false}).setFooter({text:"Konvert Exchange  ·  Questions? Ask in your ticket"})],flags:64});}
       if(cmd==="ping"){const sent=Date.now();await interaction.deferReply({flags:64});return interaction.editReply({embeds:[base("Bot Status").setThumbnail(IMG.LOGO).setDescription("**All systems operational.** Konvert is online and ready.\n\u200b").addFields({name:"Status",value:"**Online**",inline:true},{name:"Latency",value:`**${Date.now()-sent}ms**`,inline:true},{name:"API Latency",value:client.ws.ping>=0?`**${client.ws.ping}ms**`:"**—**",inline:true}).setFooter({text:"Konvert Exchange  ·  Bot Status"})]});}
 
       if(cmd==="calc"){await interaction.deferReply({flags:64});if(!CONFIG.RATES_CHANNEL)return interaction.editReply("RATES_CHANNEL_ID not configured.");const ch=interaction.guild.channels.cache.get(CONFIG.RATES_CHANNEL);if(!ch)return interaction.editReply("Rates channel not found.");const embed=await buildRatesEmbed();if(ratesMsgId){const msg=await ch.messages.fetch(ratesMsgId).catch(()=>null);if(msg){await msg.edit({embeds:[embed]});}else{const s=await ch.send({embeds:[embed]});ratesMsgId=s.id;}}else{const s=await ch.send({embeds:[embed]});ratesMsgId=s.id;}return interaction.editReply("Rates posted.");}
@@ -4215,12 +4316,12 @@ Deleting in 10 seconds.`)
         await interaction.deferReply();
         const allRoleIds=[...Object.values(CONFIG.ROLES),CONFIG.STAFF_ROLE,CONFIG.EXCHANGER_ROLE].filter(Boolean),uniqueRoles=[...new Set(allRoleIds)],addedRoles=[];
         for(const roleId of uniqueRoles){try{const role=await interaction.guild.roles.fetch(roleId).catch(()=>null);if(!role)continue;await interaction.channel.permissionOverwrites.edit(roleId,{ViewChannel:true,SendMessages:true,ReadMessageHistory:true});addedRoles.push(`<@&${roleId}>`);}catch{}}
-        await interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Ticket Opened to All Exchangers").setDescription("This ticket is now **visible to all Konvert exchangers**.\n\nAny available handler can step in and assist with this trade.\n\u200b").addFields({name:"Roles Added",value:addedRoles.length?addedRoles.join("  "):"None configured",inline:false}).setFooter({text:"Konvert Exchange  ·  Open Ticket"}).setTimestamp()]});
+        await interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Ticket Opened to All Exchangers").setDescription("This ticket is now **visible to all Konvert exchangers**.\n\nAny available handler can step in and assist with this exchange.\n\u200b").addFields({name:"Roles Added",value:addedRoles.length?addedRoles.join("  "):"None configured",inline:false}).setFooter({text:"Konvert Exchange  ·  Open Ticket"}).setTimestamp()]});
         return;
       }
 
       if(cmd==="note"){const text=interaction.options.getString("text");await interaction.channel.send({embeds:[new EmbedBuilder().setColor(0xFFB347).setAuthor({name:`Staff Note · ${interaction.user.tag}`,iconURL:interaction.user.displayAvatarURL()}).setDescription(text).setTimestamp().setFooter({text:"Konvert Exchange  ·  Staff Note"})]});return interaction.reply({content:"Note added.",flags:64});}
-      if(cmd==="volume"){const all=Object.values(load("tickets")),done=all.filter(t=>t.status==="vouched"&&t.amountUSD&&t.method!=="adjustment"),totalVol=done.reduce((s,t)=>s+(t.amountUSD||0),0),totalFees=done.reduce((s,t)=>s+(t.feeUSD||0),0),open=all.filter(t=>t.status==="open").length,today=done.filter(t=>t.completedAt&&Date.now()-t.completedAt<86400000);const topMethod=topOf(done,"method");return interaction.reply({embeds:[base("Konvert Volume Stats").setThumbnail(IMG.LOGO).addFields({name:"Total Exchanges",value:`**${done.length}** exchanges`,inline:true},{name:"Total Volume",value:`**${fmtUSD(totalVol)}**`,inline:true},{name:"Total Fees",value:`**${fmtUSD(totalFees)}**`,inline:true},{name:"Open Tickets",value:`**${open}**`,inline:true},{name:"Today's Volume",value:`**${fmtUSD(today.reduce((s,t)=>s+(t.amountUSD||0),0))}** (${today.length} trades)`,inline:true},{name:"Top Method",value:topMethod?`**${topMethod.name}** (${topMethod.n})`:noTop(done),inline:true}).setFooter({text:"Konvert Exchange  ·  Server Volume Statistics"})],flags:64});}
+      if(cmd==="volume"){const all=Object.values(load("tickets")),done=all.filter(t=>t.status==="vouched"&&t.amountUSD&&t.method!=="adjustment"),totalVol=done.reduce((s,t)=>s+(t.amountUSD||0),0),totalFees=done.reduce((s,t)=>s+(t.feeUSD||0),0),open=all.filter(t=>t.status==="open").length,today=done.filter(t=>t.completedAt&&Date.now()-t.completedAt<86400000);const topMethod=topOf(done,"method");return interaction.reply({embeds:[base("Konvert Volume Stats").setThumbnail(IMG.LOGO).addFields({name:"Total Exchanges",value:`**${done.length}** exchange${done.length===1?"":"s"}`,inline:true},{name:"Total Volume",value:`**${fmtUSD(totalVol)}**`,inline:true},{name:"Total Fees",value:`**${fmtUSD(totalFees)}**`,inline:true},{name:"Open Tickets",value:`**${open}**`,inline:true},{name:"Today's Volume",value:`**${fmtUSD(today.reduce((s,t)=>s+(t.amountUSD||0),0))}** (${nExchanges(today.length)})`,inline:true},{name:"Top Method",value:topMethod?`**${topMethod.name}** (${topMethod.n})`:noTop(done),inline:true}).setFooter({text:"Konvert Exchange  ·  Server Volume Statistics"})],flags:64});}
 
       if(cmd==="snapshot"){
         await interaction.deferReply({flags:64});
@@ -4234,22 +4335,22 @@ Deleting in 10 seconds.`)
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Server Snapshot").setDescription(`${dateStr} EST\n\u200b`).addFields(
           {name:"Members",value:`${guild.memberCount}`,inline:true},
           {name:"Open Tickets",value:`${open.length}`,inline:true},
-          {name:"All-Time Trades",value:`${done.length}`,inline:true},
+          {name:"All-Time Exchanges",value:`${done.length}`,inline:true},
           {name:"Total Volume",value:fmtUSD(totalVol),inline:true},
-          {name:"Today",value:`${today.length} trades · ${fmtUSD(today.reduce((s,t)=>s+(t.amountUSD||0),0))}`,inline:true},
-          {name:"This Week",value:`${week.length} trades · ${fmtUSD(week.reduce((s,t)=>s+(t.amountUSD||0),0))}`,inline:true},
+          {name:"Today",value:`${nExchanges(today.length)} · ${fmtUSD(today.reduce((s,t)=>s+(t.amountUSD||0),0))}`,inline:true},
+          {name:"This Week",value:`${nExchanges(week.length)} · ${fmtUSD(week.reduce((s,t)=>s+(t.amountUSD||0),0))}`,inline:true},
           {name:"Avg Deal Size",value:avgDeal,inline:true},
           {name:"Top Method",value:topMethod?`${topMethod.name} (${topMethod.n})`:noTop(done),inline:true},
-          {name:"Top Exchanger",value:topEx?`<@${topEx[0]}> · ${topEx[1]} trades`:"—",inline:true},
+          {name:"Top Exchanger",value:topEx?`<@${topEx[0]}> · ${nExchanges(topEx[1])}`:"—",inline:true},
         ).setFooter({text:"Konvert Exchange  ·  Owner Snapshot"}).setTimestamp()]});
       }
 
-      if(cmd==="exchangerboard"){const done=Object.values(load("tickets")).filter(t=>t.status==="vouched"&&t.completedBy&&t.method!=="adjustment"),byEx={};done.forEach(t=>{if(!byEx[t.completedBy])byEx[t.completedBy]={trades:0,volume:0};byEx[t.completedBy].trades+=1;byEx[t.completedBy].volume+=(t.amountUSD||0);});const ranked=Object.entries(byEx).sort((a,b)=>b[1].trades-a[1].trades).slice(0,10);if(!ranked.length)return interaction.reply({content:"No completed exchanges yet.",flags:64});const lines=ranked.map(([uid,d],i)=>`**${i+1}.**  <@${uid}>  ·  **${d.trades}** exchange${d.trades!==1?"s":""}  \u00b7  ${fmtUSD(d.volume)}`).join("\n");return interaction.reply({embeds:[base("Exchanger Leaderboard").setThumbnail(IMG.LOGO).setDescription("Top Konvert exchangers ranked by completed trades.\n\u200b").addFields({name:"Rankings",value:lines,inline:false}).setFooter({text:"Konvert Exchange  ·  Exchanger Leaderboard"}).setTimestamp()],flags:64});}
+      if(cmd==="exchangerboard"){const done=Object.values(load("tickets")).filter(t=>t.status==="vouched"&&t.completedBy&&t.method!=="adjustment"),byEx={};done.forEach(t=>{if(!byEx[t.completedBy])byEx[t.completedBy]={trades:0,volume:0};byEx[t.completedBy].trades+=1;byEx[t.completedBy].volume+=(t.amountUSD||0);});const ranked=Object.entries(byEx).sort((a,b)=>b[1].trades-a[1].trades).slice(0,10);if(!ranked.length)return interaction.reply({content:"No completed exchanges yet.",flags:64});const lines=ranked.map(([uid,d],i)=>`**${i+1}.**  <@${uid}>  ·  **${d.trades}** exchange${d.trades!==1?"s":""}  \u00b7  ${fmtUSD(d.volume)}`).join("\n");return interaction.reply({embeds:[base("Exchanger Leaderboard").setThumbnail(IMG.LOGO).setDescription("Top Konvert exchangers ranked by completed exchanges.\n\u200b").addFields({name:"Rankings",value:lines,inline:false}).setFooter({text:"Konvert Exchange  ·  Exchanger Leaderboard"}).setTimestamp()],flags:64});}
 
       if(cmd==="thankclient"){
         const target=interaction.options.getUser("client"),amount=interaction.options.getNumber("amount")||null;
-        const vol=getUserVolume(target.id),tradeCount=getUserDealCount(target.id),tier=getTier(vol),feePreview=amount?`Your rate on your next **${fmtUSD(amount)}** trade: **${feeRate(amount,"send")}%**`:null;
-        try{await target.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Thank You for Trading with Us").setThumbnail(IMG.LOGO).setDescription(`Hey <@${target.id}> — your trade has been completed successfully.\n\nWe appreciate your trust in **Konvert Exchange**. Every deal matters to us and we look forward to trading with you again.\n\u200b`).addFields({name:"Your Tier",value:`**${tier.label}**`,inline:true},{name:"Trades With Us",value:`**${tradeCount}** exchanges`,inline:true},{name:"Total Exchanged",value:vol>0?`**${fmtUSD(vol)}**`:"—",inline:true},{name:"Come Back Anytime",value:"Head to our exchange channel anytime.\n**Fast  \u00b7  Safe  \u00b7  Simple  \u00b7  Private**",inline:false},...(feePreview?[{name:"Your Rate Preview",value:feePreview,inline:false}]:[])).setImage(IMG.DEAL).setFooter({text:"Konvert Exchange  ·  Thank you for your business"}).setTimestamp()]});return interaction.reply({content:`Thank-you card sent to **${target.tag}**.`,flags:64});}
+        const vol=getUserVolume(target.id),tradeCount=getUserDealCount(target.id),tier=getTier(vol),feePreview=amount?`Your rate on your next **${fmtUSD(amount)}** exchange: **${feeRate(amount,"send")}%**`:null;
+        try{await target.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Thank You for Exchanging with Us").setThumbnail(IMG.LOGO).setDescription(`Hey <@${target.id}> — your exchange has been completed successfully.\n\nWe appreciate your trust in **Konvert Exchange**. Every deal matters to us and we look forward to exchanging with you again.\n\u200b`).addFields({name:"Your Tier",value:`**${tier.label}**`,inline:true},{name:"Exchanges With Us",value:`**${tradeCount}** exchange${tradeCount===1?"":"s"}`,inline:true},{name:"Total Exchanged",value:vol>0?`**${fmtUSD(vol)}**`:"—",inline:true},{name:"Come Back Anytime",value:"Head to our exchange channel anytime.\n**Fast  \u00b7  Safe  \u00b7  Simple  \u00b7  Private**",inline:false},...(feePreview?[{name:"Your Rate Preview",value:feePreview,inline:false}]:[])).setImage(IMG.DEAL).setFooter({text:"Konvert Exchange  ·  Thank you for your business"}).setTimestamp()]});return interaction.reply({content:`Thank-you card sent to **${target.tag}**.`,flags:64});}
         catch{return interaction.reply({content:`Could not DM **${target.tag}**. They may have DMs disabled.`,flags:64});}
       }
 
@@ -4259,16 +4360,16 @@ Deleting in 10 seconds.`)
         const embed=kEmbed()
           .setTitle("Terms of Service")
           .setThumbnail(IMG.LOGO)
-          .setDescription("By using Konvert's services you agree to the following. These terms protect everyone involved and keep trades running smoothly.\n\u200b")
+          .setDescription("By using Konvert's services you agree to the following. These terms protect everyone involved and keep exchanges running smoothly.\n\u200b")
           .addFields(
             {name:"1 · Use of Service",
              value:"Konvert is available to anyone who can legally exchange cryptocurrency in their jurisdiction. We reserve the right to refuse or cancel any transaction at any time without explanation.",
              inline:false},
             {name:"2 · Payments from Balance Only",
-             value:"All payments must be sent from your own balance. Card payments may incur an additional fee or be rejected entirely at our discretion. If your payment method is flagged or declined, the trade will not proceed.",
+             value:"All payments must be sent from your own balance. Card payments may incur an additional fee or be rejected entirely at our discretion. If your payment method is flagged or declined, the exchange will not proceed.",
              inline:false},
             {name:"3 · Fees",
-             value:"Every trade has a service fee shown to you before you confirm. The minimum fee is $5, so every trade has to be for more than $5. Once both parties confirm a trade is complete, the fee is non-refundable.",
+             value:"Every exchange has a service fee shown to you before you confirm. The minimum fee is $5 per exchange and the minimum amount is $6. Once both parties confirm an exchange is complete, the fee is non-refundable.",
              inline:false},
             {name:"4 · Right to Refuse",
              value:"We reserve the right to reject any transaction we reasonably suspect involves money laundering, fraudulent activity, or suspicious alternate accounts. No explanation will be provided and no liability is assumed.",
@@ -4382,11 +4483,11 @@ Deleting in 10 seconds.`)
         const newVol=getUserVolume(toUser.id);
         await applyTierRole(interaction.guild,toUser.id,newVol).catch(()=>{});
         const newTier=getTier(newVol);
-        log(interaction.guild,`TRANSFERSTATS: ${interaction.user.tag} moved ${moved} trades (${fmtUSD(movedVol)}) from ${fromUser.tag||fromUser.username} to ${toUser.tag||toUser.username}`);
+        log(interaction.guild,`TRANSFERSTATS: ${interaction.user.tag} moved ${nExchanges(moved)} (${fmtUSD(movedVol)}) from ${fromUser.tag||fromUser.username} to ${toUser.tag||toUser.username}`);
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Stats Transfer",iconURL:IMG.LOGO}).setTitle("Transfer Complete").addFields(
-          {name:"From",value:`<@${fromUser.id}>\nNow **$0.00** \u00b7 0 trades`,inline:true},
-          {name:"To",value:`<@${toUser.id}>\nNow **${fmtUSD(newVol)}** \u00b7 ${getUserDealCount(toUser.id)} trades`,inline:true},
-          {name:"Moved",value:`**${moved}** trades \u00b7 **${fmtUSD(movedVol)}** volume`,inline:false},
+          {name:"From",value:`<@${fromUser.id}>\nNow **$0.00** \u00b7 0 exchanges`,inline:true},
+          {name:"To",value:`<@${toUser.id}>\nNow **${fmtUSD(newVol)}** \u00b7 ${nExchanges(getUserDealCount(toUser.id))}`,inline:true},
+          {name:"Moved",value:`**${moved}** exchange${moved===1?"":"s"} \u00b7 **${fmtUSD(movedVol)}** volume`,inline:false},
           {name:"New Tier",value:`**${newTier.label}**`,inline:true},
         ).setFooter({text:"Konvert Exchange  ·  Stats transferred"}).setTimestamp()]});
       }
@@ -4464,7 +4565,7 @@ Deleting in 10 seconds.`)
         if(!ticket){return interaction.editReply({content:"This command can only be used inside your open ticket channel.",flags:64});}
         const [channelId,t]=ticket;
         try{await interaction.channel.permissionOverwrites.edit(interaction.user.id,{SendMessages:false});if(CONFIG.EXCHANGER_ROLE)await interaction.channel.permissionOverwrites.edit(CONFIG.EXCHANGER_ROLE,{SendMessages:false}).catch(()=>{});}catch{}
-        await interaction.channel.send({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange  ·  Dispute Filed",iconURL:IMG.LOGO}).setTitle("Dispute Filed").setDescription(`<@${interaction.user.id}> has flagged an issue with this trade.\n\nThis ticket has been **locked** pending staff review. Only owners can unlock it.\n\u200b`).addFields({name:"Filed By",value:`<@${interaction.user.id}>`,inline:true},{name:"Time",value:`<t:${Math.floor(Date.now()/1000)}:F>`,inline:true},{name:"Status",value:"**Under Review**",inline:true}).setFooter({text:"Konvert Exchange  ·  Do not close this ticket until resolved"}).setTimestamp()]});
+        await interaction.channel.send({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange  ·  Dispute Filed",iconURL:IMG.LOGO}).setTitle("Dispute Filed").setDescription(`<@${interaction.user.id}> has flagged an issue with this exchange.\n\nThis ticket has been **locked** pending staff review. Only owners can unlock it.\n\u200b`).addFields({name:"Filed By",value:`<@${interaction.user.id}>`,inline:true},{name:"Time",value:`<t:${Math.floor(Date.now()/1000)}:F>`,inline:true},{name:"Status",value:"**Under Review**",inline:true}).setFooter({text:"Konvert Exchange  ·  Do not close this ticket until resolved"}).setTimestamp()]});
         tickets[channelId].status="dispute";_mem.tickets=tickets;save("tickets",tickets);
         for(const oid of CONFIG.OWNER_IDS){try{const owner=await client.users.fetch(oid);await owner.send({embeds:[new EmbedBuilder().setColor(0xef4444).setAuthor({name:"Konvert Exchange  ·  Dispute Alert",iconURL:IMG.LOGO}).setTitle("Dispute Filed").setDescription(`${dealHead(dealOf(t))}\nA client has filed a dispute in a ticket.`).addFields({name:"Client",value:`<@${interaction.user.id}>`,inline:true},{name:"Channel",value:`<#${channelId}>`,inline:true}).setFooter({text:"Konvert Exchange  ·  Review immediately"}).setTimestamp()]});}catch{}}
         log(interaction.guild,`DISPUTE: ${interaction.user.tag} filed dispute in #${interaction.channel.name}`);
@@ -4478,14 +4579,14 @@ Deleting in 10 seconds.`)
         const cutoff=Date.now()-(days*24*60*60*1000);
         const allT=Object.values(_mem.tickets&&Object.keys(_mem.tickets).length?_mem.tickets:load("tickets"));
         const uniqueIds=[...new Set(allT.filter(t=>["vouched","completed"].includes(t.status)&&(t.completedAt||0)>=cutoff&&t.method!=="adjustment").map(t=>t.userId))];
-        if(!uniqueIds.length)return interaction.editReply({content:`No clients found who traded in the last ${days} days.`});
-        await interaction.editReply({content:`Sending to **${uniqueIds.length}** clients...`});
+        if(!uniqueIds.length)return interaction.editReply({content:`No clients found who exchanged in the last ${days===1?"day":`${days} days`}.`});
+        await interaction.editReply({content:`Sending to **${uniqueIds.length}** client${uniqueIds.length===1?"":"s"}...`});
         let sent=0,failed=0;
-        for(const uid of uniqueIds){try{const u=await client.users.fetch(uid);await u.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Message from Konvert").setDescription(msg).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  ·  Thank you for trading with us"}).setTimestamp()]});sent++;await new Promise(r=>setTimeout(r,800));}catch{failed++;}}
+        for(const uid of uniqueIds){try{const u=await client.users.fetch(uid);await u.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Message from Konvert").setDescription(msg).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  ·  Thank you for exchanging with us"}).setTimestamp()]});sent++;await new Promise(r=>setTimeout(r,800));}catch{failed++;}}
         return interaction.followUp({content:`Broadcast complete \u2014 **${sent}** sent, **${failed}** failed (DMs closed).`,flags:64});
       }
 
-      if(cmd==="mytrades"){
+      if(cmd==="myexchanges"){
         await interaction.deferReply({flags:64});
         const userId=interaction.user.id;
         const _myTicketSrc=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
@@ -4497,12 +4598,12 @@ Deleting in 10 seconds.`)
           parseFloat(t.amountUSD||0)>0
         ).sort((a,b)=>(b.completedAt||0)-(a.completedAt||0));
         const volume=getUserVolume(userId),tier=getTier(volume),nextT=getNextTier(volume),vip=isVipVolume(volume);
-        if(!done.length){return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  My Trades",iconURL:IMG.LOGO}).setTitle("No Trades Yet").setDescription("You haven't completed any trades with Konvert yet.\n\nHead to the exchange channel to get started.\n\u200b").setImage(IMG.BANNER).setFooter({text:"Konvert Exchange"}).setTimestamp()]});}
+        if(!done.length){return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  My Exchanges",iconURL:IMG.LOGO}).setTitle("No Exchanges Yet").setDescription("You haven't completed any exchanges with Konvert yet.\n\nHead to the exchange channel to get started.\n\u200b").setImage(IMG.BANNER).setFooter({text:"Konvert Exchange"}).setTimestamp()]});}
         const last5=done.slice(0,5).map((t,i)=>{return `${i+1}. **${methodLabel(t.method)}** \u00b7 ${fmtUSD(t.amountUSD)} \u00b7 <t:${Math.floor((t.completedAt||Date.now())/1000)}:d>`;}).join("\n");
         const topM=topOf(done,"method");
         const avg=done.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0)/done.length;
         const refPts=0;
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  My Trade History",iconURL:IMG.LOGO}).setTitle("My Trades").setThumbnail(interaction.user.displayAvatarURL({size:256})).setDescription(`**${tier.label}**${vip?"  \u00B7  VIP":""}${nextT?`  \u00b7  ${fmtUSD(Math.max(nextT.min-volume,0))} to ${nextT.label}`:"  \u00b7  Max tier reached"}\n\u200b`).addFields({name:"Total Trades",value:`**${done.length}**`,inline:true},{name:"Total Volume",value:`**${fmtUSD(volume)}**`,inline:true},{name:"Avg Trade",value:`**${fmtUSD(avg)}**`,inline:true},{name:"Top Method",value:topM?`**${topM.name}** (${topM.n}x)`:noTop(done),inline:true},{name:"VIP Discount",value:vip?"Active \u2014 0.75% off":"Not yet ($7,000+ required)",inline:true},{name:"Last 5 Trades",value:last5,inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  ·  Use /stats for full tier details"}).setTimestamp()]});
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  My Exchange History",iconURL:IMG.LOGO}).setTitle("My Exchanges").setThumbnail(interaction.user.displayAvatarURL({size:256})).setDescription(`**${tier.label}**${vip?"  \u00B7  VIP":""}${nextT?`  \u00b7  ${fmtUSD(Math.max(nextT.min-volume,0))} to ${nextT.label}`:"  \u00b7  Max tier reached"}\n\u200b`).addFields({name:"Total Exchanges",value:`**${done.length}**`,inline:true},{name:"Total Volume",value:`**${fmtUSD(volume)}**`,inline:true},{name:"Avg Exchange",value:`**${fmtUSD(avg)}**`,inline:true},{name:"Top Method",value:topM?`**${topM.name}** (${topM.n}x)`:noTop(done),inline:true},{name:"VIP Discount",value:vip?"Active \u2014 0.75% off":"Not yet ($7,000+ required)",inline:true},{name:"Last 5 Exchanges",value:last5,inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  ·  Use /stats for full tier details"}).setTimestamp()]});
       }
 
       if(cmd==="estimate"){
@@ -4517,15 +4618,15 @@ Deleting in 10 seconds.`)
         const coinPrice=await getPrice(coinRaw),tier=getTier(vol);
         const d=dealOf({method:m.value,direction,coin:coinRaw,amountUSD:amount,feeUSD:fee});
         const coinAmt=(direction==="send"&&coinPrice&&d.net!=null)?(d.net/coinPrice).toFixed(6):null;
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Quote",iconURL:IMG.LOGO}).setTitle("Trade Estimate")
-          .setDescription(`${dealHead(d,vip?["VIP rate"]:[])}\n${kLedger(dealRows(d,{rate,coinAmt}))}Live quote for your proposed trade. Open a ticket to proceed.`)
+        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Quote",iconURL:IMG.LOGO}).setTitle("Exchange Estimate")
+          .setDescription(`${dealHead(d,vip?["VIP rate"]:[])}\n${kLedger(dealRows(d,{rate,coinAmt}))}Live quote for your proposed exchange. Open a ticket to proceed.`)
           .addFields({name:`${coinRaw} Price`,value:coinPrice?`**${fmtUSD(coinPrice)}**`:"Unavailable",inline:true},{name:"Your Tier",value:`**${tier.label}**`,inline:true})
           .setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  ·  Estimate only  ·  Final rate confirmed in your ticket"}).setTimestamp()]});
       }
 
       if(cmd==="tierlist"){
         const lines=TIERS.map(t=>`**${t.label}** \u2014 $${t.min.toLocaleString()}+${t.min>=7000?"  \u00B7  VIP":""}`).join("\n");
-        return interaction.reply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Client Tiers",iconURL:IMG.LOGO}).setTitle("Client Tier Ranks").setDescription("Earn your tier by exchanging volume on Konvert. Tiers are auto-assigned after every trade. All tiers from Godly Client and above receive a **0.75% VIP fee discount**.\n\u200b").addFields({name:"All Tiers",value:lines,inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  ·  Tiers auto-assigned after every trade"}).setTimestamp()],ephemeral:false});
+        return interaction.reply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Client Tiers",iconURL:IMG.LOGO}).setTitle("Client Tier Ranks").setDescription("Earn your tier by exchanging volume on Konvert. Tiers are auto-assigned after every exchange. All tiers from Godly Client and above receive a **0.75% VIP fee discount**.\n\u200b").addFields({name:"All Tiers",value:lines,inline:false}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  ·  Tiers auto-assigned after every exchange"}).setTimestamp()],ephemeral:false});
       }
 
       if(cmd==="claimtag"){
@@ -4670,7 +4771,7 @@ Deleting in 10 seconds.`)
           .addFields(
             {name:"Fiat \u2192 Crypto",value:isReduced?"9% \u2192 8% \u2192 7% \u2192 6% \u2192 5%":"10% \u2192 9% \u2192 8% \u2192 7% \u2192 6%",inline:true},
             {name:"Crypto \u2192 Fiat",value:"9% \u2192 8% \u2192 7% \u2192 6% \u2192 5%",inline:true},
-            {name:"Min Fee",value:"**$5** on all trades",inline:true},
+            {name:"Min Fee",value:"**$5** per exchange",inline:true},
           )
           .setFooter({text:`Konvert Exchange  ·  Set by ${interaction.user.tag}`})
           .setTimestamp()],flags:64});
@@ -5055,6 +5156,27 @@ This is active immediately and persists until revoked or the bot restarts.
         return interaction.reply({content:`Cleared **${before-state.alerts.length}** alert(s).`,flags:64});
       }
 
+      if(cmd==="queue"){
+        // The tickets still waiting for an exchanger that this person can see (an exchanger sees the ones for their methods), longest waiting first
+        const _qOwner=isOwner(interaction.user.id,interaction.member);
+        if(!_qOwner&&!isExchanger(interaction.member))return interaction.reply({content:"Only exchangers can use this.",flags:64});
+        const _qAll=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets"),_qList=[];
+        for(const [cid,t] of Object.entries(_qAll)){
+          if(!t||t.status!=="open"||t.claimedBy||!t.claimSystem||t.userId===interaction.user.id)continue;
+          const qc=interaction.guild&&interaction.guild.channels.cache.get(cid);
+          if(!qc)continue;
+          let sees=_qOwner;
+          if(!sees){try{const p=qc.permissionsFor(interaction.member);sees=!!(p&&p.has(PermissionFlagsBits.ViewChannel));}catch{}}
+          if(sees)_qList.push([cid,t]);
+        }
+        _qList.sort((a,b)=>(a[1].createdAt||0)-(b[1].createdAt||0));
+        const _qShown=_qList.slice(0,12);
+        return interaction.reply({embeds:[kEmbed("Queue").setTitle(`Open Queue`)
+          .setDescription(_qList.length
+            ?`${kHero(`${_qList.length} ${_qList.length===1?"ticket is":"tickets are"} waiting`)}\n${_qShown.map(([cid,t])=>`<#${cid}>  ·  **${dealOf(t).hero}**  ·  <t:${Math.floor((t.createdAt||Date.now())/1000)}:R>`).join("\n")}${_qList.length>_qShown.length?`\n*+${_qList.length-_qShown.length} more*`:""}`
+            :`${kHero("Nothing waiting")}\nEvery ticket you can see has an exchanger.`)
+          .setFooter(kFoot("Open a ticket and press Claim Ticket"))],flags:64});
+      }
       if(cmd==="exchangerstats"){
         await interaction.deferReply({flags:64});
         const target=interaction.options.getUser("user")||interaction.user;
@@ -5085,11 +5207,11 @@ This is active immediately and persists until revoked or the bot restarts.
           .setThumbnail(target.displayAvatarURL({size:256}))
           .setDescription(`Exchanger rank: **#${exPos}** of ${exRanked.length}\n\u200b`)
           .addFields(
-            {name:"Total Handled",value:`**${handled.length}** exchanges`,inline:true},
+            {name:"Total Handled",value:`**${handled.length}** exchange${handled.length===1?"":"s"}`,inline:true},
             {name:"Total Volume",value:`**${fmtUSD(totalVol)}**`,inline:true},
             {name:"Avg Deal",value:`**${fmtUSD(avg)}**`,inline:true},
-            {name:"Today",value:`**${today.length}** deals  \u00b7  ${fmtUSD(today.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0))}`,inline:true},
-            {name:"This Week",value:`**${week.length}** deals  \u00b7  ${fmtUSD(week.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0))}`,inline:true},
+            {name:"Today",value:`**${today.length}** exchange${today.length===1?"":"s"}  \u00b7  ${fmtUSD(today.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0))}`,inline:true},
+            {name:"This Week",value:`**${week.length}** exchange${week.length===1?"":"s"}  \u00b7  ${fmtUSD(week.reduce((s,t)=>s+(parseFloat(t.amountUSD)||0),0))}`,inline:true},
             {name:"Fees Collected",value:`**${fmtUSD(totalFees)}**`,inline:true},
             {name:"Top Method",value:topM?`**${topM.name}** (${topM.n}x)`:noTop(handled),inline:true},
             {name:"Top Coin",value:topC?`**${topC.name}** (${topC.n}x)`:noTop(handled),inline:true},
@@ -5108,10 +5230,17 @@ This is active immediately and persists until revoked or the bot restarts.
         const _vals=interaction.values||[],_picked=pickedMethods(_vals),method=(_vals.length===1&&_vals[0]==="crypto")?"crypto":_picked[0];
         if(!method)return interaction.update({embeds:[step1Embed()],components:methodPickRows()});
         if(method==="crypto"){const c2cCoins=["BTC","ETH","SOL","LTC","USDT","USDC","XRP","BNB","ADA","DOGE","MATIC","AVAX","DOT","LINK","TRX","SHIB","UNI","ATOM","NEAR","ARB","OP","CAKE","INJ","RUNE","KAVA"];const coinOpts=c2cCoins.map(c=>new StringSelectMenuOptionBuilder().setLabel(c).setValue(c).setDescription(`Exchange ${c}`));return interaction.update({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor(kAuthor()).setTitle(`Step 2 · Crypto to Crypto`).setDescription(`Select the coin you are **sending** and the coin you want to **receive** below.\n\n${minLine()}`).setFooter(kFoot("Step 2 of 3"))],components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("c2c_send").setPlaceholder("Select coin you are SENDING...").addOptions(coinOpts)),new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("c2c_recv").setPlaceholder("Select coin you want to RECEIVE...").addOptions(coinOpts))]});}
-        return interaction.update({embeds:[step2Embed(_picked)],components:[directionRow(_picked)]});
+        return interaction.update({embeds:[step2Embed(_picked)],components:step2Rows(_picked)});
       }
       if(interaction.customId==="sel_claimmethod"){await claimTicket(interaction,{method:interaction.values[0],fromPicker:true});return;}
       if(interaction.customId==="sel_addmethod"){await addMethods(interaction);return;}
+      if(interaction.customId.startsWith("sel_more__")){          // more methods added on the first step: they join the one already picked
+        const cur=pickedMethods(parseMethodTag(interaction.customId.slice("sel_more__".length)));
+        if(!cur.length||cur.some(isSoloMethod))return interaction.update({embeds:[step1Embed()],components:methodPickRows()});
+        const add=pickedMethods((interaction.values||[]).filter(v=>!cur.includes(v))).slice(0,Math.max(MAX_TICKET_METHODS-cur.length,0));
+        const merged=pickedMethods([...cur,...add]);          // what was already picked stays; the new ones fill the room that is left (menu order, ordinary methods only, no repeats)
+        return interaction.update({embeds:[step2Embed(merged)],components:step2Rows(merged)});
+      }
       if(interaction.customId==="c2c_send"||interaction.customId==="c2c_recv"){
         const userId=interaction.user.id;
         if(!state.c2cSelections[userId])state.c2cSelections[userId]={};
@@ -5127,10 +5256,17 @@ This is active immediately and persists until revoked or the bot restarts.
 
     if(interaction.isButton()){
       if(interaction.customId==="btn_exchange_now"){await interaction.deferReply({flags:64}).catch(()=>{});const bl=load("blacklist");if(bl[interaction.user.id]&&!isOwner(interaction.user.id,interaction.member))return interaction.editReply({content:"You are blacklisted from Konvert."});return interaction.editReply({embeds:[step1Embed()],components:methodPickRows(),flags:64});}
+      if(interaction.customId.startsWith("btn_more__")||interaction.customId.startsWith("btn_nomore__")){      // one method picked: add more, or carry on with it
+        const keep=interaction.customId.startsWith("btn_nomore__"),cur=pickedMethods(parseMethodTag(interaction.customId.slice((keep?"btn_nomore__":"btn_more__").length)));
+        if(!cur.length||cur.some(isSoloMethod))return interaction.update({embeds:[step1Embed()],components:methodPickRows()});
+        if(keep)return interaction.update({embeds:[step2Embed(cur,{noTip:true})],components:step2Rows(cur,{noMore:true})});
+        if(cur.length>=MAX_TICKET_METHODS)return interaction.update({embeds:[step2Embed(cur)],components:step2Rows(cur,{noMore:true})});
+        return interaction.update({embeds:[moreEmbed(cur)],components:moreRows(cur)});
+      }
       if(interaction.customId.startsWith("btn_pick__")){      // Gift Card / Buy For You / Custom Exchange: chosen on their own
         const _solo=pickedMethods([interaction.customId.slice("btn_pick__".length)]);
         if(!_solo.length)return interaction.update({embeds:[step1Embed()],components:methodPickRows()});
-        return interaction.update({embeds:[step2Embed(_solo)],components:[directionRow(_solo)]});
+        return interaction.update({embeds:[step2Embed(_solo)],components:step2Rows(_solo)});
       }
       if(interaction.customId==="btn_fee_calc"){const modal=new ModalBuilder().setCustomId("modal_fee").setTitle("Fee Calculator");modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("fee_amt").setLabel("Amount in USD").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 250").setRequired(true)));return interaction.showModal(modal);}
       if(interaction.customId==="btn_rates_quick"){await interaction.deferReply({flags:64});try{return interaction.editReply({embeds:[await buildRatesEmbed()]});}catch(e){return interaction.editReply("Could not fetch rates right now. Try again in a moment.");}}
@@ -5148,7 +5284,7 @@ This is active immediately and persists until revoked or the bot restarts.
         const {send:sendCoin,recv:recvCoin}=c2cData;
         if(sendCoin===recvCoin)return interaction.reply({content:"You cannot exchange a coin for the same coin.",flags:64});
         const modal=new ModalBuilder().setCustomId(`modal_c2c__${sendCoin}__${recvCoin}`).setTitle(`${sendCoin} \u2192 ${recvCoin}`);
-        modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("c2c_amount").setLabel(`Amount in USD you send (more than ${fmtUSD(CONFIG.MIN_FEE)})`).setStyle(TextInputStyle.Short).setPlaceholder("e.g. 200").setRequired(true)));
+        modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("c2c_amount").setLabel(`Amount in USD you send (minimum ${fmtUSD(CONFIG.MIN_AMOUNT)})`).setStyle(TextInputStyle.Short).setPlaceholder("e.g. 200").setRequired(true)));
         return interaction.showModal(modal);
       }
 
@@ -5157,7 +5293,7 @@ This is active immediately and persists until revoked or the bot restarts.
         if(!m)return interaction.reply({content:"That payment method isn't available any more. Please start again.",flags:64});
         const _direction=_isSendCrypto?"receive":"send";
         const modal=new ModalBuilder().setCustomId(`modal_amount__${_tag}__${_direction}`).setTitle(modalTitle(_ms.length>1?methodsLabel(_ms):m.label,_ms.length,_isSendCrypto));
-        modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_amount").setLabel(`Amount in USD (more than ${fmtUSD(CONFIG.MIN_FEE)})`).setStyle(TextInputStyle.Short).setPlaceholder("e.g. 150").setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_coin").setLabel("Which crypto? (BTC, ETH, SOL, LTC, USDT)").setStyle(TextInputStyle.Short).setPlaceholder("e.g. SOL").setRequired(true)));
+        modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_amount").setLabel(`Amount in USD (minimum ${fmtUSD(CONFIG.MIN_AMOUNT)})`).setStyle(TextInputStyle.Short).setPlaceholder("e.g. 150").setRequired(true)),new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("inp_coin").setLabel("Which crypto? (BTC, ETH, SOL, LTC, USDT)").setStyle(TextInputStyle.Short).setPlaceholder("e.g. SOL").setRequired(true)));
         return interaction.showModal(modal);
       }
 
@@ -5219,7 +5355,7 @@ This is active immediately and persists until revoked or the bot restarts.
         return interaction.reply({content:`You are in! **${count}** ${count===1?"person has":"people have"} entered. Good luck!`,flags:64});
       }
 
-      if(interaction.customId==="btn_confirm_ticket"){if(!interaction.deferred&&!interaction.replied)await interaction.deferUpdate().catch(()=>{});const pending=state.pending[interaction.user.id];if(!pending)return interaction.editReply({content:"Session expired. Please start again.",embeds:[],components:[]});delete state.pending[interaction.user.id];const ch=await createTicket(interaction,pending.method,pending.direction,pending.rawAmt,pending.coin,pending.walletInf,pending.notes,pending.recvCoin||null,pending.methods||null);if(ch)return interaction.editReply({content:`Ticket opened \u2192 <#${ch.id}>`,embeds:[],components:[new ActionRowBuilder().addComponents(kLink("Open Ticket",`https://discord.com/channels/${interaction.guild.id}/${ch.id}`))]});return;}
+      if(interaction.customId==="btn_confirm_ticket"){if(!interaction.deferred&&!interaction.replied)await interaction.deferUpdate().catch(()=>{});const pending=state.pending[interaction.user.id];if(!pending)return interaction.editReply({content:"Session expired. Please start again.",embeds:[],components:[]});delete state.pending[interaction.user.id];const ch=await createTicket(interaction,pending.method,pending.direction,pending.rawAmt,pending.coin,pending.walletInf,pending.notes,pending.recvCoin||null,pending.methods||null);const _pinged=pingedNote(pending);if(ch)return interaction.editReply({content:`Ticket opened \u2192 <#${ch.id}>${_pinged}`,embeds:[],components:[new ActionRowBuilder().addComponents(kLink("Open Ticket",`https://discord.com/channels/${interaction.guild.id}/${ch.id}`))]});return;}
       if(interaction.customId==="btn_cancel_ticket"){delete state.pending[interaction.user.id];return interaction.update({content:"Cancelled. Click Exchange Now to start again.",embeds:[],components:[]});}
 
       if(interaction.customId==="btn_support_ticket"){
@@ -5409,9 +5545,10 @@ This is active immediately and persists until revoked or the bot restarts.
         const _mx=methods.length>1?{methods}:{};          // several methods: the ticket will accept any of them
         state.pending[interaction.user.id]={method,..._mx,direction,rawAmt,coin,walletInf,notes};
         const d=dealOf({method,..._mx,direction,coin,amountUSD:rawAmt,feeUSD:fee});
-        const _openTo=methods.length>1?`Open to **${joinOr(methods.map(methodLabel))}** exchangers. Whoever claims it sets the method.\n\n`:"";
+        const _openTo=methods.length>1?`Open to **${joinOr(methods.map(methodLabel))}** exchangers. All of them are pinged when your ticket opens, and whoever claims it sets the method.\n\n`:"";
+        const _minNote=!isSoloMethod(method)&&rawAmt*rate/100<CONFIG.MIN_FEE?`${kNote(`The ${fmtUSD(CONFIG.MIN_FEE)} minimum fee applies to every exchange.`)}\n\n`:"";          // the minimum fee, not the rate, is what is charged
         return interaction.editReply({embeds:[kEmbed("Review").setTitle("Confirm Your Exchange")
-          .setDescription(`${dealHead(d)}\n${kLedger(dealRows(d,{rate,coinAmt}))}${_openTo}Press **Confirm & Open Ticket** to continue. Amounts are estimates until your exchanger confirms them in the ticket.`)
+          .setDescription(`${dealHead(d)}\n${kLedger(dealRows(d,{rate,coinAmt}))}${_openTo}${_minNote}Press **Confirm & Open Ticket** to continue. Amounts are estimates until your exchanger confirms them in the ticket.`)
           .setFooter(kFoot("Step 3 of 3  ·  Wallet details are handled inside your ticket"))],components:[confirmRow()]});
       }
 
@@ -5488,7 +5625,7 @@ async function checkAlerts(){
     for(const alert of state.alerts){
       const price=prices[GECKO[alert.coin]||alert.coin.toLowerCase()]?.usd;
       if(!price||!(alert.direction==="above"?price>=alert.target:price<=alert.target))continue;
-      try{const user=await client.users.fetch(alert.userId);await user.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Price Alert Triggered").setDescription(`**${alert.coin}** is now **${alert.direction==="above"?"above":"below"}** your target of **$${alert.target.toLocaleString("en-US")}**\n\nCurrent price: **$${price.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}**\n\nHead to <#${CONFIG.EXCHANGE_CHANNEL}> to open a trade.`).setThumbnail(COIN_LOGO[alert.coin]||IMG.LOGO).setTimestamp().setFooter({text:"Konvert Exchange  ·  Price Alerts"})]});}catch{}
+      try{const user=await client.users.fetch(alert.userId);await user.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Price Alert Triggered").setDescription(`**${alert.coin}** is now **${alert.direction==="above"?"above":"below"}** your target of **$${alert.target.toLocaleString("en-US")}**\n\nCurrent price: **$${price.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}**\n\nHead to <#${CONFIG.EXCHANGE_CHANNEL}> to open an exchange.`).setThumbnail(COIN_LOGO[alert.coin]||IMG.LOGO).setTimestamp().setFooter({text:"Konvert Exchange  ·  Price Alerts"})]});}catch{}
       fired.push(alert);
     }
     state.alerts=state.alerts.filter(a=>!fired.includes(a));
@@ -5523,12 +5660,12 @@ async function postDailyCryptoFact(guild){
   try{
     const ch=guild.channels.cache.get(GENERAL_CHANNEL_ID)||await guild.channels.fetch(GENERAL_CHANNEL_ID).catch(()=>null);
     if(!ch){console.log("[dailyFact] channel not found");return;}
-    const facts=["Bitcoin was worth less than $0.01 when it first launched in 2009. The first real-world transaction used 10,000 BTC to buy two pizzas.","Ethereum's smart contracts allow code to run automatically without any middleman — the basis for DeFi, NFTs, and thousands of dApps.","Satoshi Nakamoto, Bitcoin's creator, has never moved their estimated 1 million BTC wallet — worth billions — since mining it in 2009.","There will only ever be 21 million Bitcoin. Around 19.7 million have already been mined. The last one won't be mined until around 2140.","Over 20% of all Bitcoin is estimated to be permanently lost — forgotten wallets, lost keys, and early miners who didn't think it would be worth anything.","Solana can process up to 65,000 transactions per second. Visa handles around 24,000. Bitcoin handles around 7.","El Salvador became the first country to adopt Bitcoin as legal tender in 2021. Citizens can pay taxes and buy groceries with it.","The term 'HODL' came from a 2013 forum post where someone drunkenly misspelled 'hold'. It's now a core crypto philosophy.","Crypto markets never close. Unlike stocks, you can trade Bitcoin at 3am on Christmas Day.","Tether (USDT) is the most traded cryptocurrency by volume — more than Bitcoin or Ethereum on most days.","DeFi protocols collectively hold over $50 billion in locked assets, all managed by code with no banks involved.","The first Bitcoin ATM opened in Vancouver, Canada in 2013. There are now over 38,000 worldwide.","Ethereum burns a portion of every transaction fee permanently, making it deflationary over time.","Lightning Network allows Bitcoin transactions to settle in milliseconds for fractions of a cent — solving the scalability problem.","Crypto wallets don't actually store crypto. They store the private keys that prove ownership on the blockchain.","Over 560 million people worldwide own some form of cryptocurrency as of 2024.","A single Dogecoin was worth $0.0002 in 2019. At its peak in 2021, it hit $0.74 — a 3,700x increase.","The blockchain cannot be edited or deleted. Every transaction ever made on Bitcoin is permanently visible to anyone.","Ripple (XRP) can settle international bank transfers in 3–5 seconds for a fraction of a cent, vs 3–5 business days for SWIFT.","Gas fees on Ethereum once hit over $200 per transaction during peak NFT demand in 2021.","Cold wallets — hardware devices not connected to the internet — are considered the safest way to store large amounts of crypto.","Binance processes over $10 billion in trades daily, making it the largest crypto exchange in the world by volume.","The Bitcoin halving happens every 4 years, cutting miner rewards in half. Historically, each halving has preceded a major bull run.","Stablecoins like USDC are backed 1:1 by US dollars held in reserve, making them immune to crypto volatility.","Crypto transactions are pseudonymous, not anonymous. Every transaction is traceable on the public blockchain.","Avalanche (AVAX) can finalize transactions in under 2 seconds — one of the fastest finality times of any blockchain.","There are over 20,000 different cryptocurrencies in existence. The vast majority have little to no value.","Michael Saylor's MicroStrategy holds over 200,000 BTC on its balance sheet — more than most countries.","Ethereum's merge to Proof of Stake in 2022 reduced its energy consumption by over 99.9%.","The total crypto market cap has exceeded $3 trillion — larger than the GDP of most countries.","Bitcoin's anonymous creator, Satoshi Nakamoto, published the whitepaper on October 31, 2008 — Halloween.","The Bitcoin genesis block contains a hidden message referencing a UK newspaper headline about bank bailouts.","Vitalik Buterin proposed Ethereum at age 19, and it launched in 2015 when he was just 21.","Mt. Gox, once the largest Bitcoin exchange, handled over 70% of all BTC transactions before its 2014 collapse.","A Norwegian man bought 5,000 Bitcoin for $27 in 2009. By 2021, it was worth over $1 million.","Wrapped Bitcoin (WBTC) lets BTC holders use their coins on Ethereum-based DeFi platforms.","The Lightning Network can theoretically support millions of transactions per second across its network of channels.","NFTs are technically just tokens that point to a piece of data — the art itself is usually stored off-chain.","Proof of Work mining consumes more electricity annually than some entire countries, including Argentina.","Ethereum's 'gas' is named because it's the fuel that powers computation on the network — pay more, go faster.","Polygon processes more daily transactions than Ethereum mainnet at a fraction of the cost.","The first NFT, 'Quantum,' was minted by Kevin McCoy in 2014 — years before the NFT boom.","Coinbase went public via direct listing on Nasdaq in April 2021, valued at over $85 billion at the time.","Monero is designed for complete privacy — transaction amounts, sender, and receiver are all hidden by default.","Cardano was founded by Ethereum co-founder Charles Hoskinson and focuses on academic peer-reviewed research.","Shiba Inu (SHIB) was created as a 'Dogecoin killer' and at one point had a market cap over $40 billion.","The term 'whale' refers to someone holding enough crypto to move markets with a single trade.","Bitcoin's block time averages 10 minutes — Ethereum's is around 12 seconds.","Some countries, like China, have banned crypto trading multiple times but still lead in mining hardware production.","A '51% attack' happens when a single entity controls majority mining power and can manipulate the blockchain.","The Ethereum Merge in September 2022 was one of the most significant upgrades in blockchain history, switching from mining to staking.","USDT (Tether) processes more transaction volume daily than Bitcoin and Ethereum combined.","Crypto.com paid $700 million for the naming rights to the Staples Center, renaming it Crypto.com Arena.","The Bored Ape Yacht Club NFT collection generated over $1 billion in total trading volume.","Smart contracts can't be paused or changed once deployed unless the developer builds in an upgrade mechanism.","Binance Smart Chain (now BNB Chain) was created to offer Ethereum-compatible apps with lower fees.","The largest single crypto heist was the Poly Network hack in 2021 — $611 million was stolen, then mostly returned.","Bitcoin mining difficulty adjusts roughly every two weeks to keep block times consistent.","Litecoin was created in 2011 as a 'lite' version of Bitcoin with faster block times.","The Ethereum Name Service (ENS) lets you replace a long wallet address with something like 'yourname.eth'.","Decentralized exchanges (DEXs) like Uniswap let you trade crypto without ever giving up custody of your funds.","Ordinals brought NFT-like functionality directly to the Bitcoin blockchain in 2023.","Some Bitcoin ATMs charge fees as high as 15-20% — always check rates before using one.","The crypto term 'rug pull' describes when developers abandon a project and run off with investor funds.","Solana suffered several major network outages in 2021-2022 due to transaction spam from bot trading.","Avalanche uses three separate blockchains working together — the X-Chain, C-Chain, and P-Chain.","A 'cold wallet' that's never connected to the internet is also called 'air-gapped' storage.","The Genesis block of Bitcoin can never be spent — it's permanently locked by design.","Crypto winters — extended bear markets — have happened in 2014, 2018, and 2022, each followed by major recoveries.","PayPal began allowing US users to buy, sell, and hold crypto directly in 2020.","The DAO hack in 2016 led to a hard fork of Ethereum, creating Ethereum Classic as a separate chain.","Some companies pay employees partially in crypto, including parts of Latin America with high inflation.","Chainlink provides 'oracles' — services that feed real-world data like prices into smart contracts.","A single Ethereum transaction once cost over $400 in gas fees during the 2021 NFT craze.","Tesla bought $1.5 billion in Bitcoin in 2021, briefly accepted it for car purchases, then stopped.","The Pizza transaction — 10,000 BTC for two pizzas in 2010 — is celebrated every May 22nd as 'Bitcoin Pizza Day'.","Crypto exchanges process trades 24/7/365 — there are no holidays or weekends in crypto markets.","Some blockchains, like Algorand, are carbon-negative, offsetting more emissions than they produce.","The total number of Bitcoin addresses with a non-zero balance has grown to over 50 million.","Dogecoin started as a joke in 2013 based on the 'Doge' meme featuring a Shiba Inu.","MetaMask, one of the most popular crypto wallets, has over 30 million monthly active users.","The first Bitcoin exchange rate was set in 2010 at roughly $0.0008 per BTC.","Some NFT projects include 'royalties' that pay the original creator a percentage every time the NFT resells.","Bitcoin's hash rate — the total computing power securing the network — has grown over a billion times since 2010.","Smart contract bugs have led to billions in losses; the 2022 Wormhole hack alone cost $325 million.","Layer 2 solutions like Arbitrum and Optimism process transactions off the main Ethereum chain to reduce costs.","Crypto staking lets holders earn rewards simply for locking up their coins to help secure the network.","The phrase 'not your keys, not your coins' emphasizes self-custody over keeping crypto on exchanges.","Bitcoin Cash split from Bitcoin in 2017 over disagreements about block size limits.","The first country-wide Bitcoin mining ban was implemented by China in 2021, shifting mining to the US and Kazakhstan.","Crypto.com, Binance, and Coinbase are among the top 5 most downloaded finance apps globally most years.","An estimated 4 million BTC belonging to Satoshi Nakamoto have never moved since being mined.","Polkadot allows multiple blockchains to transfer data and assets between each other seamlessly.","The Ethereum Virtual Machine (EVM) is so widely copied that dozens of other blockchains run EVM-compatible code.","Crypto debit cards from companies like Crypto.com let you spend crypto anywhere Visa is accepted, with automatic conversion.","A single Bitcoin can be divided into 100 million units called 'satoshis,' named after its creator.","The largest Bitcoin transaction ever recorded moved over $1 billion worth of BTC in a single transfer.","Some DeFi protocols offer 'flash loans' — borrowing millions with zero collateral, repaid within the same transaction.","Argentina has one of the highest crypto adoption rates in the world due to currency instability.","The Ethereum network processes roughly 1 million transactions per day.","Crypto Twitter (now X) has been a major driver of meme coin pumps, including Dogecoin and Shiba Inu.","Hardware wallets like Ledger and Trezor store private keys on a physical device disconnected from the internet.","The SEC has sued multiple major exchanges over claims that certain tokens are unregistered securities.","Bitcoin's price has experienced over 10 corrections of more than 30% throughout its history.","Solana's mascot, a smiling sun-like logo, represents speed and 'proof of history' consensus.","Crypto faucets are websites that give away tiny amounts of crypto for completing simple tasks — mostly used for testing.","The Genesis Bitcoin block reward was 50 BTC — today it's down to 3.125 BTC after multiple halvings.","Yield farming involves moving crypto between DeFi protocols to chase the highest available interest rates.","The first decentralized stablecoin, DAI, is backed by crypto collateral rather than dollars in a bank.","Ethereum co-founder Gavin Wood coined the term 'Web3' to describe a decentralized internet.","Bitcoin mining farms in Texas often use excess wind and solar power that would otherwise go to waste.","Crypto airdrops — free token distributions — have made some early users millions for doing almost nothing.","The Lightning Network's largest public node can route payments through thousands of connected channels.","Some video games now let players earn real crypto by playing — known as 'play-to-earn' gaming.","Total value locked (TVL) in DeFi peaked at over $180 billion in late 2021 before falling sharply.","Bitcoin's all-time high in 2021 came just months before one of its steepest crashes in history.","The Sandbox and Decentraland are virtual worlds where users buy and sell virtual land using crypto.","Ripple's XRP was created in 2012 specifically for fast, low-cost cross-border payments between banks.","Crypto wallets generate a 'seed phrase' — usually 12 or 24 words — that can restore your entire wallet if lost.","The blockchain industry employs over 1 million people worldwide across development, trading, and infrastructure.","Some museums now display NFT art on digital screens alongside traditional paintings.","A Bitcoin transaction is considered 'confirmed' after roughly 6 blocks, taking about an hour.","Stablecoin transfers make up a majority of all crypto transaction volume on most blockchains.","The first Bitcoin conference was held in 2011 in New York with fewer than 100 attendees.","Some countries offer tax exemptions for crypto held longer than a year, similar to long-term capital gains.","Uniswap's automated market maker model lets anyone provide liquidity and earn trading fees.","Crypto scams cost victims over $10 billion globally in 2023 alone, according to FBI reports.","The phrase 'to the moon' originated from crypto communities expressing hope for massive price increases.","Ethereum's total supply has no hard cap, unlike Bitcoin's fixed 21 million.","Some NFT collections grant holders access to private Discord communities, events, or real-world perks.","The crypto market operates without a central clearing house — settlement happens directly on the blockchain.","Bitcoin dominance — its share of the total crypto market cap — has ranged from under 40% to over 70% historically."];
+    const facts=["Bitcoin was worth less than $0.01 when it first launched in 2009. The first real-world transaction used 10,000 BTC to buy two pizzas.","Ethereum's smart contracts allow code to run automatically without any middleman — the basis for DeFi, NFTs, and thousands of dApps.","Satoshi Nakamoto, Bitcoin's creator, has never moved their estimated 1 million BTC wallet — worth billions — since mining it in 2009.","There will only ever be 21 million Bitcoin. Around 19.7 million have already been mined. The last one won't be mined until around 2140.","Over 20% of all Bitcoin is estimated to be permanently lost — forgotten wallets, lost keys, and early miners who didn't think it would be worth anything.","Solana can process up to 65,000 transactions per second. Visa handles around 24,000. Bitcoin handles around 7.","El Salvador became the first country to adopt Bitcoin as legal tender in 2021. Citizens can pay taxes and buy groceries with it.","The term 'HODL' came from a 2013 forum post where someone drunkenly misspelled 'hold'. It's now a core crypto philosophy.","Crypto markets never close. Unlike stocks, you can exchange Bitcoin at 3am on Christmas Day.","Tether (USDT) is the most exchanged cryptocurrency by volume — more than Bitcoin or Ethereum on most days.","DeFi protocols collectively hold over $50 billion in locked assets, all managed by code with no banks involved.","The first Bitcoin ATM opened in Vancouver, Canada in 2013. There are now over 38,000 worldwide.","Ethereum burns a portion of every transaction fee permanently, making it deflationary over time.","Lightning Network allows Bitcoin transactions to settle in milliseconds for fractions of a cent — solving the scalability problem.","Crypto wallets don't actually store crypto. They store the private keys that prove ownership on the blockchain.","Over 560 million people worldwide own some form of cryptocurrency as of 2024.","A single Dogecoin was worth $0.0002 in 2019. At its peak in 2021, it hit $0.74 — a 3,700x increase.","The blockchain cannot be edited or deleted. Every transaction ever made on Bitcoin is permanently visible to anyone.","Ripple (XRP) can settle international bank transfers in 3–5 seconds for a fraction of a cent, vs 3–5 business days for SWIFT.","Gas fees on Ethereum once hit over $200 per transaction during peak NFT demand in 2021.","Cold wallets — hardware devices not connected to the internet — are considered the safest way to store large amounts of crypto.","Binance handles over $10 billion in daily volume, making it the largest crypto exchange in the world.","The Bitcoin halving happens every 4 years, cutting miner rewards in half. Historically, each halving has preceded a major bull run.","Stablecoins like USDC are backed 1:1 by US dollars held in reserve, making them immune to crypto volatility.","Crypto transactions are pseudonymous, not anonymous. Every transaction is traceable on the public blockchain.","Avalanche (AVAX) can finalize transactions in under 2 seconds — one of the fastest finality times of any blockchain.","There are over 20,000 different cryptocurrencies in existence. The vast majority have little to no value.","Michael Saylor's MicroStrategy holds over 200,000 BTC on its balance sheet — more than most countries.","Ethereum's merge to Proof of Stake in 2022 reduced its energy consumption by over 99.9%.","The total crypto market cap has exceeded $3 trillion — larger than the GDP of most countries.","Bitcoin's anonymous creator, Satoshi Nakamoto, published the whitepaper on October 31, 2008 — Halloween.","The Bitcoin genesis block contains a hidden message referencing a UK newspaper headline about bank bailouts.","Vitalik Buterin proposed Ethereum at age 19, and it launched in 2015 when he was just 21.","Mt. Gox, once the largest Bitcoin exchange, handled over 70% of all BTC transactions before its 2014 collapse.","A Norwegian man bought 5,000 Bitcoin for $27 in 2009. By 2021, it was worth over $1 million.","Wrapped Bitcoin (WBTC) lets BTC holders use their coins on Ethereum-based DeFi platforms.","The Lightning Network can theoretically support millions of transactions per second across its network of channels.","NFTs are technically just tokens that point to a piece of data — the art itself is usually stored off-chain.","Proof of Work mining consumes more electricity annually than some entire countries, including Argentina.","Ethereum's 'gas' is named because it's the fuel that powers computation on the network — pay more, go faster.","Polygon processes more daily transactions than Ethereum mainnet at a fraction of the cost.","The first NFT, 'Quantum,' was minted by Kevin McCoy in 2014 — years before the NFT boom.","Coinbase went public via direct listing on Nasdaq in April 2021, valued at over $85 billion at the time.","Monero is designed for complete privacy — transaction amounts, sender, and receiver are all hidden by default.","Cardano was founded by Ethereum co-founder Charles Hoskinson and focuses on academic peer-reviewed research.","Shiba Inu (SHIB) was created as a 'Dogecoin killer' and at one point had a market cap over $40 billion.","The term 'whale' refers to someone holding enough crypto to move markets with a single order.","Bitcoin's block time averages 10 minutes — Ethereum's is around 12 seconds.","Some countries, like China, have banned crypto exchanges multiple times but still lead in mining hardware production.","A '51% attack' happens when a single entity controls majority mining power and can manipulate the blockchain.","The Ethereum Merge in September 2022 was one of the most significant upgrades in blockchain history, switching from mining to staking.","USDT (Tether) processes more transaction volume daily than Bitcoin and Ethereum combined.","Crypto.com paid $700 million for the naming rights to the Staples Center, renaming it Crypto.com Arena.","The Bored Ape Yacht Club NFT collection generated over $1 billion in total sales volume.","Smart contracts can't be paused or changed once deployed unless the developer builds in an upgrade mechanism.","Binance Smart Chain (now BNB Chain) was created to offer Ethereum-compatible apps with lower fees.","The largest single crypto heist was the Poly Network hack in 2021 — $611 million was stolen, then mostly returned.","Bitcoin mining difficulty adjusts roughly every two weeks to keep block times consistent.","Litecoin was created in 2011 as a 'lite' version of Bitcoin with faster block times.","The Ethereum Name Service (ENS) lets you replace a long wallet address with something like 'yourname.eth'.","Decentralized exchanges (DEXs) like Uniswap let you swap crypto without ever giving up custody of your funds.","Ordinals brought NFT-like functionality directly to the Bitcoin blockchain in 2023.","Some Bitcoin ATMs charge fees as high as 15-20% — always check rates before using one.","The crypto term 'rug pull' describes when developers abandon a project and run off with investor funds.","Solana suffered several major network outages in 2021-2022 due to transaction spam from bots.","Avalanche uses three separate blockchains working together — the X-Chain, C-Chain, and P-Chain.","A 'cold wallet' that's never connected to the internet is also called 'air-gapped' storage.","The Genesis block of Bitcoin can never be spent — it's permanently locked by design.","Crypto winters — extended bear markets — have happened in 2014, 2018, and 2022, each followed by major recoveries.","PayPal began allowing US users to buy, sell, and hold crypto directly in 2020.","The DAO hack in 2016 led to a hard fork of Ethereum, creating Ethereum Classic as a separate chain.","Some companies pay employees partially in crypto, including parts of Latin America with high inflation.","Chainlink provides 'oracles' — services that feed real-world data like prices into smart contracts.","A single Ethereum transaction once cost over $400 in gas fees during the 2021 NFT craze.","Tesla bought $1.5 billion in Bitcoin in 2021, briefly accepted it for car purchases, then stopped.","The Pizza transaction — 10,000 BTC for two pizzas in 2010 — is celebrated every May 22nd as 'Bitcoin Pizza Day'.","Crypto exchanges process orders 24/7/365 — there are no holidays or weekends in crypto markets.","Some blockchains, like Algorand, are carbon-negative, offsetting more emissions than they produce.","The total number of Bitcoin addresses with a non-zero balance has grown to over 50 million.","Dogecoin started as a joke in 2013 based on the 'Doge' meme featuring a Shiba Inu.","MetaMask, one of the most popular crypto wallets, has over 30 million monthly active users.","The first Bitcoin exchange rate was set in 2010 at roughly $0.0008 per BTC.","Some NFT projects include 'royalties' that pay the original creator a percentage every time the NFT resells.","Bitcoin's hash rate — the total computing power securing the network — has grown over a billion times since 2010.","Smart contract bugs have led to billions in losses; the 2022 Wormhole hack alone cost $325 million.","Layer 2 solutions like Arbitrum and Optimism process transactions off the main Ethereum chain to reduce costs.","Crypto staking lets holders earn rewards simply for locking up their coins to help secure the network.","The phrase 'not your keys, not your coins' emphasizes self-custody over keeping crypto on exchanges.","Bitcoin Cash split from Bitcoin in 2017 over disagreements about block size limits.","The first country-wide Bitcoin mining ban was implemented by China in 2021, shifting mining to the US and Kazakhstan.","Crypto.com, Binance, and Coinbase are among the top 5 most downloaded finance apps globally most years.","An estimated 4 million BTC belonging to Satoshi Nakamoto have never moved since being mined.","Polkadot allows multiple blockchains to transfer data and assets between each other seamlessly.","The Ethereum Virtual Machine (EVM) is so widely copied that dozens of other blockchains run EVM-compatible code.","Crypto debit cards from companies like Crypto.com let you spend crypto anywhere Visa is accepted, with automatic conversion.","A single Bitcoin can be divided into 100 million units called 'satoshis,' named after its creator.","The largest Bitcoin transaction ever recorded moved over $1 billion worth of BTC in a single transfer.","Some DeFi protocols offer 'flash loans' — borrowing millions with zero collateral, repaid within the same transaction.","Argentina has one of the highest crypto adoption rates in the world due to currency instability.","The Ethereum network processes roughly 1 million transactions per day.","Crypto Twitter (now X) has been a major driver of meme coin pumps, including Dogecoin and Shiba Inu.","Hardware wallets like Ledger and Trezor store private keys on a physical device disconnected from the internet.","The SEC has sued multiple major exchanges over claims that certain tokens are unregistered securities.","Bitcoin's price has experienced over 10 corrections of more than 30% throughout its history.","Solana's mascot, a smiling sun-like logo, represents speed and 'proof of history' consensus.","Crypto faucets are websites that give away tiny amounts of crypto for completing simple tasks — mostly used for testing.","The Genesis Bitcoin block reward was 50 BTC — today it's down to 3.125 BTC after multiple halvings.","Yield farming involves moving crypto between DeFi protocols to chase the highest available interest rates.","The first decentralized stablecoin, DAI, is backed by crypto collateral rather than dollars in a bank.","Ethereum co-founder Gavin Wood coined the term 'Web3' to describe a decentralized internet.","Bitcoin mining farms in Texas often use excess wind and solar power that would otherwise go to waste.","Crypto airdrops — free token distributions — have made some early users millions for doing almost nothing.","The Lightning Network's largest public node can route payments through thousands of connected channels.","Some video games now let players earn real crypto by playing — known as 'play-to-earn' gaming.","Total value locked (TVL) in DeFi peaked at over $180 billion in late 2021 before falling sharply.","Bitcoin's all-time high in 2021 came just months before one of its steepest crashes in history.","The Sandbox and Decentraland are virtual worlds where users buy and sell virtual land using crypto.","Ripple's XRP was created in 2012 specifically for fast, low-cost cross-border payments between banks.","Crypto wallets generate a 'seed phrase' — usually 12 or 24 words — that can restore your entire wallet if lost.","The blockchain industry employs over 1 million people worldwide across development, finance, and infrastructure.","Some museums now display NFT art on digital screens alongside traditional paintings.","A Bitcoin transaction is considered 'confirmed' after roughly 6 blocks, taking about an hour.","Stablecoin transfers make up a majority of all crypto transaction volume on most blockchains.","The first Bitcoin conference was held in 2011 in New York with fewer than 100 attendees.","Some countries offer tax exemptions for crypto held longer than a year, similar to long-term capital gains.","Uniswap's automated market maker model lets anyone provide liquidity and earn swap fees.","Crypto scams cost victims over $10 billion globally in 2023 alone, according to FBI reports.","The phrase 'to the moon' originated from crypto communities expressing hope for massive price increases.","Ethereum's total supply has no hard cap, unlike Bitcoin's fixed 21 million.","Some NFT collections grant holders access to private Discord communities, events, or real-world perks.","The crypto market operates without a central clearing house — settlement happens directly on the blockchain.","Bitcoin dominance — its share of the total crypto market cap — has ranged from under 40% to over 70% historically."];
     const fact=facts[Math.floor(Math.random()*facts.length)];
     const coins=["BTC","ETH","SOL","XRP","BNB","ADA","DOGE","AVAX","LTC","DOT"];
     const featuredCoin=coins[Math.floor(Math.random()*coins.length)];
     let priceStr="";try{const p=await getPrice(featuredCoin);if(p)priceStr=` \u00b7 **${featuredCoin}: ${fmtUSD(p)}**`;}catch{}
-    await ch.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Daily Crypto Fact",iconURL:IMG.LOGO}).setTitle("Did You Know?").setThumbnail(COIN_LOGO[featuredCoin]||IMG.LOGO).setDescription(`${fact}\n\u200b`).addFields({name:"Live Price",value:`${featuredCoin}${priceStr||" \u2014 unavailable"}`,inline:true},{name:"Trade Now",value:`Open a ticket in <#${CONFIG.EXCHANGE_CHANNEL}>`,inline:true}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  ·  Daily fact \u2014 come back tomorrow for another"}).setTimestamp()]});
+    await ch.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Daily Crypto Fact",iconURL:IMG.LOGO}).setTitle("Did You Know?").setThumbnail(COIN_LOGO[featuredCoin]||IMG.LOGO).setDescription(`${fact}\n\u200b`).addFields({name:"Live Price",value:`${featuredCoin}${priceStr||" \u2014 unavailable"}`,inline:true},{name:"Exchange Now",value:`Open a ticket in <#${CONFIG.EXCHANGE_CHANNEL}>`,inline:true}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  ·  Daily fact \u2014 come back tomorrow for another"}).setTimestamp()]});
     console.log("[dailyFact] posted");
   }catch(e){console.error("[dailyFact]",e.message);}
 }
@@ -5604,11 +5741,11 @@ async function postDailyDigest(guild){
       .setAuthor({name:"Konvert Exchange  ·  Daily Digest",iconURL:IMG.LOGO})
       .setTitle(dateStr+" (EST)")
       .addFields(
-        {name:"Today — Trades",value:`${today.length}`,inline:true},
+        {name:"Today — Exchanges",value:`${today.length}`,inline:true},
         {name:"Today — Volume",value:fmtUSD(todayVol),inline:true},
         {name:"Today — Fees",value:fmtUSD(todayFees),inline:true},
-        {name:"This Week",value:`${week.length} trades · ${fmtUSD(weekVol)}`,inline:true},
-        {name:"All-Time",value:`${allDone.length} trades · ${fmtUSD(allVol)}`,inline:true},
+        {name:"This Week",value:`${nExchanges(week.length)} · ${fmtUSD(weekVol)}`,inline:true},
+        {name:"All-Time",value:`${nExchanges(allDone.length)} · ${fmtUSD(allVol)}`,inline:true},
         {name:"All-Time Fees",value:fmtUSD(allFees),inline:true},
         {name:"Avg Deal",value:avgDeal>0?fmtUSD(avgDeal):"—",inline:true},
         {name:"Open Tickets",value:`${open}`,inline:true},
@@ -5658,7 +5795,7 @@ async function postWeeklyClientRecap(){
             {name:"Volume This Week",value:`**${fmtUSD(myVol)}**`,inline:true},
             {name:"Fees This Week",value:`**${fmtUSD(myFees)}**`,inline:true},
             {name:"All-Time Volume",value:`**${fmtUSD(allVol)}**`,inline:true},
-            {name:"All-Time Trades",value:`**${allTime.length}**`,inline:true},
+            {name:"All-Time Exchanges",value:`**${allTime.length}**`,inline:true},
             {name:"Your Tier",value:`**${tier.label}**`,inline:true},
           )
           .setImage(IMG.BANNER)
@@ -5804,6 +5941,9 @@ client.once(Events.ClientReady,async()=>{
     // Quick "Is everything okay?" check-ins booked by the safety system for a suspected exchanger's other clients (every minute; survives restarts)
     setInterval(()=>sweepCheckins(guild).catch(e=>console.error("[checkin]",e.message)),60*1000);
     setTimeout(()=>sweepCheckins(guild).catch(()=>{}),25*1000);
+    // A ticket nobody has claimed for ten minutes: its card quietly suggests Add Method (every minute; survives restarts)
+    setInterval(()=>sweepUnclaimed(guild).catch(e=>console.error("[nudge]",e.message)),60*1000);
+    setTimeout(()=>sweepUnclaimed(guild).catch(()=>{}),35*1000);
     // Safety system: settles unanswered worries, notices silent exchangers (quietly), retires old holds (every 30 seconds)
     setInterval(()=>sweepSafety(guild).catch(e=>console.error("[safety]",e.message)),30*1000);
     setTimeout(()=>sweepSafety(guild).catch(()=>{}),20*1000);
