@@ -20,6 +20,12 @@ const axios = require("axios");
 const { google } = require("googleapis");
 const { Pool } = require("pg");
 
+// Which build is running. Shown at the bottom of /ping and printed in the logs, so a deploy that did not go through is easy to spot.
+// BOT_BUILD is the first 7 characters of the commit Railway built (it matches the commit on GitHub); it is blank when run anywhere else.
+const BOT_VERSION="v12";
+const BOT_BUILD=String(process.env.RAILWAY_GIT_COMMIT_SHA||"").slice(0,7);
+const BUILD_TEXT=BOT_BUILD?`${BOT_VERSION}  ·  ${BOT_BUILD}`:BOT_VERSION;
+
 // ── POSTGRES ─────────────────────────────────────────────────────────────────
 // Connects to Railway Postgres via DATABASE_URL env var.
 // Falls back to JSON files if DATABASE_URL is not set (local dev).
@@ -2806,7 +2812,7 @@ function _gShortcuts(){
     "",
     "## The bot",
     _gline("help","this guide"),
-    _gline("ping","bot status and latency"),
+    _gline("ping","bot status, latency and which version is running"),
   ])];
 }
 function _gFees(){
@@ -2934,6 +2940,7 @@ function _gOwners(){
     _gline("postexchange","post the exchange embed"),
     _gline("postsupport","post the support embed"),
     _gline("postmm","post the middleman info embed"),
+    _gline("postbackup","post the backup server invite"),
     _gline("postinfo","post the info embed"),
     _gline("posttos","post the Terms of Service"),
     _gline("postlinks","post the official links"),
@@ -3100,11 +3107,15 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("mine").setDescription("Find 3 diamonds to win a free exchange pass"),
   new SlashCommandBuilder().setName("ticket").setDescription("Check your open ticket status"),
   new SlashCommandBuilder().setName("howto").setDescription("How to use Konvert Exchange"),
-  new SlashCommandBuilder().setName("ping").setDescription("Check bot status and latency"),
+  new SlashCommandBuilder().setName("ping").setDescription("Check bot status, latency and version"),
   new SlashCommandBuilder().setName("vouch").setDescription("Manually record a completed exchange").addUserOption(o=>o.setName("client").setDescription("The client").setRequired(true)).addUserOption(o=>o.setName("exchanger").setDescription("The exchanger").setRequired(true)).addStringOption(o=>o.setName("message").setDescription("Review message").setRequired(true)).addStringOption(o=>o.setName("method").setDescription("Payment method").setRequired(true)).addNumberOption(o=>o.setName("amount").setDescription("Amount (USD)").setRequired(true)).addIntegerOption(o=>o.setName("rating").setDescription("Rating 1-5").setMinValue(1).setMaxValue(5).setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("postexchange").setDescription("[Owner] Post the exchange embed").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("postsupport").setDescription("[Owner] Post the support embed").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("postmm").setDescription("[Owner] Post the MM info embed").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("postbackup").setDescription("[Owner] Post the backup server invite embed")
+    .addStringOption(o=>o.setName("link").setDescription("Invite link (leave empty for the official backup)").setRequired(false))
+    .addChannelOption(o=>o.setName("channel").setDescription("Where to post it (leave empty for this channel)").addChannelTypes(ChannelType.GuildText,ChannelType.GuildAnnouncement).setRequired(false))
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("calc").setDescription("[Owner] Force-post live rates now").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("setwallet").setDescription("[Owner] Update a deposit wallet").addStringOption(o=>o.setName("coin").setDescription("Coin").setRequired(true)).addStringOption(o=>o.setName("address").setDescription("New address").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("announce").setDescription("[Owner] Post an announcement").addStringOption(o=>o.setName("message").setDescription("Message").setRequired(true)).addStringOption(o=>o.setName("channel").setDescription("Channel ID").setRequired(true)).addStringOption(o=>o.setName("ping").setDescription("everyone / here / none").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
@@ -3212,6 +3223,25 @@ function mainEmbed(){
       {name:"Crypto",value:"BTC · ETH · SOL · LTC · USDT · USDC · XRP · BNB · ADA · DOGE · and more",inline:false},
     ).setThumbnail(IMG.LOGO).setImage(IMG.BANNER).setFooter(kFoot("Fast · Safe · Simple"));
 }
+// The backup server (Konvert 2). BACKUP_INVITE_URL can change the link without touching the code; /postbackup link:... overrides it for one post.
+const BACKUP_INVITE="https://discord.gg/z59shqpXs8";
+// An invite typed any usual way ("discord.gg/abc", "https://discord.com/invite/abc") as one tidy https://discord.gg/abc link, or null when it is not an invite
+function cleanInvite(raw){
+  const m=/^(?:https?:\/\/)?(?:www\.)?(?:discord\.gg|discord(?:app)?\.com\/invite)\/([A-Za-z0-9-]{2,32})\/?$/i.exec(String(raw||"").trim());
+  return m?`https://discord.gg/${m[1]}`:null;
+}
+const backupInvite=()=>cleanInvite(process.env.BACKUP_INVITE_URL)||BACKUP_INVITE;
+function backupEmbed(url){
+  const link=cleanInvite(url)||backupInvite();
+  return kEmbed("Backup Server").setTitle("Official Backup Server").setThumbnail(IMG.LOGO)
+    .setDescription(`${kHero("Never lose access")}\nJoin the backup server now so you can always reach **C2C swaps** and **fiat exchanges**, even if this server is ever down, locked or restricted.\n​`)
+    .addFields(
+      {name:"Join Now",value:"Takes a few seconds. Do it before you need it.",inline:true},
+      {name:"Invite",value:`[${link.replace("https://","")}](${link})`,inline:true},
+      {name:"Stay Safe",value:"This is the only official backup link. Any other invite claiming to be Konvert is an impersonator.",inline:false},
+    ).setImage(IMG.BANNER).setFooter(kFoot("Official backup"));
+}
+const backupRow=url=>new ActionRowBuilder().addComponents(kLink("Join Backup Server",cleanInvite(url)||backupInvite()));
 const confirmRow=()=>new ActionRowBuilder().addComponents(kBtn("btn_confirm_ticket","Confirm & Open Ticket",ButtonStyle.Success),kBtn("btn_cancel_ticket","Cancel",ButtonStyle.Secondary));
 function mainButtons(){
   return [new ActionRowBuilder().addComponents(
@@ -3219,19 +3249,27 @@ function mainButtons(){
     kBtn("btn_fee_calc","Calculate Fee",ButtonStyle.Secondary),
   )];
 }
-function step1Embed(){
+function step1Embed(sel){
+  const list=pickedMethods(sel||[]),n=list.length,room=MAX_TICKET_METHODS-n,more=r=>r===1?"one more":`up to ${r} more`;
+  const tip=!n?"Tap a method to pick it. Tap it again to remove it.":n===1?`Pick ${more(room)} so any of them can claim you, or continue with just ${methodLabel(list[0])}.`:room>0?`You can add ${more(room)}, or press Continue.`:`That is the most a ticket takes (${MAX_TICKET_METHODS}). Tap a green method to remove it.`;
   return kEmbed().setTitle("Step 1 · Choose Payment Methods").setThumbnail(IMG.LOGO)
-    .setDescription(`${kHero("Pick 2 or 3 methods")}\n**Recommended.** Exchangers for every method you pick are pinged at once, so the first one available can take your ticket.\n\nTick each method that works for you, then tap outside the menu to continue.\n${kNote("Gift Card, Buy For You and Custom Exchange are chosen on their own.")}\n​`)
+    .setDescription(`${kHero("Pick 2 or 3 methods")}\n**Recommended.** Exchangers for every method you pick are pinged at once, so the first one available can take your ticket.\n\n**Selected**  ·  ${n?methodsLabel(list):"None yet"}\n${kNote(tip)}\n${kNote("Gift Card, Buy For You and Custom Exchange are chosen on their own.")}\n​`)
     .setFooter(kFoot("Step 1 of 3"));
 }
-// Step 1's controls: a menu of payment methods (pick up to MAX_TICKET_METHODS) and, under it, the flows that are chosen on their own
-function methodPickRows(){
-  const std=METHODS.filter(m=>!isSoloMethod(m.value));
-  const menu=new StringSelectMenuBuilder().setCustomId("select_method").setPlaceholder("Pick 2-3 payment methods (recommended)...")
-    .setMinValues(1).setMaxValues(Math.min(MAX_TICKET_METHODS,std.length))
-    .addOptions(std.map(m=>new StringSelectMenuOptionBuilder().setLabel(m.label).setValue(m.value).setDescription(`Exchange crypto with ${m.label}`)));
+// Step 1's controls: one button per payment method (up to MAX_TICKET_METHODS can be green at once), Continue, and the flows that are chosen on their own.
+// A button's id holds what is picked so far ("pk_t_<picked>_<this one>"), so a tap is just "toggle this one" and nothing is stored anywhere.
+function pickerRows(sel){
+  const list=pickedMethods(sel||[]),codes=list.map(methodCode).join(""),full=list.length>=MAX_TICKET_METHODS;
+  const chips=METHODS.filter(m=>!isSoloMethod(m.value)).map(m=>{
+    const on=list.includes(m.value);
+    return kBtn(`pk_t_${codes}_${methodCode(m.value)}`,m.label,on?ButtonStyle.Success:ButtonStyle.Secondary).setDisabled(full&&!on);
+  });
+  const rows=[];
+  for(let i=0;i<chips.length;i+=5)rows.push(new ActionRowBuilder().addComponents(...chips.slice(i,i+5)));
+  const go=new ActionRowBuilder().addComponents(kBtn(`pk_go_${codes}`,list.length>1?`Continue with ${list.length}`:"Continue",ButtonStyle.Primary).setDisabled(!list.length));
+  if(list.length)go.addComponents(kBtn("pk_clr","Clear",ButtonStyle.Secondary));
   const solo=SOLO_METHODS.map(getMethod).filter(Boolean).map(m=>kBtn(`btn_pick__${m.value}`,m.label,ButtonStyle.Secondary));
-  return [new ActionRowBuilder().addComponents(menu),new ActionRowBuilder().addComponents(...solo)];
+  return [...rows,go,new ActionRowBuilder().addComponents(...solo)];
 }
 // Step 2's two direction buttons for the methods picked. One method keeps the ids and labels it always had; several carry their methods in the id.
 const fitLabel=(s,alt)=>s.length<=80?s:alt;
@@ -3242,24 +3280,10 @@ function directionRow(list){
     kBtn(`dir_receive__${tag}`,fitLabel(`Send ${lbl} → Get Crypto`,"Send Payment → Get Crypto"),ButtonStyle.Primary));
 }
 // Step 2's buttons: the two directions and, when only one ordinary method was picked, a way to add more before the ticket exists
-function step2Rows(list,opts){
+function step2Rows(list){
   const rows=[directionRow(list)],one=list.length===1?list[0]:null;
-  if(one&&getMethod(one)&&!isSoloMethod(one)&&!(opts&&opts.noMore))rows.push(new ActionRowBuilder().addComponents(kBtn(`btn_more__${methodTag(list)}`,"Add More Methods",ButtonStyle.Secondary)));
+  if(one&&getMethod(one)&&!isSoloMethod(one))rows.push(new ActionRowBuilder().addComponents(kBtn(`btn_more__${methodTag(list)}`,"Add More Methods",ButtonStyle.Secondary)));
   return rows;
-}
-// "Add More Methods": the other ordinary methods, up to the limit, and a way to carry on with what was picked
-function moreRows(cur){
-  const room=MAX_TICKET_METHODS-cur.length,opts=METHODS.filter(m=>!isSoloMethod(m.value)&&!cur.includes(m.value));
-  const menu=new StringSelectMenuBuilder().setCustomId(`sel_more__${methodTag(cur)}`).setPlaceholder(room===1?"Add one more method...":`Add up to ${room} more methods...`)
-    .setMinValues(1).setMaxValues(Math.min(room,opts.length))
-    .addOptions(opts.map(m=>new StringSelectMenuOptionBuilder().setLabel(m.label).setValue(m.value).setDescription(`Also accept ${m.label}`)));
-  return [new ActionRowBuilder().addComponents(menu),new ActionRowBuilder().addComponents(kBtn(`btn_nomore__${methodTag(cur)}`,`Keep ${methodsLabel(cur)} Only`,ButtonStyle.Secondary))];
-}
-function moreEmbed(cur){
-  const room=MAX_TICKET_METHODS-cur.length;
-  return kEmbed().setTitle("Add More Methods").setThumbnail(IMG.LOGO)
-    .setDescription(`${kHero(methodsLabel(cur))}\n**Recommended.** Add ${room===1?"one more method":`up to ${room} more`} and exchangers for each are pinged at once, so your ticket is claimed faster.\n\nTick the ones that work for you, then tap outside the menu to continue.`)
-    .setFooter(kFoot("Step 1 of 3"));
 }
 // A modal title is 45 characters at most
 function modalTitle(label,n,sendCrypto){
@@ -3273,14 +3297,14 @@ function step2MultiEmbed(list){
     .setDescription(`${kHero("Choose your direction")}\n**Send Crypto → Get ${lbl}**\nYou send crypto and we pay you through ${or}.\n\n**Send ${lbl} → Get Crypto**\nYou pay through ${or} and we send crypto to your wallet.\n\n${kNote("Exchangers for every method are pinged at once. Whoever claims it sets the method.")}\n\n${minLine()}`)
     .setFooter(kFoot("Step 2 of 3"));
 }
-function step2Embed(method,opts){
+function step2Embed(method){
   if(Array.isArray(method)){if(method.length>1)return step2MultiEmbed(method);method=method[0];}
   const m=getMethod(method);
   if(method==="crypto"){return kEmbed().setTitle("Step 2 · Crypto to Crypto").setDescription(`${kHero("Send one coin, receive another")}\nFor example: send SOL, receive BTC.\n\nSelect your coins below.\n\n${minLine()}`).setFooter(kFoot("Step 2 of 3"));}
   if(method==="buyforyou")return kEmbed().setTitle("Buy For You").setDescription(`Tell us what you want us to purchase and we will handle it.\n\nDescribe the item, link, and amount in your ticket — a helper will reach out.\n\n${minLine()}`).setFooter(kFoot("Step 2 of 3"));
   if(method==="custom")return kEmbed().setTitle("Custom Exchange").setDescription(`Something unique? No problem.\n\nExplain what you need in your ticket and a helper will assist you.\n\n${minLine()}`).setFooter(kFoot("Step 2 of 3"));
   return kEmbed().setTitle(`Step 2 · ${m.label}`)
-    .setDescription(`${kHero("Choose your direction")}\n**Send Crypto → Get ${m.label}**\nYou send crypto and we pay you through ${m.label}.\n\n**Send ${m.label} → Get Crypto**\nYou pay through ${m.label} and we send crypto to your wallet.\n\n${!isSoloMethod(method)&&!(opts&&opts.noTip)?`${kNote(`Tip: only ${m.label} exchangers are pinged. Add more methods and any of them can claim your ticket.`)}\n\n`:""}${minLine()}`)
+    .setDescription(`${kHero("Choose your direction")}\n**Send Crypto → Get ${m.label}**\nYou send crypto and we pay you through ${m.label}.\n\n**Send ${m.label} → Get Crypto**\nYou pay through ${m.label} and we send crypto to your wallet.\n\n${!isSoloMethod(method)?`${kNote(`Tip: only ${m.label} exchangers are pinged. Add more methods and any of them can claim your ticket.`)}\n\n`:""}${minLine()}`)
     .setFooter(kFoot("Step 2 of 3"));
 }
 
@@ -4116,7 +4140,7 @@ client.on(Events.InteractionCreate,async interaction=>{
   try{
     if(interaction.isChatInputCommand()){
       // Owner-only commands: check OWNER_IDS regardless of Discord permissions
-      const OWNER_ONLY_CMDS=["grantowner","revokeowner","listowners","wipestats","clearleaderboard","adjuststats","resetstats","transferstats","suspended","reinstate","clearexchanger","profittest","broadcast","setfeemode","postleaderboard","serverinfo","clientinfo","receipt","postguide"];
+      const OWNER_ONLY_CMDS=["grantowner","revokeowner","listowners","wipestats","clearleaderboard","adjuststats","resetstats","transferstats","suspended","reinstate","clearexchanger","profittest","broadcast","setfeemode","postleaderboard","serverinfo","clientinfo","receipt","postguide","postbackup"];
       if(OWNER_ONLY_CMDS.includes(interaction.commandName)&&!isOwner(interaction.user.id,interaction.member)){
         return interaction.reply({content:"You don\'t have permission to use this command.",flags:64});
       }
@@ -4126,6 +4150,14 @@ client.on(Events.InteractionCreate,async interaction=>{
 
       if(cmd==="postexchange"){await interaction.channel.send({embeds:[mainEmbed()],components:mainButtons()});return interaction.reply({content:"Exchange embed posted.",flags:64});}
       if(cmd==="postsupport"){const embed=kEmbed("Support").setTitle(`Support`).setThumbnail(IMG.LOGO).setDescription(`This channel is for **support tickets only**.\n\nFor exchanges, head to <#${CONFIG.EXCHANGE_CHANNEL}>.\n\n**What to include**\n• What you need help with\n• Any error messages or screenshots\n• What you have already tried\n• A full explanation of what happened\n\u200b`).setFooter(kFoot("Support"));await interaction.channel.send({embeds:[embed],components:[new ActionRowBuilder().addComponents(kBtn("btn_support_ticket","Open Support Ticket",ButtonStyle.Primary))]});return interaction.reply({content:"Support embed posted.",flags:64});}
+      if(cmd==="postbackup"){
+        const typed=(interaction.options.getString("link")||"").trim(),url=typed?cleanInvite(typed):backupInvite();
+        if(!url)return interaction.reply({content:"That is not a Discord invite link. Use one like https://discord.gg/abc123.",flags:64});
+        const target=interaction.options.getChannel("channel")||interaction.channel;
+        try{await target.send({embeds:[backupEmbed(url)],components:[backupRow(url)]});}
+        catch(e){return interaction.reply({content:`Could not post in <#${target.id}>: ${e.message}`,flags:64});}
+        return interaction.reply({content:target.id===interaction.channel.id?"Backup server embed posted.":`Backup server embed posted in <#${target.id}>.`,flags:64});
+      }
       if(cmd==="postmm"){const embed=kEmbed("Middleman").setTitle(`Middleman Information`).setThumbnail(IMG.LOGO).setDescription(`**Konvert officially partners with Astro MM** to make sure every deal goes smoothly.\n\n**How it works**\n**1.** Open a ticket in <#${CONFIG.EXCHANGE_CHANNEL}>\n**2.** Get a quote for your exchange\n**3.** If terms are agreed, open an MM ticket on Astro MM\n**4.** Complete the exchange safely\n\u200b`).addFields({name:`Important`,value:"**Do NOT go first** without using Astro MM, unless explicitly advised by an owner in your ticket.",inline:false},{name:`Astro MM`,value:"Press the button below to join the Astro MM server.",inline:false}).setImage(IMG.BANNER).setFooter(kFoot("Official escrow partner: Astro MM"));await interaction.channel.send({embeds:[embed],components:[new ActionRowBuilder().addComponents(kLink("Join Astro MM","https://discord.gg/astromm"))]});return interaction.reply({content:"MM embed posted.",flags:64});}
 
 
@@ -4287,7 +4319,7 @@ client.on(Events.InteractionCreate,async interaction=>{
 
       if(cmd==="ticket"){const tickets=load("tickets"),found=Object.entries(tickets).find(([,t])=>t.userId===interaction.user.id&&t.status==="open");if(!found)return interaction.reply({content:"You don't have an open ticket. Use **Exchange Now** to start one.",flags:64});const [channelId,t]=found,d=dealOf(t),status=t.reported?"Under owner review":t.mmPending?"Waiting for you to confirm the middleman":t.completionPending?"Waiting for you to confirm completion":t.claimedBy?`Claimed by <@${t.claimedBy}>`:"Waiting for an exchanger";return interaction.reply({embeds:[base("Your Open Ticket").setDescription(`${dealHead(d)}\n\u200b`).addFields({name:"Channel",value:`<#${channelId}>`,inline:true},{name:"Status",value:status,inline:true},{name:"Opened",value:t.createdAt?`<t:${Math.floor(t.createdAt/1000)}:R>`:"Earlier",inline:true}).setFooter({text:"Konvert Exchange  ·  All communication stays in your ticket"})],flags:64});}
       if(cmd==="howto"){return interaction.reply({embeds:[base("How to Use Konvert").setThumbnail(IMG.LOGO).setDescription("New to Konvert? Here's how an exchange works step by step.\n\u200b").addFields({name:"1.  Check Rates",value:"Use **Live Rates** or type `$BTC` / `$ETH` etc. in any channel to see the current price.",inline:false},{name:"2.  Calculate Fee",value:"Use **Calculate Fee** to estimate your cost. Fees range from **5% - 10%** depending on amount.",inline:false},{name:"3.  Open a Ticket",value:"Click **Exchange Now** and pick **2 or 3 payment methods** (recommended). Exchangers for each are pinged at once, so whoever is online first can take your ticket. Fill in the details and confirm. A private ticket opens instantly.",inline:false},{name:"4.  Middleman When Needed",value:"Your exchanger's go-first limit is in their name (like **Up To $50**). Above it, agree on a **middleman** with them inside your ticket.",inline:false},{name:"5.  Send & Confirm",value:"Staff confirms the deal. You send funds and share proof. Once confirmed, you receive your crypto or payment.",inline:false},{name:"Stay Safe",value:"Staff never DM you first. Anyone doing so is an impersonator. All communication stays in your ticket.",inline:false}).setFooter({text:"Konvert Exchange  ·  Questions? Ask in your ticket"})],flags:64});}
-      if(cmd==="ping"){const sent=Date.now();await interaction.deferReply({flags:64});return interaction.editReply({embeds:[base("Bot Status").setThumbnail(IMG.LOGO).setDescription("**All systems operational.** Konvert is online and ready.\n\u200b").addFields({name:"Status",value:"**Online**",inline:true},{name:"Latency",value:`**${Date.now()-sent}ms**`,inline:true},{name:"API Latency",value:client.ws.ping>=0?`**${client.ws.ping}ms**`:"**—**",inline:true}).setFooter({text:"Konvert Exchange  ·  Bot Status"})]});}
+      if(cmd==="ping"){const sent=Date.now();await interaction.deferReply({flags:64});return interaction.editReply({embeds:[base("Bot Status").setThumbnail(IMG.LOGO).setDescription("**All systems operational.** Konvert is online and ready.\n\u200b").addFields({name:"Status",value:"**Online**",inline:true},{name:"Latency",value:`**${Date.now()-sent}ms**`,inline:true},{name:"API Latency",value:client.ws.ping>=0?`**${client.ws.ping}ms**`:"**—**",inline:true}).setFooter({text:`Konvert Exchange  ·  Bot Status  ·  ${BUILD_TEXT}`})]});}
 
       if(cmd==="calc"){await interaction.deferReply({flags:64});if(!CONFIG.RATES_CHANNEL)return interaction.editReply("RATES_CHANNEL_ID not configured.");const ch=interaction.guild.channels.cache.get(CONFIG.RATES_CHANNEL);if(!ch)return interaction.editReply("Rates channel not found.");const embed=await buildRatesEmbed();if(ratesMsgId){const msg=await ch.messages.fetch(ratesMsgId).catch(()=>null);if(msg){await msg.edit({embeds:[embed]});}else{const s=await ch.send({embeds:[embed]});ratesMsgId=s.id;}}else{const s=await ch.send({embeds:[embed]});ratesMsgId=s.id;}return interaction.editReply("Rates posted.");}
       if(cmd==="setwallet"){const coin=interaction.options.getString("coin").toUpperCase(),addr=interaction.options.getString("address");const w=load("wallets");w[coin]=addr;save("wallets",w);log(interaction.guild,`WALLET: ${interaction.user.tag} set ${coin} to ${addr}`);return interaction.reply({content:`**${coin}** deposit address updated to \`${addr}\``,flags:64});}
@@ -5228,19 +5260,12 @@ This is active immediately and persists until revoked or the bot restarts.
     if(interaction.isStringSelectMenu()){
       if(interaction.customId==="select_method"){
         const _vals=interaction.values||[],_picked=pickedMethods(_vals),method=(_vals.length===1&&_vals[0]==="crypto")?"crypto":_picked[0];
-        if(!method)return interaction.update({embeds:[step1Embed()],components:methodPickRows()});
+        if(!method)return interaction.update({embeds:[step1Embed([])],components:pickerRows([])});
         if(method==="crypto"){const c2cCoins=["BTC","ETH","SOL","LTC","USDT","USDC","XRP","BNB","ADA","DOGE","MATIC","AVAX","DOT","LINK","TRX","SHIB","UNI","ATOM","NEAR","ARB","OP","CAKE","INJ","RUNE","KAVA"];const coinOpts=c2cCoins.map(c=>new StringSelectMenuOptionBuilder().setLabel(c).setValue(c).setDescription(`Exchange ${c}`));return interaction.update({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor(kAuthor()).setTitle(`Step 2 · Crypto to Crypto`).setDescription(`Select the coin you are **sending** and the coin you want to **receive** below.\n\n${minLine()}`).setFooter(kFoot("Step 2 of 3"))],components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("c2c_send").setPlaceholder("Select coin you are SENDING...").addOptions(coinOpts)),new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("c2c_recv").setPlaceholder("Select coin you want to RECEIVE...").addOptions(coinOpts))]});}
         return interaction.update({embeds:[step2Embed(_picked)],components:step2Rows(_picked)});
       }
       if(interaction.customId==="sel_claimmethod"){await claimTicket(interaction,{method:interaction.values[0],fromPicker:true});return;}
       if(interaction.customId==="sel_addmethod"){await addMethods(interaction);return;}
-      if(interaction.customId.startsWith("sel_more__")){          // more methods added on the first step: they join the one already picked
-        const cur=pickedMethods(parseMethodTag(interaction.customId.slice("sel_more__".length)));
-        if(!cur.length||cur.some(isSoloMethod))return interaction.update({embeds:[step1Embed()],components:methodPickRows()});
-        const add=pickedMethods((interaction.values||[]).filter(v=>!cur.includes(v))).slice(0,Math.max(MAX_TICKET_METHODS-cur.length,0));
-        const merged=pickedMethods([...cur,...add]);          // what was already picked stays; the new ones fill the room that is left (menu order, ordinary methods only, no repeats)
-        return interaction.update({embeds:[step2Embed(merged)],components:step2Rows(merged)});
-      }
       if(interaction.customId==="c2c_send"||interaction.customId==="c2c_recv"){
         const userId=interaction.user.id;
         if(!state.c2cSelections[userId])state.c2cSelections[userId]={};
@@ -5255,17 +5280,25 @@ This is active immediately and persists until revoked or the bot restarts.
     }
 
     if(interaction.isButton()){
-      if(interaction.customId==="btn_exchange_now"){await interaction.deferReply({flags:64}).catch(()=>{});const bl=load("blacklist");if(bl[interaction.user.id]&&!isOwner(interaction.user.id,interaction.member))return interaction.editReply({content:"You are blacklisted from Konvert."});return interaction.editReply({embeds:[step1Embed()],components:methodPickRows(),flags:64});}
-      if(interaction.customId.startsWith("btn_more__")||interaction.customId.startsWith("btn_nomore__")){      // one method picked: add more, or carry on with it
-        const keep=interaction.customId.startsWith("btn_nomore__"),cur=pickedMethods(parseMethodTag(interaction.customId.slice((keep?"btn_nomore__":"btn_more__").length)));
-        if(!cur.length||cur.some(isSoloMethod))return interaction.update({embeds:[step1Embed()],components:methodPickRows()});
-        if(keep)return interaction.update({embeds:[step2Embed(cur,{noTip:true})],components:step2Rows(cur,{noMore:true})});
-        if(cur.length>=MAX_TICKET_METHODS)return interaction.update({embeds:[step2Embed(cur)],components:step2Rows(cur,{noMore:true})});
-        return interaction.update({embeds:[moreEmbed(cur)],components:moreRows(cur)});
+      if(interaction.customId==="btn_exchange_now"){await interaction.deferReply({flags:64}).catch(()=>{});const bl=load("blacklist");if(bl[interaction.user.id]&&!isOwner(interaction.user.id,interaction.member))return interaction.editReply({content:"You are blacklisted from Konvert."});return interaction.editReply({embeds:[step1Embed([])],components:pickerRows([]),flags:64});}
+      if(interaction.customId.startsWith("pk_")){      // Step 1: tap a method to pick it or remove it, then Continue
+        const _pk=/^pk_(t|go)_([0-9a-z]{0,3})(?:_([0-9a-z]))?$/.exec(interaction.customId);
+        const _again=sel=>interaction.update({embeds:[step1Embed(sel)],components:pickerRows(sel)});
+        if(!_pk)return _again([]);                                                    // "Clear", or an id that is not one of ours
+        const cur=pickedMethods(parseMethodTag("m:"+_pk[2]));
+        if(_pk[1]==="go")return cur.length?interaction.update({embeds:[step2Embed(cur)],components:step2Rows(cur)}):_again([]);
+        const m=METHODS[parseInt(_pk[3]||"",36)];
+        if(!m||isSoloMethod(m.value))return _again(cur);
+        return _again(cur.includes(m.value)?cur.filter(v=>v!==m.value):cur.length<MAX_TICKET_METHODS?[...cur,m.value]:cur);
+      }
+      if(interaction.customId.startsWith("btn_more__")){      // one method picked: back to the buttons to add more (what is picked stays green)
+        const cur=pickedMethods(parseMethodTag(interaction.customId.slice("btn_more__".length)));
+        if(!cur.length||cur.some(isSoloMethod))return interaction.update({embeds:[step1Embed([])],components:pickerRows([])});
+        return interaction.update({embeds:[step1Embed(cur)],components:pickerRows(cur)});
       }
       if(interaction.customId.startsWith("btn_pick__")){      // Gift Card / Buy For You / Custom Exchange: chosen on their own
         const _solo=pickedMethods([interaction.customId.slice("btn_pick__".length)]);
-        if(!_solo.length)return interaction.update({embeds:[step1Embed()],components:methodPickRows()});
+        if(!_solo.length)return interaction.update({embeds:[step1Embed([])],components:pickerRows([])});
         return interaction.update({embeds:[step2Embed(_solo)],components:step2Rows(_solo)});
       }
       if(interaction.customId==="btn_fee_calc"){const modal=new ModalBuilder().setCustomId("modal_fee").setTitle("Fee Calculator");modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("fee_amt").setLabel("Amount in USD").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 250").setRequired(true)));return interaction.showModal(modal);}
@@ -5823,7 +5856,7 @@ function scheduleDailyDigest(guild){
 
 
 client.once(Events.ClientReady,async()=>{
-  console.log(`Konvert Bot online -- ${client.user.tag}`);
+  console.log(`Konvert Bot online -- ${client.user.tag}  [${BOT_VERSION}${BOT_BUILD?`, build ${BOT_BUILD}`:""}]`);
   client.user.setPresence({activities:[{name:"Konvert",type:3}],status:"online"});
   // Bootstrap owner — if set, add to OWNER_IDS on every startup
   if(process.env.BOOTSTRAP_OWNER_ID){
