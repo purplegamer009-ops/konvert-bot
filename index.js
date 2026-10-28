@@ -22,7 +22,7 @@ const { Pool } = require("pg");
 
 // Which build is running. Shown at the bottom of /ping and printed in the logs, so a deploy that did not go through is easy to spot.
 // BOT_BUILD is the first 7 characters of the commit Railway built (it matches the commit on GitHub); it is blank when run anywhere else.
-const BOT_VERSION="v12";
+const BOT_VERSION="v13";
 const BOT_BUILD=String(process.env.RAILWAY_GIT_COMMIT_SHA||"").slice(0,7);
 const BUILD_TEXT=BOT_BUILD?`${BOT_VERSION}  ·  ${BOT_BUILD}`:BOT_VERSION;
 
@@ -1072,6 +1072,7 @@ async function claimTicket(interaction,opts={}){
     }
   }
   _mem.tickets=tickets;save("tickets",tickets);
+  await retireNudge(ch,ticket);                          // the ten-minute "add a method" prompt has done its job
   await refreshPanel(ch,ticket,{card:false});
   if(chosen)await syncTicketMethod(ch,ticket);          // channel name, topic and the ticket card now say the method in use
   else await refreshTicketCard(ch,ticket);              // (and the card drops its "Add Method" tip)
@@ -1180,24 +1181,48 @@ async function remindClient(interaction){
   await ch.send({content:`<@${ticket.userId}>, <@${ticket.claimedBy}> is waiting for you to ${link?`[${what}](${link})`:what}.`,allowedMentions:{users:[ticket.userId]}}).catch(()=>{});
 }
 
-// ---- A ticket nobody has claimed for ten minutes: its card quietly suggests Add Method (no ping, no new message) ----
+// ---- A ticket nobody has claimed for ten minutes: the client is pinged once and asked to add other payment methods ----
+// One tidy message in the ticket: the ping, the deal, what it accepts now, and one dropdown of the methods it doesn't accept yet (the menu Add Method opens).
+// It is sent once per ticket, and it goes away when an exchanger claims the ticket or the client adds methods.
 const NUDGE_AFTER_MS=10*60*1000;
+const NUDGE_LATE_MS=2*60*60*1000;           // a ticket that has already waited this long when the sweep first sees it (the bot was off) is left alone
 let _nudgeRunning=false;
+function nudgeEmbed(t){
+  const cur=ticketMethods(t),room=MAX_TICKET_METHODS-cur.length;
+  return kEmbed("Ticket").setTitle("Add Another Payment Method")
+    .setDescription(`${kHero(dealOf(t).hero)}\n${room===1?"Add one more method":`Add up to ${room} more methods`} and their exchangers are pinged too, so the first one available can claim your ticket.\n\n**Accepted now**  ·  ${methodsLabel(cur)}`)
+    .setFooter(kFoot("Your ticket stays open while you wait"));
+}
 async function sweepUnclaimed(guild){
   if(_nudgeRunning)return;
   _nudgeRunning=true;
   try{
     const now=Date.now(),due=[];
     for(const [cid,t] of Object.entries(_mem.tickets||{})){
-      if(!t||t.nudged||t.status!=="open"||t.claimedBy||!t.claimSystem||!t.card||!t.cardMessageId)continue;
-      if(now-Math.max(t.createdAt||0,t.reopenedAt||0,t.widenedAt||0)<NUDGE_AFTER_MS||!canAddMethod(t))continue;
+      if(!t||t.nudgePingAt||t.status!=="open"||t.claimedBy||!t.claimSystem)continue;
+      const waited=now-Math.max(t.createdAt||0,t.reopenedAt||0,t.widenedAt||0);
+      if(waited<NUDGE_AFTER_MS||waited>NUDGE_LATE_MS||!canAddMethod(t))continue;
       const ch=guild.channels.cache.get(cid);
       if(!ch)continue;
-      t.nudged=true;due.push([ch,t]);                              // marked first so overlapping runs can't draw it twice
+      t.nudgePingAt=now;due.push([ch,t]);                         // marked first so overlapping runs can't send it twice
     }
     if(due.length)save("tickets",_mem.tickets);
-    for(const [ch,t] of due)await refreshTicketCard(ch,t);
+    for(const [ch,t] of due){
+      try{
+        const sent=await ch.send({content:`<@${t.userId}>, nobody has claimed your ticket yet.`,embeds:[nudgeEmbed(t)],components:[new ActionRowBuilder().addComponents(addMethodMenu(t).menu)],allowedMentions:{users:[t.userId]}});
+        t.nudgeMessageId=sent.id;save("tickets",_mem.tickets);
+      }catch(e){console.error("[nudge] couldn't post:",e.message);}
+    }
   }finally{_nudgeRunning=false;}
+}
+// Takes that prompt down (an exchanger claimed the ticket, or methods were added). keepId = a message that is being edited into something else right now.
+async function retireNudge(ch,ticket,keepId){
+  const id=ticket&&ticket.nudgeMessageId;
+  if(!id)return;
+  delete ticket.nudgeMessageId;save("tickets",_mem.tickets);
+  if(id===keepId)return;
+  const m=await ch.messages.fetch(id).catch(()=>null);
+  if(m)await m.delete().catch(()=>{});
 }
 
 // ---- "Is everything okay?" check-in: ONLY for the other clients of an exchanger the safety system really suspects ----
@@ -1446,11 +1471,8 @@ function buildTicketCard(t,opts){
     :(t.method==="buyforyou"||t.method==="custom")
       ?`${CONFIG.HELPER_ROLE?`<@&${CONFIG.HELPER_ROLE}>`:"@Helper"} — New **${d.label}** ticket opened.`
       :`Welcome, <@${t.userId}>. Your ticket is open and an exchanger will claim it shortly.`;
-  // How to reach more exchangers: right after opening for a one-method ticket, and later for any ticket with room that nobody has claimed (t.nudged)
-  const tip=waiting&&canAddMethod(t)
-    ?(t.nudged?"\n*Still unclaimed. Press Add Method so exchangers for other methods can take it.*"
-      :(opts&&opts.hint&&!isMultiMethod(t)?"\n*Tip: press Add Method so exchangers for another method can claim this too.*":""))
-    :"";
+  // How to reach more exchangers: right after opening, a one-method ticket is told it can add more (the ten-minute prompt is a message of its own)
+  const tip=waiting&&canAddMethod(t)&&opts&&opts.hint&&!isMultiMethod(t)?"\n*Tip: press Add Method so exchangers for another method can claim this too.*":"";
   const next=ticketNextSteps(t);
   return kEmbed("Ticket").setTitle(t.method==="crypto"?"Crypto to Crypto Exchange":(t.method==="buyforyou"||t.method==="custom")?d.label:`${d.label} Exchange`)
     .setDescription(`${dealHead(d,c.notes||[])}\n${kLedger(dealRows(d,{rate:c.rate!=null?c.rate:null,coinAmt:c.coinAmt||null}))}${intro}${tip}`)
@@ -1499,6 +1521,14 @@ function methodPicker(interaction,ticket,options){
 // ---- The client widens their ticket: "Add Method" ----
 const ADD_METHOD_COOLDOWN_MS=2*60*1000;          // each addition pings the new methods' exchangers, so once every 2 minutes per ticket
 const _addMethodAt=new Map();
+// The dropdown that adds payment methods to a ticket: the ordinary methods it doesn't accept yet, as many as the limit leaves room for
+function addMethodMenu(ticket){
+  const cur=ticketMethods(ticket),room=MAX_TICKET_METHODS-cur.length;
+  const opts=METHODS.filter(m=>!isSoloMethod(m.value)&&!cur.includes(m.value));
+  const menu=new StringSelectMenuBuilder().setCustomId("sel_addmethod").setPlaceholder(room===1?"Choose a method to add...":`Add up to ${room} more...`).setMinValues(1).setMaxValues(Math.min(room,opts.length))
+    .addOptions(opts.map(m=>new StringSelectMenuOptionBuilder().setLabel(m.label).setValue(m.value).setDescription(`Also accept ${m.label}`)));
+  return {room,menu};
+}
 async function addMethodPrompt(interaction){
   const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
   const ticket=tickets[interaction.channel.id];
@@ -1506,10 +1536,7 @@ async function addMethodPrompt(interaction){
   if(interaction.user.id!==ticket.userId&&!isOwner(interaction.user.id,interaction.member))return interaction.reply({content:"Only the client can add a payment method.",flags:64});
   const why=addMethodBlock(ticket);
   if(why)return interaction.reply({content:why,flags:64});
-  const cur=ticketMethods(ticket),room=MAX_TICKET_METHODS-cur.length;
-  const opts=METHODS.filter(m=>!isSoloMethod(m.value)&&!cur.includes(m.value));
-  const menu=new StringSelectMenuBuilder().setCustomId("sel_addmethod").setPlaceholder(room===1?"Choose a method to add...":`Add up to ${room} more...`).setMinValues(1).setMaxValues(Math.min(room,opts.length))
-    .addOptions(opts.map(m=>new StringSelectMenuOptionBuilder().setLabel(m.label).setValue(m.value).setDescription(`Also accept ${m.label}`)));
+  const {room,menu}=addMethodMenu(ticket);
   return interaction.reply({
     embeds:[kEmbed("Ticket").setTitle(`Add a Payment Method`)
       .setDescription(`${kHero(dealOf(ticket).hero)}\n${room===1?"Pick one more method. Its exchangers will be notified and can claim this ticket.":`Pick up to ${room} more. Exchangers for each will be notified, and any of them can claim this ticket.`}`)
@@ -1559,7 +1586,8 @@ async function addMethods(interaction){
   const fresh=await postOpenPanel(ch,ticket,{title:`Methods Added`,lead:`<@${ticket.userId}> now also accepts **${names}**. Exchangers for ${fin.length>1?"these methods":"this method"} can claim this ticket.`,known:granted,only:rolesForMethods(fin),pingClient:false});
   if(fresh){if(oldPanel&&oldPanel.id!==fresh.id)await oldPanel.edit({components:[]}).catch(()=>{});}
   else await refreshPanel(ch,ticket);
-  await interaction.editReply({embeds:[kEmbed("Ticket","ok").setTitle(`Method Added`).setDescription(`${kHero(dealOf(ticket).hero)}\n${names} exchangers have been notified.`)],components:[]}).catch(()=>{});
+  await retireNudge(ch,ticket,interaction.message&&interaction.message.id);        // the ten-minute prompt is no longer needed (if it was the one used, it becomes this confirmation)
+  await interaction.editReply({content:"",embeds:[kEmbed("Ticket","ok").setTitle(`Method Added`).setDescription(`${kHero(dealOf(ticket).hero)}\n${names} exchangers have been notified.`)],components:[]}).catch(()=>{});
   log(interaction.guild,`ADD METHOD: #${ch.name} | ${interaction.user.tag} | +${fin.join(",")} | now ${ticket.methods.join(",")}`);
 }
 // ── end Several payment methods ──────────────────────────────────────────────────────────────────────────────
@@ -3249,27 +3277,19 @@ function mainButtons(){
     kBtn("btn_fee_calc","Calculate Fee",ButtonStyle.Secondary),
   )];
 }
-function step1Embed(sel){
-  const list=pickedMethods(sel||[]),n=list.length,room=MAX_TICKET_METHODS-n,more=r=>r===1?"one more":`up to ${r} more`;
-  const tip=!n?"Tap a method to pick it. Tap it again to remove it.":n===1?`Pick ${more(room)} so any of them can claim you, or continue with just ${methodLabel(list[0])}.`:room>0?`You can add ${more(room)}, or press Continue.`:`That is the most a ticket takes (${MAX_TICKET_METHODS}). Tap a green method to remove it.`;
+function step1Embed(){
   return kEmbed().setTitle("Step 1 · Choose Payment Methods").setThumbnail(IMG.LOGO)
-    .setDescription(`${kHero("Pick 2 or 3 methods")}\n**Recommended.** Exchangers for every method you pick are pinged at once, so the first one available can take your ticket.\n\n**Selected**  ·  ${n?methodsLabel(list):"None yet"}\n${kNote(tip)}\n${kNote("Gift Card, Buy For You and Custom Exchange are chosen on their own.")}\n​`)
+    .setDescription(`${kHero("Pick 2 or 3 methods")}\n**Recommended.** Exchangers for every method you pick are pinged at once, so the first one available can take your ticket.\n\nTick each method that works for you, then tap outside the menu to continue.\n${kNote("Gift Card, Buy For You and Custom Exchange are chosen on their own.")}\n​`)
     .setFooter(kFoot("Step 1 of 3"));
 }
-// Step 1's controls: one button per payment method (up to MAX_TICKET_METHODS can be green at once), Continue, and the flows that are chosen on their own.
-// A button's id holds what is picked so far ("pk_t_<picked>_<this one>"), so a tap is just "toggle this one" and nothing is stored anywhere.
-function pickerRows(sel){
-  const list=pickedMethods(sel||[]),codes=list.map(methodCode).join(""),full=list.length>=MAX_TICKET_METHODS;
-  const chips=METHODS.filter(m=>!isSoloMethod(m.value)).map(m=>{
-    const on=list.includes(m.value);
-    return kBtn(`pk_t_${codes}_${methodCode(m.value)}`,m.label,on?ButtonStyle.Success:ButtonStyle.Secondary).setDisabled(full&&!on);
-  });
-  const rows=[];
-  for(let i=0;i<chips.length;i+=5)rows.push(new ActionRowBuilder().addComponents(...chips.slice(i,i+5)));
-  const go=new ActionRowBuilder().addComponents(kBtn(`pk_go_${codes}`,list.length>1?`Continue with ${list.length}`:"Continue",ButtonStyle.Primary).setDisabled(!list.length));
-  if(list.length)go.addComponents(kBtn("pk_clr","Clear",ButtonStyle.Secondary));
+// Step 1's controls: a menu of payment methods (pick up to MAX_TICKET_METHODS) and, under it, the flows that are chosen on their own
+function methodPickRows(){
+  const std=METHODS.filter(m=>!isSoloMethod(m.value));
+  const menu=new StringSelectMenuBuilder().setCustomId("select_method").setPlaceholder("Pick 2-3 payment methods (recommended)...")
+    .setMinValues(1).setMaxValues(Math.min(MAX_TICKET_METHODS,std.length))
+    .addOptions(std.map(m=>new StringSelectMenuOptionBuilder().setLabel(m.label).setValue(m.value).setDescription(`Exchange crypto with ${m.label}`)));
   const solo=SOLO_METHODS.map(getMethod).filter(Boolean).map(m=>kBtn(`btn_pick__${m.value}`,m.label,ButtonStyle.Secondary));
-  return [...rows,go,new ActionRowBuilder().addComponents(...solo)];
+  return [new ActionRowBuilder().addComponents(menu),new ActionRowBuilder().addComponents(...solo)];
 }
 // Step 2's two direction buttons for the methods picked. One method keeps the ids and labels it always had; several carry their methods in the id.
 const fitLabel=(s,alt)=>s.length<=80?s:alt;
@@ -3280,10 +3300,24 @@ function directionRow(list){
     kBtn(`dir_receive__${tag}`,fitLabel(`Send ${lbl} → Get Crypto`,"Send Payment → Get Crypto"),ButtonStyle.Primary));
 }
 // Step 2's buttons: the two directions and, when only one ordinary method was picked, a way to add more before the ticket exists
-function step2Rows(list){
+function step2Rows(list,opts){
   const rows=[directionRow(list)],one=list.length===1?list[0]:null;
-  if(one&&getMethod(one)&&!isSoloMethod(one))rows.push(new ActionRowBuilder().addComponents(kBtn(`btn_more__${methodTag(list)}`,"Add More Methods",ButtonStyle.Secondary)));
+  if(one&&getMethod(one)&&!isSoloMethod(one)&&!(opts&&opts.noMore))rows.push(new ActionRowBuilder().addComponents(kBtn(`btn_more__${methodTag(list)}`,"Add More Methods",ButtonStyle.Secondary)));
   return rows;
+}
+// "Add More Methods": the other ordinary methods, up to the limit, and a way to carry on with what was picked
+function moreRows(cur){
+  const room=MAX_TICKET_METHODS-cur.length,opts=METHODS.filter(m=>!isSoloMethod(m.value)&&!cur.includes(m.value));
+  const menu=new StringSelectMenuBuilder().setCustomId(`sel_more__${methodTag(cur)}`).setPlaceholder(room===1?"Add one more method...":`Add up to ${room} more methods...`)
+    .setMinValues(1).setMaxValues(Math.min(room,opts.length))
+    .addOptions(opts.map(m=>new StringSelectMenuOptionBuilder().setLabel(m.label).setValue(m.value).setDescription(`Also accept ${m.label}`)));
+  return [new ActionRowBuilder().addComponents(menu),new ActionRowBuilder().addComponents(kBtn(`btn_nomore__${methodTag(cur)}`,`Keep ${methodsLabel(cur)} Only`,ButtonStyle.Secondary))];
+}
+function moreEmbed(cur){
+  const room=MAX_TICKET_METHODS-cur.length;
+  return kEmbed().setTitle("Add More Methods").setThumbnail(IMG.LOGO)
+    .setDescription(`${kHero(methodsLabel(cur))}\n**Recommended.** Add ${room===1?"one more method":`up to ${room} more`} and exchangers for each are pinged at once, so your ticket is claimed faster.\n\nTick the ones that work for you, then tap outside the menu to continue.`)
+    .setFooter(kFoot("Step 1 of 3"));
 }
 // A modal title is 45 characters at most
 function modalTitle(label,n,sendCrypto){
@@ -3297,14 +3331,14 @@ function step2MultiEmbed(list){
     .setDescription(`${kHero("Choose your direction")}\n**Send Crypto → Get ${lbl}**\nYou send crypto and we pay you through ${or}.\n\n**Send ${lbl} → Get Crypto**\nYou pay through ${or} and we send crypto to your wallet.\n\n${kNote("Exchangers for every method are pinged at once. Whoever claims it sets the method.")}\n\n${minLine()}`)
     .setFooter(kFoot("Step 2 of 3"));
 }
-function step2Embed(method){
+function step2Embed(method,opts){
   if(Array.isArray(method)){if(method.length>1)return step2MultiEmbed(method);method=method[0];}
   const m=getMethod(method);
   if(method==="crypto"){return kEmbed().setTitle("Step 2 · Crypto to Crypto").setDescription(`${kHero("Send one coin, receive another")}\nFor example: send SOL, receive BTC.\n\nSelect your coins below.\n\n${minLine()}`).setFooter(kFoot("Step 2 of 3"));}
   if(method==="buyforyou")return kEmbed().setTitle("Buy For You").setDescription(`Tell us what you want us to purchase and we will handle it.\n\nDescribe the item, link, and amount in your ticket — a helper will reach out.\n\n${minLine()}`).setFooter(kFoot("Step 2 of 3"));
   if(method==="custom")return kEmbed().setTitle("Custom Exchange").setDescription(`Something unique? No problem.\n\nExplain what you need in your ticket and a helper will assist you.\n\n${minLine()}`).setFooter(kFoot("Step 2 of 3"));
   return kEmbed().setTitle(`Step 2 · ${m.label}`)
-    .setDescription(`${kHero("Choose your direction")}\n**Send Crypto → Get ${m.label}**\nYou send crypto and we pay you through ${m.label}.\n\n**Send ${m.label} → Get Crypto**\nYou pay through ${m.label} and we send crypto to your wallet.\n\n${!isSoloMethod(method)?`${kNote(`Tip: only ${m.label} exchangers are pinged. Add more methods and any of them can claim your ticket.`)}\n\n`:""}${minLine()}`)
+    .setDescription(`${kHero("Choose your direction")}\n**Send Crypto → Get ${m.label}**\nYou send crypto and we pay you through ${m.label}.\n\n**Send ${m.label} → Get Crypto**\nYou pay through ${m.label} and we send crypto to your wallet.\n\n${!isSoloMethod(method)&&!(opts&&opts.noTip)?`${kNote(`Tip: only ${m.label} exchangers are pinged. Add more methods and any of them can claim your ticket.`)}\n\n`:""}${minLine()}`)
     .setFooter(kFoot("Step 2 of 3"));
 }
 
@@ -5260,12 +5294,19 @@ This is active immediately and persists until revoked or the bot restarts.
     if(interaction.isStringSelectMenu()){
       if(interaction.customId==="select_method"){
         const _vals=interaction.values||[],_picked=pickedMethods(_vals),method=(_vals.length===1&&_vals[0]==="crypto")?"crypto":_picked[0];
-        if(!method)return interaction.update({embeds:[step1Embed([])],components:pickerRows([])});
+        if(!method)return interaction.update({embeds:[step1Embed()],components:methodPickRows()});
         if(method==="crypto"){const c2cCoins=["BTC","ETH","SOL","LTC","USDT","USDC","XRP","BNB","ADA","DOGE","MATIC","AVAX","DOT","LINK","TRX","SHIB","UNI","ATOM","NEAR","ARB","OP","CAKE","INJ","RUNE","KAVA"];const coinOpts=c2cCoins.map(c=>new StringSelectMenuOptionBuilder().setLabel(c).setValue(c).setDescription(`Exchange ${c}`));return interaction.update({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor(kAuthor()).setTitle(`Step 2 · Crypto to Crypto`).setDescription(`Select the coin you are **sending** and the coin you want to **receive** below.\n\n${minLine()}`).setFooter(kFoot("Step 2 of 3"))],components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("c2c_send").setPlaceholder("Select coin you are SENDING...").addOptions(coinOpts)),new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("c2c_recv").setPlaceholder("Select coin you want to RECEIVE...").addOptions(coinOpts))]});}
         return interaction.update({embeds:[step2Embed(_picked)],components:step2Rows(_picked)});
       }
       if(interaction.customId==="sel_claimmethod"){await claimTicket(interaction,{method:interaction.values[0],fromPicker:true});return;}
       if(interaction.customId==="sel_addmethod"){await addMethods(interaction);return;}
+      if(interaction.customId.startsWith("sel_more__")){          // more methods added on the first step: they join the one already picked
+        const cur=pickedMethods(parseMethodTag(interaction.customId.slice("sel_more__".length)));
+        if(!cur.length||cur.some(isSoloMethod))return interaction.update({embeds:[step1Embed()],components:methodPickRows()});
+        const add=pickedMethods((interaction.values||[]).filter(v=>!cur.includes(v))).slice(0,Math.max(MAX_TICKET_METHODS-cur.length,0));
+        const merged=pickedMethods([...cur,...add]);          // what was already picked stays; the new ones fill the room that is left (menu order, ordinary methods only, no repeats)
+        return interaction.update({embeds:[step2Embed(merged)],components:step2Rows(merged)});
+      }
       if(interaction.customId==="c2c_send"||interaction.customId==="c2c_recv"){
         const userId=interaction.user.id;
         if(!state.c2cSelections[userId])state.c2cSelections[userId]={};
@@ -5280,25 +5321,17 @@ This is active immediately and persists until revoked or the bot restarts.
     }
 
     if(interaction.isButton()){
-      if(interaction.customId==="btn_exchange_now"){await interaction.deferReply({flags:64}).catch(()=>{});const bl=load("blacklist");if(bl[interaction.user.id]&&!isOwner(interaction.user.id,interaction.member))return interaction.editReply({content:"You are blacklisted from Konvert."});return interaction.editReply({embeds:[step1Embed([])],components:pickerRows([]),flags:64});}
-      if(interaction.customId.startsWith("pk_")){      // Step 1: tap a method to pick it or remove it, then Continue
-        const _pk=/^pk_(t|go)_([0-9a-z]{0,3})(?:_([0-9a-z]))?$/.exec(interaction.customId);
-        const _again=sel=>interaction.update({embeds:[step1Embed(sel)],components:pickerRows(sel)});
-        if(!_pk)return _again([]);                                                    // "Clear", or an id that is not one of ours
-        const cur=pickedMethods(parseMethodTag("m:"+_pk[2]));
-        if(_pk[1]==="go")return cur.length?interaction.update({embeds:[step2Embed(cur)],components:step2Rows(cur)}):_again([]);
-        const m=METHODS[parseInt(_pk[3]||"",36)];
-        if(!m||isSoloMethod(m.value))return _again(cur);
-        return _again(cur.includes(m.value)?cur.filter(v=>v!==m.value):cur.length<MAX_TICKET_METHODS?[...cur,m.value]:cur);
-      }
-      if(interaction.customId.startsWith("btn_more__")){      // one method picked: back to the buttons to add more (what is picked stays green)
-        const cur=pickedMethods(parseMethodTag(interaction.customId.slice("btn_more__".length)));
-        if(!cur.length||cur.some(isSoloMethod))return interaction.update({embeds:[step1Embed([])],components:pickerRows([])});
-        return interaction.update({embeds:[step1Embed(cur)],components:pickerRows(cur)});
+      if(interaction.customId==="btn_exchange_now"){await interaction.deferReply({flags:64}).catch(()=>{});const bl=load("blacklist");if(bl[interaction.user.id]&&!isOwner(interaction.user.id,interaction.member))return interaction.editReply({content:"You are blacklisted from Konvert."});return interaction.editReply({embeds:[step1Embed()],components:methodPickRows(),flags:64});}
+      if(interaction.customId.startsWith("btn_more__")||interaction.customId.startsWith("btn_nomore__")){      // one method picked: add more, or carry on with it
+        const keep=interaction.customId.startsWith("btn_nomore__"),cur=pickedMethods(parseMethodTag(interaction.customId.slice((keep?"btn_nomore__":"btn_more__").length)));
+        if(!cur.length||cur.some(isSoloMethod))return interaction.update({embeds:[step1Embed()],components:methodPickRows()});
+        if(keep)return interaction.update({embeds:[step2Embed(cur,{noTip:true})],components:step2Rows(cur,{noMore:true})});
+        if(cur.length>=MAX_TICKET_METHODS)return interaction.update({embeds:[step2Embed(cur)],components:step2Rows(cur,{noMore:true})});
+        return interaction.update({embeds:[moreEmbed(cur)],components:moreRows(cur)});
       }
       if(interaction.customId.startsWith("btn_pick__")){      // Gift Card / Buy For You / Custom Exchange: chosen on their own
         const _solo=pickedMethods([interaction.customId.slice("btn_pick__".length)]);
-        if(!_solo.length)return interaction.update({embeds:[step1Embed([])],components:pickerRows([])});
+        if(!_solo.length)return interaction.update({embeds:[step1Embed()],components:methodPickRows()});
         return interaction.update({embeds:[step2Embed(_solo)],components:step2Rows(_solo)});
       }
       if(interaction.customId==="btn_fee_calc"){const modal=new ModalBuilder().setCustomId("modal_fee").setTitle("Fee Calculator");modal.addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId("fee_amt").setLabel("Amount in USD").setStyle(TextInputStyle.Short).setPlaceholder("e.g. 250").setRequired(true)));return interaction.showModal(modal);}
