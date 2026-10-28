@@ -22,7 +22,7 @@ const { Pool } = require("pg");
 
 // Which build is running. Shown at the bottom of /ping and printed in the logs, so a deploy that did not go through is easy to spot.
 // BOT_BUILD is the first 7 characters of the commit Railway built (it matches the commit on GitHub); it is blank when run anywhere else.
-const BOT_VERSION="v13";
+const BOT_VERSION="v14";
 const BOT_BUILD=String(process.env.RAILWAY_GIT_COMMIT_SHA||"").slice(0,7);
 const BUILD_TEXT=BOT_BUILD?`${BOT_VERSION}  ·  ${BOT_BUILD}`:BOT_VERSION;
 
@@ -1472,7 +1472,7 @@ function buildTicketCard(t,opts){
       ?`${CONFIG.HELPER_ROLE?`<@&${CONFIG.HELPER_ROLE}>`:"@Helper"} — New **${d.label}** ticket opened.`
       :`Welcome, <@${t.userId}>. Your ticket is open and an exchanger will claim it shortly.`;
   // How to reach more exchangers: right after opening, a one-method ticket is told it can add more (the ten-minute prompt is a message of its own)
-  const tip=waiting&&canAddMethod(t)&&opts&&opts.hint&&!isMultiMethod(t)?"\n*Tip: press Add Method so exchangers for another method can claim this too.*":"";
+  const tip=waiting&&canAddMethod(t)&&opts&&opts.hint&&!isMultiMethod(t)?"\n*Tip: press Add Method to speed this up. Exchangers for another method can claim it too.*":"";
   const next=ticketNextSteps(t);
   return kEmbed("Ticket").setTitle(t.method==="crypto"?"Crypto to Crypto Exchange":(t.method==="buyforyou"||t.method==="custom")?d.label:`${d.label} Exchange`)
     .setDescription(`${dealHead(d,c.notes||[])}\n${kLedger(dealRows(d,{rate:c.rate!=null?c.rate:null,coinAmt:c.coinAmt||null}))}${intro}${tip}`)
@@ -2765,7 +2765,7 @@ function _gExchanging(c){
     "",
     "## How an exchange works",
     `**1.**  Get a quote with ${_gcmd("estimate")} or ${_gcmd("fee")}. The minimum amount is $${CONFIG.MIN_AMOUNT}, with a $${CONFIG.MIN_FEE} minimum fee per exchange`,
-    `**2.**  Open a ticket in ${ex}. Pick 2 or ${MAX_TICKET_METHODS} payment methods (recommended): the first exchanger online for any can take it`,
+    `**2.**  Open a ticket in ${ex} and choose your payment method. Select more than one to speed it up: the first exchanger online for any can take it`,
     "**3.**  An exchanger claims it. Their go-first limit is in their name (like **Up To $50**). Above it, use a middleman",
     "**4.**  Send only what your ticket tells you to, then confirm once your exchanger marks the deal complete",
     "",
@@ -3034,7 +3034,7 @@ function guideOverview(c,who){
     kHero("How Konvert works"),
     kNote("Crypto to cash and back, in a private ticket with an exchanger."),
     "",
-    `**1.**  Open a ticket in ${ex} and pick 2 or ${MAX_TICKET_METHODS} payment methods (recommended)`,
+    `**1.**  Open a ticket in ${ex} and choose a payment method (select more than one to speed it up)`,
     "**2.**  An exchanger claims it and confirms the deal",
     "**3.**  Send only what your ticket says, then confirm",
     _gline("howto","a step-by-step walkthrough"),
@@ -3243,11 +3243,11 @@ async function registerCommands(){
 
 function mainEmbed(){
   return kEmbed().setTitle("Exchange with Konvert")
-    .setDescription(`${kHero("Simple · Smooth · Seamless")}\nPress **Exchange Now** to open a private ticket. **Pick 2 or 3 payment methods** and the exchangers for each are pinged at once, so you are claimed faster.\n​`)
+    .setDescription(`${kHero("Simple · Smooth · Seamless")}\nPress **Exchange Now** to open a private ticket. Choose your payment method. **You can select more than one**, and the exchangers for each are pinged at once, so your ticket is claimed faster.\n​`)
     .addFields(
       {name:"Fee",value:`5% – 10%, tiered\nMinimum fee ${fmtUSD(CONFIG.MIN_FEE)} per exchange`,inline:true},
       {name:"Minimum Amount",value:`${fmtUSD(CONFIG.MIN_AMOUNT)} per exchange`,inline:true},
-      {name:`Payment Methods  ·  pick 2 or ${MAX_TICKET_METHODS}`,value:"PayPal · Cash App · Zelle · Interac · Venmo · Apple Pay · Google Pay · Skrill · Revolut · Bank · Wire · IBAN · UPI · Gift Card",inline:false},
+      {name:`Payment Methods  ·  choose up to ${MAX_TICKET_METHODS}`,value:"PayPal · Cash App · Zelle · Interac · Venmo · Apple Pay · Google Pay · Skrill · Revolut · Bank · Wire · IBAN · UPI · Gift Card",inline:false},
       {name:"Crypto",value:"BTC · ETH · SOL · LTC · USDT · USDC · XRP · BNB · ADA · DOGE · and more",inline:false},
     ).setThumbnail(IMG.LOGO).setImage(IMG.BANNER).setFooter(kFoot("Fast · Safe · Simple"));
 }
@@ -3278,14 +3278,14 @@ function mainButtons(){
   )];
 }
 function step1Embed(){
-  return kEmbed().setTitle("Step 1 · Choose Payment Methods").setThumbnail(IMG.LOGO)
-    .setDescription(`${kHero("Pick 2 or 3 methods")}\n**Recommended.** Exchangers for every method you pick are pinged at once, so the first one available can take your ticket.\n\nTick each method that works for you, then tap outside the menu to continue.\n${kNote("Gift Card, Buy For You and Custom Exchange are chosen on their own.")}\n​`)
+  return kEmbed().setTitle("Step 1 · Choose Your Payment Method").setThumbnail(IMG.LOGO)
+    .setDescription(`${kHero("One is fine. More is faster.")}\nChoose the payment method you use. **You can select more than one** (up to ${MAX_TICKET_METHODS}): exchangers for every method you pick are pinged at once, so the first one available can take your ticket.\n\nTick what works for you, then press **Select** (on desktop, click outside the menu).\n${kNote("Gift Card, Buy For You and Custom Exchange are chosen on their own.")}\n​`)
     .setFooter(kFoot("Step 1 of 3"));
 }
 // Step 1's controls: a menu of payment methods (pick up to MAX_TICKET_METHODS) and, under it, the flows that are chosen on their own
 function methodPickRows(){
   const std=METHODS.filter(m=>!isSoloMethod(m.value));
-  const menu=new StringSelectMenuBuilder().setCustomId("select_method").setPlaceholder("Pick 2-3 payment methods (recommended)...")
+  const menu=new StringSelectMenuBuilder().setCustomId("select_method").setPlaceholder("Choose a method (select more to speed it up)...")
     .setMinValues(1).setMaxValues(Math.min(MAX_TICKET_METHODS,std.length))
     .addOptions(std.map(m=>new StringSelectMenuOptionBuilder().setLabel(m.label).setValue(m.value).setDescription(`Exchange crypto with ${m.label}`)));
   const solo=SOLO_METHODS.map(getMethod).filter(Boolean).map(m=>kBtn(`btn_pick__${m.value}`,m.label,ButtonStyle.Secondary));
@@ -3316,7 +3316,7 @@ function moreRows(cur){
 function moreEmbed(cur){
   const room=MAX_TICKET_METHODS-cur.length;
   return kEmbed().setTitle("Add More Methods").setThumbnail(IMG.LOGO)
-    .setDescription(`${kHero(methodsLabel(cur))}\n**Recommended.** Add ${room===1?"one more method":`up to ${room} more`} and exchangers for each are pinged at once, so your ticket is claimed faster.\n\nTick the ones that work for you, then tap outside the menu to continue.`)
+    .setDescription(`${kHero(methodsLabel(cur))}\nAdd ${room===1?"one more method":`up to ${room} more`}. Exchangers for every method are pinged at once, so your ticket is claimed faster.\n\nTick the ones that work for you, then press **Select** (on desktop, click outside the menu).`)
     .setFooter(kFoot("Step 1 of 3"));
 }
 // A modal title is 45 characters at most
@@ -3338,7 +3338,7 @@ function step2Embed(method,opts){
   if(method==="buyforyou")return kEmbed().setTitle("Buy For You").setDescription(`Tell us what you want us to purchase and we will handle it.\n\nDescribe the item, link, and amount in your ticket — a helper will reach out.\n\n${minLine()}`).setFooter(kFoot("Step 2 of 3"));
   if(method==="custom")return kEmbed().setTitle("Custom Exchange").setDescription(`Something unique? No problem.\n\nExplain what you need in your ticket and a helper will assist you.\n\n${minLine()}`).setFooter(kFoot("Step 2 of 3"));
   return kEmbed().setTitle(`Step 2 · ${m.label}`)
-    .setDescription(`${kHero("Choose your direction")}\n**Send Crypto → Get ${m.label}**\nYou send crypto and we pay you through ${m.label}.\n\n**Send ${m.label} → Get Crypto**\nYou pay through ${m.label} and we send crypto to your wallet.\n\n${!isSoloMethod(method)&&!(opts&&opts.noTip)?`${kNote(`Tip: only ${m.label} exchangers are pinged. Add more methods and any of them can claim your ticket.`)}\n\n`:""}${minLine()}`)
+    .setDescription(`${kHero("Choose your direction")}\n**Send Crypto → Get ${m.label}**\nYou send crypto and we pay you through ${m.label}.\n\n**Send ${m.label} → Get Crypto**\nYou pay through ${m.label} and we send crypto to your wallet.\n\n${!isSoloMethod(method)&&!(opts&&opts.noTip)?`${kNote(`Tip: only ${m.label} exchangers are pinged. Add more methods to speed it up, and any of them can claim your ticket.`)}\n\n`:""}${minLine()}`)
     .setFooter(kFoot("Step 2 of 3"));
 }
 
@@ -4352,7 +4352,7 @@ client.on(Events.InteractionCreate,async interaction=>{
       }
 
       if(cmd==="ticket"){const tickets=load("tickets"),found=Object.entries(tickets).find(([,t])=>t.userId===interaction.user.id&&t.status==="open");if(!found)return interaction.reply({content:"You don't have an open ticket. Use **Exchange Now** to start one.",flags:64});const [channelId,t]=found,d=dealOf(t),status=t.reported?"Under owner review":t.mmPending?"Waiting for you to confirm the middleman":t.completionPending?"Waiting for you to confirm completion":t.claimedBy?`Claimed by <@${t.claimedBy}>`:"Waiting for an exchanger";return interaction.reply({embeds:[base("Your Open Ticket").setDescription(`${dealHead(d)}\n\u200b`).addFields({name:"Channel",value:`<#${channelId}>`,inline:true},{name:"Status",value:status,inline:true},{name:"Opened",value:t.createdAt?`<t:${Math.floor(t.createdAt/1000)}:R>`:"Earlier",inline:true}).setFooter({text:"Konvert Exchange  ·  All communication stays in your ticket"})],flags:64});}
-      if(cmd==="howto"){return interaction.reply({embeds:[base("How to Use Konvert").setThumbnail(IMG.LOGO).setDescription("New to Konvert? Here's how an exchange works step by step.\n\u200b").addFields({name:"1.  Check Rates",value:"Use **Live Rates** or type `$BTC` / `$ETH` etc. in any channel to see the current price.",inline:false},{name:"2.  Calculate Fee",value:"Use **Calculate Fee** to estimate your cost. Fees range from **5% - 10%** depending on amount.",inline:false},{name:"3.  Open a Ticket",value:"Click **Exchange Now** and pick **2 or 3 payment methods** (recommended). Exchangers for each are pinged at once, so whoever is online first can take your ticket. Fill in the details and confirm. A private ticket opens instantly.",inline:false},{name:"4.  Middleman When Needed",value:"Your exchanger's go-first limit is in their name (like **Up To $50**). Above it, agree on a **middleman** with them inside your ticket.",inline:false},{name:"5.  Send & Confirm",value:"Staff confirms the deal. You send funds and share proof. Once confirmed, you receive your crypto or payment.",inline:false},{name:"Stay Safe",value:"Staff never DM you first. Anyone doing so is an impersonator. All communication stays in your ticket.",inline:false}).setFooter({text:"Konvert Exchange  ·  Questions? Ask in your ticket"})],flags:64});}
+      if(cmd==="howto"){return interaction.reply({embeds:[base("How to Use Konvert").setThumbnail(IMG.LOGO).setDescription("New to Konvert? Here's how an exchange works step by step.\n\u200b").addFields({name:"1.  Check Rates",value:"Use **Live Rates** or type `$BTC` / `$ETH` etc. in any channel to see the current price.",inline:false},{name:"2.  Calculate Fee",value:"Use **Calculate Fee** to estimate your cost. Fees range from **5% - 10%** depending on amount.",inline:false},{name:"3.  Open a Ticket",value:"Click **Exchange Now** and choose your payment method. You can select more than one to speed it up: exchangers for each are pinged at once, so whoever is online first can take your ticket. Fill in the details and confirm. A private ticket opens instantly.",inline:false},{name:"4.  Middleman When Needed",value:"Your exchanger's go-first limit is in their name (like **Up To $50**). Above it, agree on a **middleman** with them inside your ticket.",inline:false},{name:"5.  Send & Confirm",value:"Staff confirms the deal. You send funds and share proof. Once confirmed, you receive your crypto or payment.",inline:false},{name:"Stay Safe",value:"Staff never DM you first. Anyone doing so is an impersonator. All communication stays in your ticket.",inline:false}).setFooter({text:"Konvert Exchange  ·  Questions? Ask in your ticket"})],flags:64});}
       if(cmd==="ping"){const sent=Date.now();await interaction.deferReply({flags:64});return interaction.editReply({embeds:[base("Bot Status").setThumbnail(IMG.LOGO).setDescription("**All systems operational.** Konvert is online and ready.\n\u200b").addFields({name:"Status",value:"**Online**",inline:true},{name:"Latency",value:`**${Date.now()-sent}ms**`,inline:true},{name:"API Latency",value:client.ws.ping>=0?`**${client.ws.ping}ms**`:"**—**",inline:true}).setFooter({text:`Konvert Exchange  ·  Bot Status  ·  ${BUILD_TEXT}`})]});}
 
       if(cmd==="calc"){await interaction.deferReply({flags:64});if(!CONFIG.RATES_CHANNEL)return interaction.editReply("RATES_CHANNEL_ID not configured.");const ch=interaction.guild.channels.cache.get(CONFIG.RATES_CHANNEL);if(!ch)return interaction.editReply("Rates channel not found.");const embed=await buildRatesEmbed();if(ratesMsgId){const msg=await ch.messages.fetch(ratesMsgId).catch(()=>null);if(msg){await msg.edit({embeds:[embed]});}else{const s=await ch.send({embeds:[embed]});ratesMsgId=s.id;}}else{const s=await ch.send({embeds:[embed]});ratesMsgId=s.id;}return interaction.editReply("Rates posted.");}
