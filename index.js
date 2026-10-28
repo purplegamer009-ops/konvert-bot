@@ -22,7 +22,7 @@ const { Pool } = require("pg");
 
 // Which build is running. Shown at the bottom of /ping and printed in the logs, so a deploy that did not go through is easy to spot.
 // BOT_BUILD is the first 7 characters of the commit Railway built (it matches the commit on GitHub); it is blank when run anywhere else.
-const BOT_VERSION="v14";
+const BOT_VERSION="v15";
 const BOT_BUILD=String(process.env.RAILWAY_GIT_COMMIT_SHA||"").slice(0,7);
 const BUILD_TEXT=BOT_BUILD?`${BOT_VERSION}  ·  ${BOT_BUILD}`:BOT_VERSION;
 
@@ -2641,36 +2641,272 @@ function feeEmbed(amt,{vip=false,prices={}}={}){
 // == end Compact embeds ==========================================
 function log(guild,msg){if(!CONFIG.LOG_CHANNEL||!guild)return;const ch=guild.channels.cache.get(CONFIG.LOG_CHANNEL);if(ch)ch.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setDescription("```"+msg+"```").setTimestamp()]}).catch(()=>{});}
 
-const BINANCE={BTC:"BTCUSDT",ETH:"ETHUSDT",SOL:"SOLUSDT",LTC:"LTCUSDT",XRP:"XRPUSDT",BNB:"BNBUSDT",ADA:"ADAUSDT",DOGE:"DOGEUSDT",MATIC:"MATICUSDT",AVAX:"AVAXUSDT",DOT:"DOTUSDT",LINK:"LINKUSDT",TRX:"TRXUSDT",UNI:"UNIUSDT",ATOM:"ATOMUSDT",NEAR:"NEARUSDT",SHIB:"SHIBUSDT",ARB:"ARBUSDT",OP:"OPUSDT",MANA:"MANAUSDT",SAND:"SANDUSDT",APE:"APEUSDT",IMX:"IMXUSDT",GALA:"GALAUSDT",AXS:"AXSUSDT",ENJ:"ENJUSDT",CHZ:"CHZUSDT",FLOW:"FLOWUSDT",ICP:"ICPUSDT",HBAR:"HBARUSDT",VET:"VETUSDT",EOS:"EOSUSDT",ZEC:"ZECUSDT",DASH:"DASHUSDT",XMR:"XMRUSDT",XLM:"XLMUSDT",ALGO:"ALGOUSDT",EGLD:"EGLDUSDT",THETA:"THETAUSDT",KLAY:"KLAYUSDT",ROSE:"ROSEUSDT",ONE:"ONEUSDT",CELO:"CELOUSDT",QTUM:"QTUMUSDT",ZIL:"ZILUSDT",ICX:"ICXUSDT",ONT:"ONTUSDT",WAVES:"WAVESUSDT",BAT:"BATUSDT",GRT:"GRTUSDT",MKR:"MKRUSDT",AAVE:"AAVEUSDT",COMP:"COMPUSDT",SNX:"SNXUSDT",YFI:"YFIUSDT",SUSHI:"SUSHIUSDT",CRV:"CRVUSDT","1INCH":"1INCHUSDT",BAL:"BALUSDT",BAND:"BANDUSDT",KNC:"KNCUSDT",ZRX:"ZRXUSDT",REN:"RENUSDT",NMR:"NMRUSDT",ANKR:"ANKRUSDT",CELR:"CELRUSDT",SKL:"SKLUSDT",STORJ:"STORJUSDT",LRC:"LRCUSDT",PERP:"PERPUSDT",DYDX:"DYDXUSDT",CAKE:"CAKEUSDT",INJ:"INJUSDT",KAVA:"KAVAUSDT",STX:"STXUSDT",RUNE:"RUNEUSDT",RAY:"RAYUSDT",RSR:"RSRUSDT",SRM:"SRMUSDT",XTZ:"XTZUSDT",QNT:"QNTUSDT",PAXG:"PAXGUSDT",ZEN:"ZENUSDT",TFUEL:"TFUELUSDT",WRX:"WRXUSDT",WAXP:"WAXPUSDT",VGX:"VGXUSDT"};
+// ══ PRICES ══════════════════════════════════════════════════════════════════════════════════════════════════
+// A coin's price never comes from one place. Any one service can be down, rate-limited or refuse the host (Binance answers US servers with HTTP 451,
+// and Railway can look like one), so a lookup asks about a dozen at once, keeps whatever answers in the first moments, takes the middle price and
+// remembers it for 90 seconds. If nothing answers it serves the last price it had (up to 6 hours old) instead of an error.
 const STABLE=new Set(["USDT","USDC"]);
-const _priceCache={},_inFlight={};
-
+const CANON={MATIC:"POL",FTM:"S",KLAY:"KAIA"};          // renamed 1:1: exchanges list only the new ticker now, so that is the one asked about
+// Besides COINS, these answer to $TICKER. Nothing else does, so a Cash App $cashtag typed in chat is left alone.
+const EXTRA_COINS=["BCH","ETC","NEO","IOTA","FIL","TON","SUI","APT","SEI","TIA","WLD","JUP","PYTH","BONK","WIF","PEPE","FLOKI","FET","RENDER","RNDR","ONDO","ENA","STRK","TAO","HYPE","KAS","POL","LDO","PENDLE","JASMY","CRO","OKB","MNT","DAI","TUSD","FDUSD","PYUSD","USDE","WBTC","WETH","STETH","BGB","XDC","XCN","ZRO","ETHFI","JTO","BLUR","TURBO","POPCAT","BRETT","MEW","NEIRO","PNUT","FARTCOIN","VIRTUAL","GRASS","MOODENG","PENGU","USUAL","MORPHO","EIGEN","ORDI","AXL","ARKM","CFX","GMX","LUNC","LUNA","USTC","BTT","DGB","RVN","XNO","XVG","KDA","BSV","BTG","XEM","IOST","LSK","SYS","MINA","CKB","AUDIO","GLM","API3","OCEAN","ASI","KAIA","TRUMP"];
+const KNOWN_COINS=new Set([...COINS,...EXTRA_COINS]);
+const isKnownCoin=s=>KNOWN_COINS.has(String(s||"").trim().toUpperCase());
+Object.assign(COIN_NAMES,{toncoin:"TON",ton:"TON",sui:"SUI",aptos:"APT",pepe:"PEPE",bonk:"BONK",dogwifhat:"WIF","bitcoin cash":"BCH","ethereum classic":"ETC",filecoin:"FIL",neo:"NEO",iota:"IOTA",render:"RENDER","fetch.ai":"FET",hyperliquid:"HYPE",bittensor:"TAO",kaspa:"KAS",lido:"LDO",pendle:"PENDLE",cronos:"CRO",dai:"DAI",pol:"POL",trump:"TRUMP",ethena:"ENA",celestia:"TIA",worldcoin:"WLD",jupiter:"JUP",starknet:"STRK",floki:"FLOKI",mantle:"MNT"});
+const RATE_COINS=Object.keys(GECKO);                      // the coins on the live rates panel and in /market
+let PRICE_FRESH_MS=90*1000,PRICE_STALE_MS=6*60*60*1000,PRICE_USABLE_MS=30*60*1000,PRICE_SOURCE_MS=6000,PRICE_GRACE_MS=700,PRICE_MISS_MS=30*1000,PRICE_UNKNOWN_PER_MIN=20,LOGO_CHECK_MS=3500;
+const PRICE_UA="Mozilla/5.0 (compatible; KonvertBot/1.0)";
+const _num=v=>{const n=typeof v==="number"?v:parseFloat(v);return Number.isFinite(n)?n:null;};
+const _pos=v=>{const n=_num(v);return n!==null&&n>0?n:null;};
+const _pct=(last,open)=>(_pos(last)&&_pos(open))?(last-open)/open*100:null;
+// An answer that is not going to be read is closed, so it does not hold a connection open (node-fetch bodies are streams, the built-in fetch's are web streams)
+const _drop=r=>{try{const b=r&&r.body;if(b){if(typeof b.destroy==="function")b.destroy();else if(typeof b.cancel==="function")b.cancel().catch(()=>{});}}catch{}};
+async function _getJSON(url,headers){
+  const r=await fetch(url,{headers:{accept:"application/json","user-agent":PRICE_UA,...(headers||{})},signal:AbortSignal.timeout(PRICE_SOURCE_MS)});
+  if(!r.ok){_drop(r);throw new Error("HTTP "+r.status);}
+  return r.json();
+}
+// A picture address is used only when it is a real web address: a service with no picture for a coin sometimes sends a bare file name, which an embed refuses
+const _okUrl=u=>typeof u==="string"&&u.length<1000&&/^https?:\/\/[^\s<>"'`]+$/i.test(u);
+const _mkq=(o,f)=>{if(!o)return o;const q=Object.assign({usd:null,change:null,high:null,low:null,vol:null,mcap:null,name:null,logo:null},f(o));if(!_okUrl(q.logo))q.logo=null;return q;};
+const _cgRow=r=>_mkq(r,x=>({usd:_pos(x.current_price),change:_num(x.price_change_percentage_24h),high:_pos(x.high_24h),low:_pos(x.low_24h),vol:_pos(x.total_volume),mcap:_pos(x.market_cap),name:x.name||null,logo:x.image||null}));
+const _ccRow=r=>_mkq(r,x=>({usd:_pos(x.PRICE),change:_num(x.CHANGEPCT24HOUR),high:_pos(x.HIGH24HOUR),low:_pos(x.LOW24HOUR),vol:_pos(x.VOLUME24HOURTO),mcap:_pos(x.MKTCAP),logo:x.IMAGEURL?`https://www.cryptocompare.com${x.IMAGEURL}`:null}));
+const _cgHeaders=()=>process.env.COINGECKO_API_KEY?{"x-cg-demo-api-key":process.env.COINGECKO_API_KEY}:null;
+const _cgUrl=syms=>`https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&symbols=${syms.map(s=>s.toLowerCase()).join(",")}&order=market_cap_desc&per_page=250&page=1&sparkline=false`;
+const _ccUrl=syms=>`https://min-api.cryptocompare.com/data/pricemultifull?fsyms=${syms.join(",")}&tsyms=USD`;
+// Exchanges that answer like Binance (24-hour ticker by pair)
+async function _binanceLike(host,pair){
+  const j=await _getJSON(`${host}/api/v3/ticker/24hr?symbol=${pair}`),last=_pos(j&&j.lastPrice);
+  if(!last)throw new Error("not listed");
+  return _mkq(j,x=>({usd:last,change:_num(x.priceChangePercent),high:_pos(x.highPrice),low:_pos(x.lowPrice),vol:_pos(x.quoteVolume)}));
+}
+// Every source takes a ticker ("XMR") and gives back {usd, change (24h %), high, low, vol (USD), mcap, name, logo}, or throws. A lower tier is trusted first.
+const PRICE_SOURCES=[
+  {id:"coingecko",tier:1,run:async s=>{
+    const j=await _getJSON(_cgUrl([s]),_cgHeaders()),r=(Array.isArray(j)?j:[]).find(x=>x&&String(x.symbol).toUpperCase()===s&&_pos(x.current_price));
+    if(!r)throw new Error("not listed");
+    return _cgRow(r);
+  }},
+  {id:"cryptocompare",tier:1,run:async s=>{
+    const j=await _getJSON(_ccUrl([s])),r=j&&j.RAW&&j.RAW[s]&&j.RAW[s].USD;
+    if(!r||!_pos(r.PRICE))throw new Error("not listed");
+    return _ccRow(r);
+  }},
+  {id:"coinpaprika",tier:1,run:async s=>{
+    const f=await _getJSON(`https://api.coinpaprika.com/v1/search?q=${s}&c=currencies&limit=10`);
+    const c=((f&&f.currencies)||[]).filter(x=>x&&String(x.symbol).toUpperCase()===s&&x.is_active!==false).sort((a,b)=>(a.rank||1e9)-(b.rank||1e9))[0];
+    if(!c)throw new Error("not listed");
+    const t=await _getJSON(`https://api.coinpaprika.com/v1/tickers/${encodeURIComponent(c.id)}?quotes=USD`),q=t&&t.quotes&&t.quotes.USD;
+    if(!q||!_pos(q.price))throw new Error("no price");
+    return {..._mkq(q,x=>({usd:_pos(x.price),change:_num(x.percent_change_24h),vol:_pos(x.volume_24h),mcap:_pos(x.market_cap),name:t.name||c.name||null,logo:`https://static.coinpaprika.com/coin/${c.id}/logo.png`})),logoGuess:true};
+  }},
+  {id:"kraken",tier:1,run:async s=>{
+    const j=await _getJSON(`https://api.kraken.com/0/public/Ticker?pair=${({BTC:"XBT",DOGE:"XDG"})[s]||s}USD`);
+    if(j&&j.error&&j.error.length)throw new Error(String(j.error[0]).slice(0,60));
+    const t=Object.values((j&&j.result)||{})[0],last=_pos(t&&t.c&&t.c[0]);
+    if(!last)throw new Error("not listed");
+    const v=_pos(t.v&&t.v[1]);
+    return {..._mkq(t,x=>({usd:last,change:_pct(last,x.o),high:_pos(x.h&&x.h[1]),low:_pos(x.l&&x.l[1]),vol:v?v*last:null})),dayChange:true};   // Kraken's "open" is today's (UTC), not 24 hours ago
+  }},
+  {id:"coinbase",tier:1,run:async s=>{
+    const j=await _getJSON(`https://api.exchange.coinbase.com/products/${s}-USD/stats`),last=_pos(j&&j.last);
+    if(!last)throw new Error("not listed");
+    const v=_pos(j.volume);
+    return _mkq(j,x=>({usd:last,change:_pct(last,x.open),high:_pos(x.high),low:_pos(x.low),vol:v?v*last:null}));
+  }},
+  {id:"binance",tier:2,run:s=>_binanceLike("https://api.binance.com",`${s}USDT`)},
+  {id:"binanceus",tier:2,run:s=>_binanceLike("https://api.binance.us",`${s}USDT`)},
+  {id:"okx",tier:2,run:async s=>{
+    const j=await _getJSON(`https://www.okx.com/api/v5/market/ticker?instId=${s}-USDT`),t=j&&String(j.code)==="0"&&j.data&&j.data[0],last=_pos(t&&t.last);
+    if(!last)throw new Error("not listed");
+    return _mkq(t,x=>({usd:last,change:_pct(last,x.open24h),high:_pos(x.high24h),low:_pos(x.low24h),vol:_pos(x.volCcy24h)}));
+  }},
+  {id:"kucoin",tier:2,run:async s=>{
+    const j=await _getJSON(`https://api.kucoin.com/api/v1/market/stats?symbol=${s}-USDT`),t=j&&j.data,last=_pos(t&&t.last);
+    if(!last)throw new Error("not listed");
+    return _mkq(t,x=>({usd:last,change:_num(x.changeRate)===null?null:_num(x.changeRate)*100,high:_pos(x.high),low:_pos(x.low),vol:_pos(x.volValue)}));
+  }},
+  {id:"gate",tier:2,run:async s=>{
+    const j=await _getJSON(`https://api.gateio.ws/api/v4/spot/tickers?currency_pair=${s}_USDT`),t=Array.isArray(j)?j[0]:null,last=_pos(t&&t.last);
+    if(!last)throw new Error("not listed");
+    return _mkq(t,x=>({usd:last,change:_num(x.change_percentage),high:_pos(x.high_24h),low:_pos(x.low_24h),vol:_pos(x.quote_volume)}));
+  }},
+  {id:"mexc",tier:2,run:async s=>{
+    const j=await _getJSON(`https://api.mexc.com/api/v3/ticker/24hr?symbol=${s}USDT`),last=_pos(j&&j.lastPrice);
+    if(!last)throw new Error("not listed");
+    return _mkq(j,x=>({usd:last,change:_pct(last,x.openPrice),high:_pos(x.highPrice),low:_pos(x.lowPrice),vol:_pos(x.quoteVolume)}));
+  }},
+  {id:"bybit",tier:2,run:async s=>{
+    const j=await _getJSON(`https://api.bybit.com/v5/market/tickers?category=spot&symbol=${s}USDT`),t=j&&j.result&&j.result.list&&j.result.list[0],last=_pos(t&&t.lastPrice);
+    if(!last)throw new Error("not listed");
+    return _mkq(t,x=>({usd:last,change:_num(x.price24hPcnt)===null?null:_num(x.price24hPcnt)*100,high:_pos(x.highPrice24h),low:_pos(x.lowPrice24h),vol:_pos(x.turnover24h)}));
+  }},
+];
+async function _runSource(src,sym){
+  const t0=Date.now();
+  try{
+    const q=await src.run(sym);
+    if(!q||!_pos(q.usd))throw new Error("no price");
+    return {id:src.id,tier:src.tier,ok:true,q,ms:Date.now()-t0};
+  }catch(e){
+    return {id:src.id,tier:src.tier,ok:false,err:String(e&&e.message||e).slice(0,70),ms:Date.now()-t0};
+  }
+}
+// Runs every task at once. Gives back the answers that came in, a moment after the first good one (or once all have finished, or after the time limit).
+function _gather(tasks){
+  return new Promise(resolve=>{
+    const got=[];let left=tasks.length,done=false,grace=null,hard=null;
+    const finish=()=>{if(done)return;done=true;clearTimeout(hard);clearTimeout(grace);resolve(got.slice());};
+    hard=setTimeout(finish,PRICE_SOURCE_MS+500);
+    if(!left){finish();return;}
+    for(const go of tasks)go().then(r=>{if(r&&r.ok){got.push(r);if(!grace&&!done)grace=setTimeout(finish,PRICE_GRACE_MS);}}).catch(()=>{}).finally(()=>{if(--left===0)finish();});
+  });
+}
+async function _pool(items,limit,fn){
+  let i=0;
+  await Promise.all(Array.from({length:Math.min(limit,items.length)},async()=>{while(i<items.length){const x=items[i++];await fn(x);}}));
+}
+// Several answers become one: the middle price (a different token that shares the ticker is dropped as an outlier), and every other field from the best source that has it.
+function _blend(answers){
+  if(!answers||!answers.length)return null;
+  const byPrice=[...answers].sort((a,b)=>a.q.usd-b.q.usd);
+  let use=byPrice;
+  if(byPrice.length>=3){const mid=byPrice[Math.floor((byPrice.length-1)/2)].q.usd;use=byPrice.filter(a=>Math.abs(a.q.usd-mid)/mid<=0.25);}
+  else if(byPrice.length===2&&byPrice[1].q.usd/byPrice[0].q.usd>1.25)use=[[...byPrice].sort((a,b)=>a.tier-b.tier)[0]];
+  const base=use.length<=2?[...use].sort((a,b)=>a.tier-b.tier)[0]:use[Math.floor((use.length-1)/2)];
+  const ranked=[base,...use.filter(a=>a!==base).sort((a,b)=>a.tier-b.tier)];
+  const all=[...answers].sort((a,b)=>a.tier-b.tier);
+  const first=(list,f)=>{for(const a of list){const v=a.q[f];if(v!==null&&v!==undefined)return v;}return null;};
+  const usd=base.q.usd;
+  let high=first(ranked,"high"),low=first(ranked,"low");
+  if(high!==null&&high<usd)high=usd;
+  if(low!==null&&low>usd)low=usd;
+  const withChange=ranked.filter(a=>a.q.change!==null&&Math.abs(a.q.change)<=1000),ch=withChange.find(a=>!a.q.dayChange)||withChange[0]||null;
+  const logoA=all.find(a=>a.q.logo&&!a.q.logoGuess)||all.find(a=>a.q.logo)||null;
+  return {usd,change:ch?ch.q.change:null,high,low,vol:first(ranked,"vol"),mcap:first(all,"mcap"),name:first(all,"name"),logo:logoA?logoA.q.logo:null,logoGuess:!!(logoA&&logoA.q.logoGuess),n:use.length};
+}
+const _quotes={},_flight={},_miss={},_unknownAt=[];
+// The ticker behind whatever was typed ("xmr", "$XMR", "monero" -> "XMR"), or "" when it cannot be a ticker
+const _symOf=s=>{
+  const r=String(resolveCoin(String(s==null?"":s).trim().replace(/^\$/,""))||"").toUpperCase();
+  return /^[A-Z0-9]{2,12}$/.test(r)?r:"";
+};
+const _stale=sym=>{const h=_quotes[sym];return h&&Date.now()-h.ts<PRICE_STALE_MS?{...h.q,stale:true}:null;};
+// A ticker nobody has heard of may be looked up only so often, so typing nonsense cannot hammer the price services
+function _unknownBudgetOk(){
+  const now=Date.now();
+  while(_unknownAt.length&&now-_unknownAt[0]>60000)_unknownAt.shift();
+  if(_unknownAt.length>=PRICE_UNKNOWN_PER_MIN)return false;
+  _unknownAt.push(now);
+  return true;
+}
+async function _lookup(sym){
+  const ps=CANON[sym]||sym;
+  const answers=await _gather(PRICE_SOURCES.map(src=>()=>_runSource(src,ps)));
+  const q=_blend(answers);
+  if(q){q.ts=Date.now();_quotes[sym]={q,ts:q.ts};_rememberLogo(sym,q);delete _miss[sym];return q;}
+  if(Object.keys(_miss).length>500)for(const k of Object.keys(_miss))delete _miss[k];
+  _miss[sym]=Date.now();
+  const old=_stale(sym);
+  console.log(old?`[price] every source failed for ${sym}; serving the last price`:`[price] no source has ${sym}`);
+  return old;
+}
+// One quote for a coin: {usd, change, high, low, vol, mcap, name, logo, source, ts, stale?}, or null when nobody has it
+async function quoteCoin(input){
+  const sym=_symOf(input);
+  if(!sym)return null;
+  if(STABLE.has(sym))return {usd:1,change:0,high:1,low:1,vol:null,mcap:null,name:sym==="USDT"?"Tether":"USD Coin",logo:COIN_LOGO[sym]||null,n:1,ts:Date.now()};
+  const hit=_quotes[sym];
+  if(hit&&Date.now()-hit.ts<PRICE_FRESH_MS)return hit.q;
+  if(_miss[sym]&&Date.now()-_miss[sym]<PRICE_MISS_MS)return _stale(sym);
+  if(_flight[sym])return _flight[sym];
+  if(!KNOWN_COINS.has(sym)&&!_unknownBudgetOk())return _stale(sym);
+  _flight[sym]=_lookup(sym).finally(()=>{delete _flight[sym];});
+  return _flight[sym];
+}
+// Quotes for a list of coins: two requests (CoinGecko and CryptoCompare take a list) and the usual lookup only for what they did not cover.
+// With a time limit it gives back what it has by then; any coin it has an older price for is filled in from that.
+async function quoteMany(list,budgetMs){
+  const want=[...new Set((list||[]).map(_symOf).filter(Boolean))],out={};
+  const work=(async()=>{
+    const need=[];
+    for(const c of want){const h=_quotes[c];if(STABLE.has(c)||(h&&Date.now()-h.ts<PRICE_FRESH_MS))out[c]=await quoteCoin(c);else need.push(c);}
+    if(!need.length)return;
+    const ps=[...new Set(need.map(c=>CANON[c]||c))],bulk={cg:{},cc:{}};
+    await Promise.all([
+      _getJSON(_cgUrl(ps),_cgHeaders()).then(j=>{for(const r of Array.isArray(j)?j:[]){const S=String(r&&r.symbol).toUpperCase();if(!bulk.cg[S]&&_pos(r&&r.current_price))bulk.cg[S]=_cgRow(r);}}).catch(()=>{}),
+      _getJSON(_ccUrl(ps)).then(j=>{const raw=(j&&j.RAW)||{};for(const S of Object.keys(raw)){const r=raw[S]&&raw[S].USD;if(r&&_pos(r.PRICE))bulk.cc[S]=_ccRow(r);}}).catch(()=>{}),
+    ]);
+    for(const c of need){
+      const p=CANON[c]||c,answers=[];
+      if(bulk.cg[p])answers.push({id:"coingecko",tier:1,q:bulk.cg[p]});
+      if(bulk.cc[p])answers.push({id:"cryptocompare",tier:1,q:bulk.cc[p]});
+      const q=_blend(answers);
+      if(q){q.ts=Date.now();_quotes[c]={q,ts:q.ts};_rememberLogo(c,q);out[c]=q;}
+    }
+    await _pool(need.filter(c=>!out[c]),4,async c=>{const q=await quoteCoin(c).catch(()=>null);if(q)out[c]=q;});
+  })().catch(()=>{});
+  if(budgetMs){let t;await Promise.race([work,new Promise(r=>{t=setTimeout(r,budgetMs);})]);clearTimeout(t);}
+  else await work;
+  const res={...out};
+  for(const c of want)if(!res[c]){const s=_stale(c);if(s)res[c]=s;}
+  return res;
+}
+const fmtPrice=n=>n>=1?n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):n>=0.01?n.toFixed(4):n>=1e-8?n.toFixed(8):n.toExponential(2);
+// A price for the places that only need a number (tickets, alerts, conversions). Not used once it is more than 30 minutes old.
 async function getPrice(coin){
-  if(STABLE.has(coin))return 1;
-  const cacheKey=coin;
-  if(_priceCache[cacheKey]&&Date.now()-_priceCache[cacheKey].ts<300000)return _priceCache[cacheKey].v;
-  if(_inFlight[cacheKey])return _inFlight[cacheKey];
-  _inFlight[cacheKey]=_fetchPrice(coin).finally(()=>delete _inFlight[cacheKey]);
-  return _inFlight[cacheKey];
+  const q=await quoteCoin(coin);
+  if(!q||(q.stale&&Date.now()-q.ts>PRICE_USABLE_MS))return null;
+  return q.usd;
 }
-async function _fetchPrice(coin){
-  const geckoId=GECKO[coin];
-  if(BINANCE[coin]){try{const r=await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${BINANCE[coin]}`,{signal:AbortSignal.timeout(5000)});if(r.ok){const d=await r.json();const v=parseFloat(d.price||0);if(v>0){_priceCache[coin]={v,ts:Date.now()};return v;}}}catch{}}
-  if(geckoId){for(let i=0;i<2;i++){try{const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${geckoId}&vs_currencies=usd`,{signal:AbortSignal.timeout(8000)});if(r.status===429){await new Promise(res=>setTimeout(res,2000*(i+1)));continue;}if(!r.ok){await new Promise(res=>setTimeout(res,1000*(i+1)));continue;}const d=await r.json(),v=d[geckoId]?.usd||null;if(v){_priceCache[coin]={v,ts:Date.now()};return v;}}catch{await new Promise(res=>setTimeout(res,1000*(i+1)));}} }
-  if(_priceCache[coin])return _priceCache[coin].v;
-  return null;
+// A coin's picture: the built-in one, else the one a price service gave, else the first of two icon libraries that has it (checked, then remembered).
+const _logos={};
+const LOGO_CDNS=[s=>`https://assets.coincap.io/assets/icons/${s}@2x.png`,s=>`https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/${s}.png`];
+const _rememberLogo=(sym,q)=>{if(q&&q.logo&&!q.logoGuess)_logos[sym]={url:q.logo,ts:Date.now()};};
+async function _imageOk(url){
+  try{
+    const r=await fetch(url,{headers:{range:"bytes=0-0","user-agent":PRICE_UA},signal:AbortSignal.timeout(LOGO_CHECK_MS)});
+    const ok=!!r&&r.ok&&/^image\//i.test((r.headers&&r.headers.get&&r.headers.get("content-type"))||"");
+    _drop(r);
+    return ok;
+  }catch{return false;}
 }
-
-async function fetchFullPrice(coin){
-  if(STABLE.has(coin))return{usd:1,cad:1.37,eur:0.93,usd_24h_change:0,usd_market_cap:0,usd_24h_vol:0};
-  const cKey=coin+"_full";
-  if(_priceCache[cKey]&&Date.now()-_priceCache[cKey].ts<300000)return _priceCache[cKey].v;
-  let d=null;
-  if(BINANCE[coin]){try{const r=await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${BINANCE[coin]}`,{signal:AbortSignal.timeout(5000)});if(r.ok){const j=await r.json();const usd=parseFloat(j.lastPrice||0);if(usd>0){d={usd,cad:usd*1.37,eur:usd*0.93,usd_24h_change:parseFloat(j.priceChangePercent||0),usd_market_cap:0,usd_24h_vol:parseFloat(j.quoteVolume||0)};_priceCache[cKey]={v:d,ts:Date.now()};_priceCache[coin]={v:usd,ts:Date.now()};return d;}}}catch(e){console.log(`[price] Binance failed for ${coin}: ${e.message}`);}}
-  if(!d&&GECKO[coin]){const id=GECKO[coin];for(let i=0;i<3;i++){try{const r=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${id}&vs_currencies=usd,cad,eur&include_24hr_change=true&include_market_cap=true&include_24hr_vol=true`,{signal:AbortSignal.timeout(10000)});if(r.status===429){await new Promise(res=>setTimeout(res,3000*(i+1)));continue;}if(!r.ok){await new Promise(res=>setTimeout(res,1000*(i+1)));continue;}const j=await r.json();if(j[id]?.usd){d=j[id];_priceCache[cKey]={v:d,ts:Date.now()};_priceCache[coin]={v:d.usd,ts:Date.now()};return d;}}catch{await new Promise(res=>setTimeout(res,1000*(i+1)));}} }
-  if(!d){const KRAKEN={BTC:"XBTUSD",ETH:"ETHUSD",LTC:"LTCUSD",XRP:"XRPUSD",ADA:"ADAUSD",SOL:"SOLUSD",DOGE:"XDGUSD",DOT:"DOTUSD",LINK:"LINKUSD",ATOM:"ATOMUSD"};if(KRAKEN[coin]){try{const r=await fetch(`https://api.kraken.com/0/public/Ticker?pair=${KRAKEN[coin]}`,{signal:AbortSignal.timeout(8000)});if(r.ok){const j=await r.json();const pair=Object.values(j.result||{})[0];const usd=parseFloat(pair?.c?.[0]||0);if(usd>0){d={usd,cad:usd*1.37,eur:usd*0.93,usd_24h_change:0,usd_market_cap:0,usd_24h_vol:0};_priceCache[cKey]={v:d,ts:Date.now()};_priceCache[coin]={v:usd,ts:Date.now()};return d;}}}catch(e){console.log(`[price] Kraken failed for ${coin}: ${e.message}`);}}}
-  if(_priceCache[cKey]){console.log(`[price] returning stale cache for ${coin}`);return _priceCache[cKey].v;}
-  return null;
+async function coinLogo(coin,q){
+  const sym=_symOf(coin);
+  if(!sym)return null;
+  if(COIN_LOGO[sym])return COIN_LOGO[sym];
+  if(q&&q.logo&&!q.logoGuess){_logos[sym]={url:q.logo,ts:Date.now()};return q.logo;}
+  const c=_logos[sym];
+  if(c&&Date.now()-c.ts<(c.url?24*3600*1000:30*60*1000))return c.url;
+  const ps=(CANON[sym]||sym).toLowerCase(),cands=[...(q&&q.logo?[q.logo]:[]),...LOGO_CDNS.map(f=>f(ps))];
+  let url=null;
+  try{url=await Promise.any(cands.map(async u=>{if(await _imageOk(u))return u;throw new Error("no image");}));}catch{}
+  _logos[sym]={url,ts:Date.now()};
+  return url;
+}
+// The card shown for $XMR and /price XMR
+function priceEmbed(coin,q,logo){
+  const known=q.change!==null&&q.change!==undefined,ch=known?q.change:0,isUp=ch>=0,sign=isUp?"+":"",dir=isUp?"▲":"▼";
+  const hi=q.high?`$${fmtPrice(q.high)}`:"—",lo=q.low?`$${fmtPrice(q.low)}`:"—";
+  const age=Math.max(1,Math.round((Date.now()-(q.ts||Date.now()))/60000));
+  return new EmbedBuilder().setColor(isUp?0x7C4DFF:0xef4444).setTitle(`${coin}`).setThumbnail(logo||IMG.LOGO).addFields(
+    {name:"Price",value:`$${fmtPrice(q.usd)} USD`,inline:false},
+    {name:"24H Change",value:known?`${sign}$${fmtPrice(Math.abs(ch/100*q.usd))} ${dir} (${sign}${ch.toFixed(2)}%)`:"—",inline:false},
+    {name:"24H High",value:hi,inline:true},
+    {name:"24H Low",value:lo,inline:true},
+  ).setFooter({text:q.stale?`Konvert Exchange  ·  Last known price, ${age} min old (live sources are slow right now)`:`Konvert Exchange  ·  Type /price ${coin} for more details`}).setTimestamp();
+}
+// For /pricecheck and the startup log: asks every source about a coin on its own, without the cache, and says how each one answered
+async function priceDiagnose(coin){
+  const sym=_symOf(coin),ps=CANON[sym]||sym;
+  const rows=await Promise.all(PRICE_SOURCES.map(s=>_runSource(s,ps)));
+  return {sym,rows,blend:_blend(rows.filter(r=>r.ok).map(r=>({id:r.id,tier:r.tier,q:r.q})))};
+}
+async function priceSelfCheck(){
+  for(const c of ["BTC","XMR"]){
+    const r=await priceDiagnose(c);
+    const ok=r.rows.filter(x=>x.ok).map(x=>x.id),bad=r.rows.filter(x=>!x.ok).map(x=>`${x.id} (${x.err})`);
+    console.log(`[price] startup check ${c}: ${r.blend?`$${fmtPrice(r.blend.usd)} from ${ok.length} of ${r.rows.length} sources`:"NO PRICE"}  |  ok: ${ok.join(", ")||"none"}  |  failed: ${bad.join(", ")||"none"}`);
+  }
 }
 
 const client=new Client({intents:[GatewayIntentBits.Guilds,GatewayIntentBits.GuildMessages,GatewayIntentBits.MessageContent,GatewayIntentBits.GuildMembers,GatewayIntentBits.GuildInvites],partials:[Partials.Channel]});
@@ -2963,6 +3199,7 @@ function _gOwners(){
     _gline("volume","server volume stats"),
     _gline("snapshot","full server snapshot"),
     _gline("serverinfo","quick overview of the server and bot"),
+    _gline("pricecheck","test every price source for a coin (default XMR)"),
   ]),_gembed([
     "## Posting",
     _gline("postexchange","post the exchange embed"),
@@ -3167,6 +3404,7 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("reinstate").setDescription("[Owner] Lift an exchanger's suspension").addUserOption(o=>o.setName("user").setDescription("The exchanger to reinstate").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("clearexchanger").setDescription("[Owner] Clear an exchanger of all doubt: lifts any freeze, hold, flag and pending check").addUserOption(o=>o.setName("user").setDescription("The exchanger to clear").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("profittest").setDescription("[Owner] Send a test profit-split notice to everyone who receives them").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("pricecheck").setDescription("[Owner] Test every price source for a coin (default XMR)").addStringOption(o=>o.setName("coin").setDescription("Coin to test, for example XMR").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("resetstats").setDescription("[Owner] Reset a user's volume adjustment back to 0").addUserOption(o=>o.setName("user").setDescription("User").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("clearleaderboard").setDescription("[Owner] Wipe all exchange data from leaderboard and stats").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("wipestats").setDescription("[Owner] Completely wipe ALL stats and tickets for a single user").addUserOption(o=>o.setName("user").setDescription("User to wipe").setRequired(true)).addStringOption(o=>o.setName("confirm").setDescription('Type "CONFIRM" to proceed').setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
@@ -3252,7 +3490,7 @@ function mainEmbed(){
     ).setThumbnail(IMG.LOGO).setImage(IMG.BANNER).setFooter(kFoot("Fast · Safe · Simple"));
 }
 // The backup server (Konvert 2). BACKUP_INVITE_URL can change the link without touching the code; /postbackup link:... overrides it for one post.
-const BACKUP_INVITE="https://discord.gg/z59shqpXs8";
+const BACKUP_INVITE="https://discord.gg/aD5hGD5UX8";
 // An invite typed any usual way ("discord.gg/abc", "https://discord.com/invite/abc") as one tidy https://discord.gg/abc link, or null when it is not an invite
 function cleanInvite(raw){
   const m=/^(?:https?:\/\/)?(?:www\.)?(?:discord\.gg|discord(?:app)?\.com\/invite)\/([A-Za-z0-9-]{2,32})\/?$/i.exec(String(raw||"").trim());
@@ -3265,11 +3503,33 @@ function backupEmbed(url){
     .setDescription(`${kHero("Never lose access")}\nJoin the backup server now so you can always reach **C2C swaps** and **fiat exchanges**, even if this server is ever down, locked or restricted.\n​`)
     .addFields(
       {name:"Join Now",value:"Takes a few seconds. Do it before you need it.",inline:true},
-      {name:"Invite",value:`[${link.replace("https://","")}](${link})`,inline:true},
+      {name:"Invite",value:link,inline:true},
       {name:"Stay Safe",value:"This is the only official backup link. Any other invite claiming to be Konvert is an impersonator.",inline:false},
     ).setImage(IMG.BANNER).setFooter(kFoot("Official backup"));
 }
 const backupRow=url=>new ActionRowBuilder().addComponents(kLink("Join Backup Server",cleanInvite(url)||backupInvite()));
+// Backup posts made before v15 show the Invite line as raw text. This finds them in the channels named like "backup" and rewrites that line as a plain link,
+// keeping the invite that was posted (the button under the post is not touched). A post that is already fine is left alone, so running it again changes nothing.
+async function healBackupPosts(guild){
+  let fixed=0;
+  if(!guild||!guild.channels||!guild.channels.cache)return 0;
+  for(const ch of guild.channels.cache.values()){
+    if(!ch||!/backup/i.test(String(ch.name||""))||!ch.messages||typeof ch.isTextBased!=="function"||!ch.isTextBased())continue;
+    let msgs;
+    try{msgs=await ch.messages.fetch({limit:50});}catch{continue;}
+    for(const m of msgs.values()){
+      const e=m.author&&client.user&&m.author.id===client.user.id&&m.embeds&&m.embeds[0];
+      if(!e||e.title!=="Official Backup Server")continue;
+      const f=(e.fields||[]).find(x=>x.name==="Invite");
+      if(!f||!/\]\(/.test(String(f.value)))continue;
+      const url=cleanInvite((/\((https?:\/\/[^)\s]+)\)/.exec(String(f.value))||[])[1]);
+      if(!url)continue;
+      try{await m.edit({embeds:[backupEmbed(url)]});fixed++;}catch(err){console.log("[backup] could not fix a post:",err.message);}
+    }
+  }
+  if(fixed)console.log(`[backup] made the Invite link clickable on ${fixed} post(s)`);
+  return fixed;
+}
 const confirmRow=()=>new ActionRowBuilder().addComponents(kBtn("btn_confirm_ticket","Confirm & Open Ticket",ButtonStyle.Success),kBtn("btn_cancel_ticket","Cancel",ButtonStyle.Secondary));
 function mainButtons(){
   return [new ActionRowBuilder().addComponents(
@@ -3345,17 +3605,20 @@ function step2Embed(method,opts){
 const RATES_CHANNEL_ID=process.env.RATES_CHANNEL_ID||null;
 
 async function buildRatesEmbed(){
-  const ids=COINS.map(c=>GECKO[c]||c.toLowerCase()).join(",");
-  let p={};
-  try{const res=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd,cad&include_24hr_change=true`,{signal:AbortSignal.timeout(10000)});if(res.ok)p=await res.json();}catch(e){console.error("buildRatesEmbed:",e.message);}
-  const lines=COINS.map(coin=>{
-    const geckoId=GECKO[coin]||coin.toLowerCase();
-    let usdNum=p[geckoId]?.usd,cadNum=p[geckoId]?.cad,ch=parseFloat(p[geckoId]?.usd_24h_change||0);
-    if(!usdNum&&_priceCache[coin]){usdNum=_priceCache[coin].v;cadNum=usdNum*1.37;}
-    if(!usdNum)return null;
-    const usd=Number(usdNum).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
-    const cad=Number(cadNum||usdNum*1.37).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
-    return `\`${coin.padEnd(5)}\` **$${usd}**  \u00b7  CA$${cad}  \u00b7  ${ch>=0?"\u25B2":"\u25BC"} ${ch.toFixed(2)}%`;
+  const ids=RATE_COINS.map(c=>GECKO[c]).join(",");
+  const [qs,cadP]=await Promise.all([
+    quoteMany(RATE_COINS,6500).catch(()=>({})),
+    _getJSON(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=cad`,_cgHeaders()).catch(()=>({})),
+  ]);
+  let cadPer=1.37;      // CAD per USD: taken from CoinGecko's own prices when it answered, else the usual rate
+  for(const c of RATE_COINS){const x=cadP[GECKO[c]]&&cadP[GECKO[c]].cad,u=qs[c]&&qs[c].usd;if(x>0&&u>0){cadPer=x/u;break;}}
+  const px=n=>n>=0.01?Number(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):fmtPrice(n);
+  const anyLive=RATE_COINS.some(c=>!STABLE.has(c)&&qs[c]);      // the two stablecoins alone would make a panel that looks live when nothing is
+  const lines=!anyLive?"":RATE_COINS.map(coin=>{
+    const q=qs[coin];
+    if(!q)return null;
+    const ch=q.change||0,g=cadP[GECKO[coin]],cadNum=g&&g.cad>0?g.cad:q.usd*cadPer;
+    return `\`${coin.padEnd(5)}\` **$${px(q.usd)}**  ·  CA$${px(cadNum)}  ·  ${ch>=0?"▲":"▼"} ${ch.toFixed(2)}%`;
   }).filter(Boolean).join("\n");
   const now=new Date(),next=new Date(now.getTime()+30*60*1000);
   return kEmbed().setTitle(`Live Rates`).setThumbnail(IMG.LOGO)
@@ -3981,7 +4244,7 @@ client.on(Events.MessageCreate,async message=>{
     if(isNaN(rawAmt)||rawAmt<=0)return;
     const FIAT_RATES={USD:1,CAD:1.37,EUR:0.93,GBP:0.79,AUD:1.53,CHF:0.90,JPY:149.5,MXN:17.2,AED:3.67,SGD:1.35};
     const FIAT_SYM={USD:"$",CAD:"CA$",EUR:"\u20AC",GBP:"\u00A3",AUD:"A$",CHF:"CHF ",JPY:"\u00A5",MXN:"MX$",AED:"AED ",SGD:"S$"};
-    const isCoin=s=>COINS.includes(s),isFiat=s=>!!FIAT_RATES[s];
+    const isCoin=s=>isKnownCoin(s),isFiat=s=>!!FIAT_RATES[s];
     if(!isCoin(fromRaw)&&!isFiat(fromRaw))return;
     if(!isCoin(toRaw)&&!isFiat(toRaw))return;
     try{
@@ -3999,8 +4262,9 @@ client.on(Events.MessageCreate,async message=>{
         .setTitle(fromSym+rawAmt.toLocaleString("en-US")+" "+fromRaw+"  \u2192  "+toSym+fmtR(result)+" "+toRaw)
         .addFields({name:"You have",value:`**${fromSym}${rawAmt.toLocaleString("en-US")} ${fromRaw}**`,inline:true},{name:"You get",value:`**${toSym}${fmtR(result)} ${toRaw}**`,inline:true},{name:"\u2248 USD Value",value:`**$${amtUSD.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}**`,inline:true})
         .setFooter({text:"Konvert Exchange  ·  Live rates  ·  Open a ticket to exchange"}).setTimestamp();
-      if(isCoin(fromRaw)&&COIN_LOGO[fromRaw])embed.setThumbnail(COIN_LOGO[fromRaw]);
-      else if(isCoin(toRaw)&&COIN_LOGO[toRaw])embed.setThumbnail(COIN_LOGO[toRaw]);
+      let _lg=null;
+      for(const c of [fromRaw,toRaw])if(!_lg&&isCoin(c))_lg=await coinLogo(c);
+      if(_lg)embed.setThumbnail(_lg);
       await message.reply({embeds:[embed]}).catch(()=>{});
     }catch(e){console.log("[autoConvert]",e.message);}
     return;
@@ -4020,25 +4284,10 @@ client.on(Events.MessageCreate,async message=>{
   const match=message.content.trim().match(/^\$([A-Za-z]{2,10})$/i);
   if(!match)return;
   const coin=match[1].toUpperCase();
-  if(!COINS.includes(coin))return;
-  const d=await fetchFullPrice(coin);
-  if(!d){await message.reply(`Could not fetch **${coin}** price right now. Try again in a moment.`).catch(()=>{});return;}
-  const fmt=n=>{if(n>=1)return n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});if(n>=0.01)return n.toFixed(4);return n.toFixed(8);};
-  const ch2=parseFloat(d.usd_24h_change||0),isUp=ch2>=0;
-  const mcap=d.usd_market_cap?`$${(d.usd_market_cap/1e9).toFixed(2)}B`:"—";
-  const vol=d.usd_24h_vol?`$${(d.usd_24h_vol/1e9).toFixed(2)}B`:"—";
-  const fee=calcFee(Math.max(d.usd,1),"send"),rate=feeRate(Math.max(d.usd,1),"send");
-  const color=isUp?0x7C4DFF:0x7C4DFF;
-  const ch2sign=isUp?"+":"";
-  const ch2dir=isUp?"\u25B2":"\u25BC";
-  const high24m=d.usd_24h_high?`$${fmt(d.usd_24h_high)}`:"—";
-  const low24m=d.usd_24h_low?`$${fmt(d.usd_24h_low)}`:"—";
-  await message.reply({embeds:[new EmbedBuilder().setColor(isUp?0x7C4DFF:0xef4444).setTitle(`${coin}`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO).addFields(
-    {name:"Price",value:`$${fmt(d.usd)} USD`,inline:false},
-    {name:"24H Change",value:`${ch2sign}$${fmt(Math.abs(ch2/100*(d.usd||1)))} ${ch2dir} (${ch2sign}${ch2.toFixed(2)}%)`,inline:false},
-    {name:"24H High",value:high24m,inline:true},
-    {name:"24H Low",value:low24m,inline:true},
-  ).setFooter({text:`Konvert Exchange  ·  Type /price ${coin} for more details`}).setTimestamp()]}).catch(()=>{});
+  if(!isKnownCoin(coin))return;
+  const q=await quoteCoin(coin);
+  if(!q){await message.reply(`Could not fetch **${coin}** price right now. Try again in a moment.`).catch(()=>{});return;}
+  await message.reply({embeds:[priceEmbed(coin,q,await coinLogo(coin,q))]}).catch(()=>{});
  }catch(e){console.error("[MessageCreate error]",e.message);}
 });
 
@@ -4174,7 +4423,7 @@ client.on(Events.InteractionCreate,async interaction=>{
   try{
     if(interaction.isChatInputCommand()){
       // Owner-only commands: check OWNER_IDS regardless of Discord permissions
-      const OWNER_ONLY_CMDS=["grantowner","revokeowner","listowners","wipestats","clearleaderboard","adjuststats","resetstats","transferstats","suspended","reinstate","clearexchanger","profittest","broadcast","setfeemode","postleaderboard","serverinfo","clientinfo","receipt","postguide","postbackup"];
+      const OWNER_ONLY_CMDS=["grantowner","revokeowner","listowners","wipestats","clearleaderboard","adjuststats","resetstats","transferstats","suspended","reinstate","clearexchanger","profittest","broadcast","setfeemode","postleaderboard","serverinfo","clientinfo","receipt","postguide","postbackup","pricecheck"];
       if(OWNER_ONLY_CMDS.includes(interaction.commandName)&&!isOwner(interaction.user.id,interaction.member)){
         return interaction.reply({content:"You don\'t have permission to use this command.",flags:64});
       }
@@ -4191,6 +4440,17 @@ client.on(Events.InteractionCreate,async interaction=>{
         try{await target.send({embeds:[backupEmbed(url)],components:[backupRow(url)]});}
         catch(e){return interaction.reply({content:`Could not post in <#${target.id}>: ${e.message}`,flags:64});}
         return interaction.reply({content:target.id===interaction.channel.id?"Backup server embed posted.":`Backup server embed posted in <#${target.id}>.`,flags:64});
+      }
+      if(cmd==="pricecheck"){
+        await interaction.deferReply({flags:64});
+        const sym=_symOf(interaction.options.getString("coin")||"XMR");
+        if(!sym)return interaction.editReply({content:"Enter a coin ticker, for example XMR."});
+        const r=await priceDiagnose(sym),answered=r.rows.filter(x=>x.ok).length;
+        const lines=r.rows.map(x=>x.ok?`ok    ${x.id.padEnd(13)} $${fmtPrice(x.q.usd)}  ${x.ms}ms`:`FAIL  ${x.id.padEnd(13)} ${String(x.err).replace(/`/g,"'")}`);
+        const logo=r.blend?await coinLogo(sym,r.blend):null;
+        return interaction.editReply({embeds:[slim("Price check").setTitle(sym).setThumbnail(logo||IMG.LOGO).setDescription("```\n"+lines.join("\n")+"\n```")
+          .addFields({name:"Price",value:r.blend?`**$${fmtPrice(r.blend.usd)}**  ·  ${r.blend.n} agree`:"**No source has this coin**",inline:true},{name:"Sources answering",value:`${answered} of ${r.rows.length}`,inline:true},{name:"Logo",value:logo||(r.blend?"None found (the Konvert logo is shown)":"—"),inline:false})
+          .setFooter(kFoot("Owner only  ·  each source is asked on its own, nothing is cached"))]});
       }
       if(cmd==="postmm"){const embed=kEmbed("Middleman").setTitle(`Middleman Information`).setThumbnail(IMG.LOGO).setDescription(`**Konvert officially partners with Astro MM** to make sure every deal goes smoothly.\n\n**How it works**\n**1.** Open a ticket in <#${CONFIG.EXCHANGE_CHANNEL}>\n**2.** Get a quote for your exchange\n**3.** If terms are agreed, open an MM ticket on Astro MM\n**4.** Complete the exchange safely\n\u200b`).addFields({name:`Important`,value:"**Do NOT go first** without using Astro MM, unless explicitly advised by an owner in your ticket.",inline:false},{name:`Astro MM`,value:"Press the button below to join the Astro MM server.",inline:false}).setImage(IMG.BANNER).setFooter(kFoot("Official escrow partner: Astro MM"));await interaction.channel.send({embeds:[embed],components:[new ActionRowBuilder().addComponents(kLink("Join Astro MM","https://discord.gg/astromm"))]});return interaction.reply({content:"MM embed posted.",flags:64});}
 
@@ -4211,23 +4471,12 @@ client.on(Events.InteractionCreate,async interaction=>{
 
       if(cmd==="price"){
         await interaction.deferReply();
-        const coin=interaction.options.getString("coin").toUpperCase();
-        if(!GECKO[coin]&&!BINANCE[coin])return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setDescription(`**${coin}** is not supported. Try BTC, ETH, SOL, LTC, BNB, XRP, DOGE and more.`)]});
-        const d=await Promise.race([fetchFullPrice(coin),new Promise((_,r)=>setTimeout(()=>r(new Error("t")),7000))]).catch(()=>null);
-        if(!d)return interaction.editReply("Could not fetch price right now. Try again in a moment.");
-        const ch=parseFloat(d.usd_24h_change||0),isUp=ch>=0;
-        const fmt2=n=>n>=1?n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2}):n>=0.01?n.toFixed(4):n.toFixed(8);
-        const chSign=isUp?"+":"";
-        const chDir=isUp?"\u25B2":"\u25BC";
-        const high24=d.usd_24h_high?`$${fmt2(d.usd_24h_high)}`:"—";
-        const low24=d.usd_24h_low?`$${fmt2(d.usd_24h_low)}`:"—";
-        const coinName=Object.keys(GECKO).find(k=>GECKO[k]===Object.keys(GECKO).find(g=>g===coin)?coin:null)||coin;
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(isUp?0x7C4DFF:0xef4444).setTitle(`${coin}`).setThumbnail(COIN_LOGO[coin]||IMG.LOGO).addFields(
-          {name:"Price",value:`$${fmt2(d.usd)} USD`,inline:false},
-          {name:"24H Change",value:`${chSign}$${fmt2(Math.abs(ch/100*(d.usd||1)))} ${chDir} (${chSign}${ch.toFixed(2)}%)`,inline:false},
-          {name:"24H High",value:high24,inline:true},
-          {name:"24H Low",value:low24,inline:true},
-        ).setFooter({text:`Konvert Exchange  ·  Type /price ${coin} for more details`}).setTimestamp()]});
+        const rawIn=String(interaction.options.getString("coin")||""),coin=_symOf(rawIn);
+        const note=t=>interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setDescription(t)]});
+        if(!coin)return note(`**${rawIn.toUpperCase().replace(/[^A-Z0-9]/g,"").slice(0,20)||"That"}** is not a coin ticker. Try BTC, ETH, XMR, SOL, LTC, BNB, XRP, DOGE and more.`);
+        const q=await Promise.race([quoteCoin(coin),new Promise(r=>setTimeout(()=>r(null),9000))]).catch(()=>null);
+        if(!q)return isKnownCoin(coin)?interaction.editReply(`Could not fetch **${coin}** price right now. Try again in a moment.`):note(`**${coin}** is not supported. Try BTC, ETH, XMR, SOL, LTC, BNB, XRP, DOGE and more.`);
+        return interaction.editReply({embeds:[priceEmbed(coin,q,await coinLogo(coin,q))]});
       }
 
       if(cmd==="convert"){
@@ -4235,14 +4484,14 @@ client.on(Events.InteractionCreate,async interaction=>{
         const amount=interaction.options.getNumber("amount"),from=interaction.options.getString("from").toUpperCase(),to=interaction.options.getString("to").toUpperCase();
         if(!amount||amount<=0)return interaction.editReply("Please enter a valid amount greater than 0.");
         const FIAT={USD:1,CAD:1.37,EUR:0.93,GBP:0.79};
-        const fromNorm=from.trim().toUpperCase(),toNorm=to.trim().toUpperCase();
-        if(!FIAT[fromNorm]&&!GECKO[fromNorm])return interaction.editReply(`**${fromNorm}** not recognised.`);
-        if(!FIAT[toNorm]&&!GECKO[toNorm])return interaction.editReply(`**${toNorm}** not recognised.`);
+        const _nm=x=>{const u=String(x||"").trim().toUpperCase();return FIAT[u]?u:resolveCoin(x);};
+        const fromNorm=_nm(from),toNorm=_nm(to);
         let amtUSD;
         const _pr=t=>new Promise(r=>setTimeout(()=>r(null),t));
-        if(FIAT[fromNorm]){amtUSD=amount/FIAT[fromNorm];}else{const p=await Promise.race([getPrice(fromNorm),_pr(5000)]);if(!p)return interaction.editReply(`Could not fetch price for **${fromNorm}**. Try again.`);amtUSD=amount*p;}
+        const _no=x=>interaction.editReply(isKnownCoin(x)?`Could not fetch price for **${x}**. Try again.`:`**${x}** not recognised.`);
+        if(FIAT[fromNorm]){amtUSD=amount/FIAT[fromNorm];}else{const p=await Promise.race([getPrice(fromNorm),_pr(9000)]);if(!p)return _no(fromNorm);amtUSD=amount*p;}
         let result;
-        if(FIAT[toNorm]){result=amtUSD*FIAT[toNorm];}else{const p=await Promise.race([getPrice(toNorm),_pr(5000)]);if(!p)return interaction.editReply(`Could not fetch price for **${toNorm}**. Try again.`);result=amtUSD/p;}
+        if(FIAT[toNorm]){result=amtUSD*FIAT[toNorm];}else{const p=await Promise.race([getPrice(toNorm),_pr(9000)]);if(!p)return _no(toNorm);result=amtUSD/p;}
         const fee=calcFee(amtUSD,"send"),toPrice=FIAT[toNorm]?(1/FIAT[toNorm]):(await Promise.race([getPrice(toNorm),_pr(3000)])||1),youGet=result-(fee/toPrice);
         const isToFiat=!!FIAT[toNorm],receiveUSD=isToFiat?youGet:youGet*toPrice;
         const youGetDisplay=isToFiat?fmtUSD(youGet):`${youGet.toFixed(6)} ${toNorm}`;
@@ -4313,10 +4562,9 @@ client.on(Events.InteractionCreate,async interaction=>{
 
       if(cmd==="market"){
         await interaction.deferReply();
-        const ids=COINS.map(c=>GECKO[c]||c.toLowerCase()).join(",");
-        const res=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_24hr_change=true`,{signal:AbortSignal.timeout(10000)});
-        const data=await res.json();
-        const rows=COINS.map(coin=>{const d=data[GECKO[coin]||coin.toLowerCase()];if(!d)return null;return{coin,price:d.usd,change:parseFloat(d.usd_24h_change||0)};}).filter(Boolean);
+        const qs=await quoteMany(RATE_COINS,8000);
+        const rows=RATE_COINS.map(coin=>{const q=qs[coin];return q&&q.change!==null&&q.change!==undefined?{coin,price:q.usd,change:q.change}:null;}).filter(Boolean);
+        if(rows.filter(r=>!STABLE.has(r.coin)).length<3)return interaction.editReply("Could not load market data right now. Try again in a moment.");      // the two stablecoins alone are not a market
         const gainers=[...rows].sort((a,b)=>b.change-a.change).slice(0,3),losers=[...rows].sort((a,b)=>a.change-b.change).slice(0,3);
         const avg=(rows.reduce((s,r)=>s+r.change,0)/rows.length).toFixed(2);
         const fmt2=n=>n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -4674,10 +4922,10 @@ Deleting in 10 seconds.`)
 
       if(cmd==="estimate"){
         await interaction.deferReply({flags:64});
-        const amount=interaction.options.getNumber("amount"),methodRaw=interaction.options.getString("method").toLowerCase().trim(),coinRaw=interaction.options.getString("coin").toUpperCase().trim(),direction=interaction.options.getString("direction");
+        const amount=interaction.options.getNumber("amount"),methodRaw=interaction.options.getString("method").toLowerCase().trim(),coinRaw=resolveCoin(interaction.options.getString("coin")),direction=interaction.options.getString("direction");
         const m=METHODS.find(x=>x.label.toLowerCase().includes(methodRaw)||x.value.includes(methodRaw));
         if(!m)return interaction.editReply({content:`Method **${methodRaw}** not recognised. Try: PayPal, Interac, Zelle, Cash App etc.`});
-        if(!COINS.includes(coinRaw))return interaction.editReply({content:`Coin **${coinRaw}** not supported. Try BTC, ETH, SOL, LTC etc.`});
+        if(!isKnownCoin(coinRaw))return interaction.editReply({content:`Coin **${coinRaw}** not supported. Try BTC, ETH, SOL, LTC etc.`});
         if(!aboveMinimum(amount))return interaction.editReply({content:minAmountText()});
         const vol=getUserVolume(interaction.user.id),vip=isVipVolume(vol);
         const fee=calcFee(amount,direction,vip),rate=feeRate(amount,direction,vip);
@@ -5196,11 +5444,12 @@ This is active immediately and persists until revoked or the bot restarts.
         const coin=resolveCoin(raw);
         const target=interaction.options.getNumber("price");
         const dir=interaction.options.getString("direction");
-        if(!GECKO[coin]&&!BINANCE[coin])return interaction.editReply({content:`**${coin}** is not a supported coin for alerts.`});
+        if(!_symOf(coin))return interaction.editReply({content:`**${coin}** is not a supported coin for alerts.`});
         if(!(target>0))return interaction.editReply({content:"Enter a target price greater than 0."});
         const mine=state.alerts.filter(a=>a.userId===interaction.user.id);
         if(mine.length>=10)return interaction.editReply({content:"You already have 10 alerts. Use `/clearalerts` first."});
-        const cur=await Promise.race([getPrice(coin),new Promise(r=>setTimeout(()=>r(null),5000))]).catch(()=>null);
+        const cur=await Promise.race([getPrice(coin),new Promise(r=>setTimeout(()=>r(null),9000))]).catch(()=>null);
+        if(!cur&&!isKnownCoin(coin))return interaction.editReply({content:`**${coin}** is not a supported coin for alerts.`});
         state.alerts.push({userId:interaction.user.id,coin,target,dir,createdAt:Date.now()});
         return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Price Alert",iconURL:IMG.LOGO}).setTitle("Alert Set").addFields(
           {name:"Coin",value:coin,inline:true},
@@ -5684,14 +5933,12 @@ async function autoRates(guild){
 
 async function checkAlerts(){
   if(!state.alerts.length)return;
-  const ids=[...new Set(state.alerts.map(a=>GECKO[a.coin]||a.coin.toLowerCase()))].join(",");
   try{
-    const res=await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`,{signal:AbortSignal.timeout(8000)});
-    const prices=await res.json(),fired=[];
+    const qs=await quoteMany([...new Set(state.alerts.map(a=>a.coin))],8000),fired=[];
     for(const alert of state.alerts){
-      const price=prices[GECKO[alert.coin]||alert.coin.toLowerCase()]?.usd;
-      if(!price||!(alert.direction==="above"?price>=alert.target:price<=alert.target))continue;
-      try{const user=await client.users.fetch(alert.userId);await user.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Price Alert Triggered").setDescription(`**${alert.coin}** is now **${alert.direction==="above"?"above":"below"}** your target of **$${alert.target.toLocaleString("en-US")}**\n\nCurrent price: **$${price.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}**\n\nHead to <#${CONFIG.EXCHANGE_CHANNEL}> to open an exchange.`).setThumbnail(COIN_LOGO[alert.coin]||IMG.LOGO).setTimestamp().setFooter({text:"Konvert Exchange  ·  Price Alerts"})]});}catch{}
+      const q=qs[_symOf(alert.coin)],price=q&&!(q.stale&&Date.now()-q.ts>PRICE_USABLE_MS)?q.usd:null;
+      if(!price||!(alert.dir==="above"?price>=alert.target:price<=alert.target))continue;
+      try{const user=await client.users.fetch(alert.userId);await user.send({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Price Alert Triggered").setDescription(`**${alert.coin}** is now **${alert.dir==="above"?"above":"below"}** your target of **$${alert.target.toLocaleString("en-US")}**\n\nCurrent price: **$${price.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}**\n\nHead to <#${CONFIG.EXCHANGE_CHANNEL}> to open an exchange.`).setThumbnail((await coinLogo(alert.coin))||IMG.LOGO).setTimestamp().setFooter({text:"Konvert Exchange  ·  Price Alerts"})]});}catch{}
       fired.push(alert);
     }
     state.alerts=state.alerts.filter(a=>!fired.includes(a));
@@ -5731,7 +5978,7 @@ async function postDailyCryptoFact(guild){
     const coins=["BTC","ETH","SOL","XRP","BNB","ADA","DOGE","AVAX","LTC","DOT"];
     const featuredCoin=coins[Math.floor(Math.random()*coins.length)];
     let priceStr="";try{const p=await getPrice(featuredCoin);if(p)priceStr=` \u00b7 **${featuredCoin}: ${fmtUSD(p)}**`;}catch{}
-    await ch.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Daily Crypto Fact",iconURL:IMG.LOGO}).setTitle("Did You Know?").setThumbnail(COIN_LOGO[featuredCoin]||IMG.LOGO).setDescription(`${fact}\n\u200b`).addFields({name:"Live Price",value:`${featuredCoin}${priceStr||" \u2014 unavailable"}`,inline:true},{name:"Exchange Now",value:`Open a ticket in <#${CONFIG.EXCHANGE_CHANNEL}>`,inline:true}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  ·  Daily fact \u2014 come back tomorrow for another"}).setTimestamp()]});
+    await ch.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Daily Crypto Fact",iconURL:IMG.LOGO}).setTitle("Did You Know?").setThumbnail((await coinLogo(featuredCoin))||IMG.LOGO).setDescription(`${fact}\n\u200b`).addFields({name:"Live Price",value:`${featuredCoin}${priceStr||" \u2014 unavailable"}`,inline:true},{name:"Exchange Now",value:`Open a ticket in <#${CONFIG.EXCHANGE_CHANNEL}>`,inline:true}).setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  ·  Daily fact \u2014 come back tomorrow for another"}).setTimestamp()]});
     console.log("[dailyFact] posted");
   }catch(e){console.error("[dailyFact]",e.message);}
 }
@@ -6010,6 +6257,10 @@ client.once(Events.ClientReady,async()=>{
     // A ticket nobody has claimed for ten minutes: its card quietly suggests Add Method (every minute; survives restarts)
     setInterval(()=>sweepUnclaimed(guild).catch(e=>console.error("[nudge]",e.message)),60*1000);
     setTimeout(()=>sweepUnclaimed(guild).catch(()=>{}),35*1000);
+    // Backup-server posts made before v15 get a clickable Invite link (once, shortly after the bot starts)
+    setTimeout(()=>healBackupPosts(guild).catch(e=>console.log("[backup] heal:",e.message)),12*1000);
+    // Shows in the logs which price services answer from this server (so a blocked one is easy to spot)
+    setTimeout(()=>priceSelfCheck().catch(()=>{}),40*1000);
     // Safety system: settles unanswered worries, notices silent exchangers (quietly), retires old holds (every 30 seconds)
     setInterval(()=>sweepSafety(guild).catch(e=>console.error("[safety]",e.message)),30*1000);
     setTimeout(()=>sweepSafety(guild).catch(()=>{}),20*1000);
@@ -6032,7 +6283,7 @@ client.once(Events.ClientReady,async()=>{
         if(!hit){still.push(a);continue;}
         try{
           const u=await client.users.fetch(a.userId);
-          await u.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Price Alert",iconURL:IMG.LOGO}).setTitle(`${a.coin} hit your target`).setThumbnail(COIN_LOGO[a.coin]||IMG.LOGO).addFields(
+          await u.send({embeds:[new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange  ·  Price Alert",iconURL:IMG.LOGO}).setTitle(`${a.coin} hit your target`).setThumbnail((await coinLogo(a.coin))||IMG.LOGO).addFields(
             {name:"Current Price",value:`$${cur.toLocaleString("en-US",{maximumFractionDigits:2})}`,inline:true},
             {name:"Your Target",value:`${a.dir==="above"?"Above":"Below"} $${a.target}`,inline:true},
           ).setFooter({text:"Konvert Exchange  ·  Alert removed. Set a new one with /alert"}).setTimestamp()]});
