@@ -2722,6 +2722,7 @@ async function healBanners(guild){
   if(!guild||!client.user)return 0;
   const mark=await dbGet("konvert_banner_healed").catch(()=>null);
   if(mark&&mark.url===IMG.BANNER)return 0;
+  console.log("[banner] refreshing the banner on older posts (this can take a few minutes)");
   const isOld=u=>!!u&&OLD_BANNERS.some(o=>String(u).includes(o));
   const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
   let fixed=0;
@@ -2734,7 +2735,7 @@ async function healBanners(guild){
     for(const m of msgs.values()){
       if(!m.author||m.author.id!==client.user.id||!m.embeds||!m.embeds.some(e=>e&&e.image&&isOld(e.image.url)))continue;
       const embeds=m.embeds.map(e=>{const b=EmbedBuilder.from(e);if(e.image&&isOld(e.image.url))b.setImage(IMG.BANNER);return b;});
-      if(await m.edit({embeds}).then(()=>true).catch(()=>false))fixed++;
+      if(await m.edit({embeds}).then(()=>true).catch(()=>false)){fixed++;if(fixed%25===0)console.log(`[banner] ${fixed} older posts refreshed so far`);}
       await _mmSleep(HEAL_PAUSE_MS);
     }
   }
@@ -2850,7 +2851,7 @@ function buildClaimEmbed(ticket,mode){
   }
   if(mode==="owner"){
     return kEmbed("Ticket","ok").setTitle("Owner Verified")
-      .setDescription(`${hero}\n<@${cl}>, your ticket was claimed by <@${ex}>.\n\n${methodNote(ticket)}<@${ex}> is a Konvert owner \u2014 **safe to go first**. You can exchange with full confidence.`)
+      .setDescription(`${hero}\n<@${cl}>, your ticket was claimed by <@${ex}>.\n\n${methodNote(ticket)}<@${ex}> is a Konvert owner \u2014 **safe to go first**. You can exchange with full confidence.\n\nWant the crypto held anyway? Press **Use Middleman** (or type \`$mm\`) and the built-in server middleman bot holds it for you.`)
       .setFooter(kFoot("Verified Konvert owner")).setTimestamp();
   }
   if(mode==="mmConfirmed"){
@@ -3046,7 +3047,7 @@ async function claimTicket(interaction,opts={}){
     allowedMentions:{users:[interaction.user.id,ticket.userId]}
   };
   if(needsMm)payload.components=[mmConfirmRow()];
-  else if(!owner)payload.components=[new ActionRowBuilder().addComponents(kBtn("mm_start","Use Middleman",ButtonStyle.Secondary))];     // the client or exchanger can ask for the built-in middleman any time
+  else payload.components=[new ActionRowBuilder().addComponents(kBtn("mm_start","Use Middleman",ButtonStyle.Secondary))];     // the client or the exchanger (an owner too) can ask for the built-in middleman any time
   const sent=await ch.send(payload).catch(()=>null);
   if(sent){ticket.claimMessageId=sent.id;_mem.tickets=tickets;save("tickets",tickets);}
   const via=chosen?` through ${methodLabel(chosen)}`:"";
