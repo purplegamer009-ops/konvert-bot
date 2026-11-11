@@ -2034,6 +2034,7 @@ async function mmDrive(id,opts){
     }catch(err){
       const code=err instanceof MmError?err.code:"error",msg=String(err.message||err).slice(0,240);
       if(!(err instanceof MmError))console.error("[mm] send error:",msg);
+      else console.log(`[mm] ${id}: a payout try did not go through (${code}): ${msg}`);
       if(code==="rpc")mmNodeFail(e.chain);
       if(signed){
         // A signed transaction exists, so from here the deal only moves forward: it is followed (and sent again as the same transaction) until it lands
@@ -3090,7 +3091,11 @@ const mmLogChannelId=()=>process.env.MM_LOG_CHANNEL_ID||CONFIG.LOG_CHANNEL||null
 const mmWho=by=>/^\d{15,25}$/.test(String(by||""))?`<@${by}>`:(by?String(by):"the bot, by itself");
 async function mmPayLog(e,what){
   try{
-    const id=mmLogChannelId();if(!id||!e)return;
+    if(!e)return;
+    {const o0=e.out||e.lastOut||{},l0=(o0.txids||[])[(o0.txids||[]).length-1];
+     let a0=String(o0.sentRaw||o0.amountRaw||e.gotRaw||"0");try{a0=mmAmt(e,a0);}catch{}
+     console.log(`[mm] payment ${what}: ${e.id} ${o0.kind||"release"} ${a0} to ${o0.to||"unknown"} tx ${o0.txid||(l0&&l0.txid)||"none"} by ${o0.by||"auto"}`);}      // (the same line goes to the owners' channel below)
+    const id=mmLogChannelId();if(!id)return;
     const g=client.guilds.cache.get(e.guildId||CONFIG.GUILD_ID)||client.guilds.cache.first(),ch=g&&g.channels.cache.get(id);
     if(!ch)return;
     const o=e.out||e.lastOut||{},last=(o.txids||[])[(o.txids||[]).length-1],txid=o.txid||(last&&last.txid)||null;
@@ -4224,6 +4229,8 @@ async function mmRecover(){
   let sending=0,stuck=0,paid=0;
   for(const [,e] of await MMDB.list("e:")){
     _mmCache.set(e.id,e);
+    {let amt=String(e.gotRaw||"");try{if(e.gotRaw)amt=mmAmt(e,e.gotRaw);}catch{}
+     console.log(`[mm] open deal ${e.id}: ${e.state}${e.chain?` · ${e.coin||""} on ${e.chain}`:""}${e.gotRaw?` · holds ${amt}`:""}${e.rel?" · release decided":""}${e.ref?" · refund decided":""}${e.payout?" · payout address saved":""}${e.refundTo?" · refund address saved":""}${e.payFail?` · last failure: ${e.payFail.code}`:""}${e.dispute?" · in dispute":""}`);}
     if(e.state==="stuck"){stuck++;continue;}
     if(e.state!=="sending")continue;
     sending++;
