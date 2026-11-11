@@ -22,7 +22,7 @@ const { Pool } = require("pg");
 
 // Which build is running. Shown at the bottom of /ping and printed in the logs, so a deploy that did not go through is easy to spot.
 // BOT_BUILD is the first 7 characters of the commit Railway built (it matches the commit on GitHub); it is blank when run anywhere else.
-const BOT_VERSION="v19";
+const BOT_VERSION="v20";
 const BOT_BUILD=String(process.env.RAILWAY_GIT_COMMIT_SHA||"").slice(0,7);
 const BUILD_TEXT=BOT_BUILD?`${BOT_VERSION}  ·  ${BOT_BUILD}`:BOT_VERSION;
 
@@ -1705,8 +1705,10 @@ function mmPlan(ticket){
   if(d.gift||d.custom||d.plain)return {ok:false,why:"kind"};
   const clientDeposits=d.c2c||ticket.direction==="receive";
   const usd=clientDeposits?d.amount:d.net;
-  if(!(usd>=MM_MIN_USD))return {ok:false,why:"amount"};
-  return {ok:true,coin:mmCoinOf(ticket.coin),usd:Math.round(usd*100)/100,
+  let base={};
+  try{const fr=clientDeposits?d.net:d.amount;base={depositorId:clientDeposits?ticket.userId:ticket.claimedBy,recipientId:clientDeposits?ticket.claimedBy:ticket.userId,pays:d.c2c?String(ticket.recvCoin):methodLabel(ticket.method),fiat:!d.c2c&&fr>0?Math.round(fr*100)/100:null};}catch{}
+  if(!(usd>=MM_MIN_USD))return {ok:false,why:"amount",...base};
+  return {ok:true,coin:mmCoinOf(ticket.coin),usd:Math.round(usd*100)/100,fiat:base.fiat||null,
     depositorId:clientDeposits?ticket.userId:ticket.claimedBy,recipientId:clientDeposits?ticket.claimedBy:ticket.userId,
     pays:d.c2c?String(ticket.recvCoin):methodLabel(ticket.method)};
 }
@@ -1903,21 +1905,20 @@ async function mmSetCoin(id,coinRaw,by){
 let MM_FLOW_ON=process.env.MM_FLOW!=="0",      // MM_FLOW=0 goes back to the v18 start (the network menu on the card)
     MM_PICK_V2=true,                           // the coin picker is a card with a Start button on every row; false (or a Discord that refuses it) uses a menu instead
     MM_FLOW_IDLE_MS=24*60*60*1000,MM_CANCEL_ASK_MS=10*60*1000,MM_RELEASE_WAIT_MS=5*1000;
-const MM_FLOW_VER=3;
+let MM_FLOW_VER=4;
 const MM_NET_NAME={eth:"Ethereum (ERC20)",bsc:"BSC (BEP20)",base:"Base",arb:"Arbitrum",op:"Optimism",pol:"Polygon",avax:"Avalanche",sol:"Solana",btc:"Bitcoin",ltc:"Litecoin"};
 const MM_COIN_FULL={SOL:"Solana",BNB:"BNB Chain",POL:"Polygon",AVAX:"Avalanche",BTC:"Bitcoin",LTC:"Litecoin"};
 // "SOL - Solana" · "ETH - Base" · "USDT - BSC (BEP20)"
 const mmPickName=a=>a.contract?`${a.coin} - ${MM_NET_NAME[a.chain]||MM_CHAINS[a.chain].name}`:a.coin==="ETH"?`ETH - ${MM_CHAINS[a.chain].name}`:`${a.coin} - ${MM_COIN_FULL[a.coin]||MM_CHAINS[a.chain].name}`;
 const mmAutoOf=a=>mmIsAuto(a.chain,mmDepositAddress(a.chain));
 // Every coin on every network (the dropdown), and the shorter list that fits on the card itself (a message holds 40 components: a row with a button is three)
-const MM_PICK_FULL=["SOL:sol","ETH:eth","ETH:base","ETH:arb","ETH:op","BNB:bsc","POL:pol","AVAX:avax","BTC:btc","LTC:ltc",
-  "USDT:bsc","USDT:eth","USDT:sol","USDT:pol","USDT:arb","USDT:op","USDT:avax","USDC:sol","USDC:eth","USDC:base","USDC:arb","USDC:op","USDC:pol","USDC:avax","USDC:bsc"];
+const MM_PICK_FULL=["SOL:sol","ETH:eth","BNB:bsc","BTC:btc","LTC:ltc","USDT:eth","USDT:bsc","USDT:sol","USDC:eth","USDC:bsc","USDC:sol"];      // v20: the major coins only (the other networks still work for deals that are already open)
 const MM_PICK_CARD=["SOL:sol","ETH:eth","BNB:bsc","BTC:btc","LTC:ltc","USDT:bsc","USDT:eth","USDT:sol","USDC:sol","USDC:eth"],MM_PICK_ROWS=10;
 // The list for one ticket: the coin the ticket was opened for first (marked "This ticket"), then the rest
 function mmPickList(ticket){
   const have=new Map(MM_ASSETS.filter(a=>!!mmDepositAddress(a.chain)).map(a=>[a.coin+":"+a.chain,a]));
   const mine=ticket&&ticket.coin?mmCoinOf(ticket.coin):null;
-  const keys=[...MM_PICK_FULL.filter(k=>have.has(k)),...[...have.keys()].filter(k=>!MM_PICK_FULL.includes(k))];
+  const keys=MM_PICK_FULL.filter(k=>have.has(k));
   const fl=k=>({...have.get(k),key:k,mine:have.get(k).coin===mine});
   return [...keys.filter(k=>have.get(k).coin===mine),...keys.filter(k=>have.get(k).coin!==mine)].map(fl);
 }
@@ -1976,6 +1977,17 @@ const mmTickLine=(map,uid,yes)=>`<@${uid}>  ${map&&map[uid]?`**${yes}**`:"waitin
 function mmFlowPayload(t,step,frozen){
   const f=t.mmFlow||{},G=ButtonStyle.Secondary,P=ButtonStyle.Primary,OK=ButtonStyle.Success,NO=ButtonStyle.Danger,row=(...b)=>new ActionRowBuilder().addComponents(...b);
   const S=`<@${f.sender}>`,R=`<@${f.receiver}>`,coin=f.coin||"crypto",sides=[f.sender,f.receiver];
+  if(step==="confirm"){
+    const ok=f.cok||{},usd=f.usd>0?f.usd:0,c2c=!!dealOf(t).c2c,tag=u=>u===t.claimedBy?" (Exchanger)":"",st=u=>ok[u]?"**Confirmed**":"waiting";
+    if(frozen)return {embeds:[mmFlowEmb(f,"ok","Deal Confirmed").setDescription(`${S} and ${R} confirmed.`)],components:[]};
+    const L=[`${S}${tag(f.sender)} sends **${usd?`${fmtUSD(usd)} of ${coin}`:coin}** to the middleman.`,
+      c2c?`${R}${tag(f.receiver)} sends **${f.pays||"the other coin"}** directly to ${S}.`:`${R}${tag(f.receiver)} sends ${mmPayWords(f.pays,f.fiat,false)} to ${S}.`,"",
+      kNote("Stay in this ticket. Konvert staff never ask you to release or cancel."),"",`${S}  ${st(f.sender)}`,`${R}  ${st(f.receiver)}`];
+    if(!usd)L.splice(2,0,"","**The amount is missing.** Press **Change Amount**, or type it in this chat.");
+    if(f.note)L.push("",f.note);
+    return {embeds:[mmFlowEmb(f,"brand","Confirm Deal").setDescription(L.join("\n"))],
+      components:[row(kBtn("mm_fk__yes","Confirm",OK).setDisabled(!usd),kBtn("mm_fk__amt","Change Amount",G),kBtn("mm_fk__swap","Swap Roles",G),kBtn("mm_fk__coin","Change Coin",G))]};
+  }
   if(step==="roles"){
     const picks=f.picks||{},a=picks[t.userId],b=picks[t.claimedBy],clash=!!(a&&b&&a===b),word=u=>picks[u]?`**${picks[u]==="sender"?"Sender":"Receiver"}**`:"not chosen yet";
     if(frozen)return {embeds:[mmFlowEmb(f,"ok","Roles Selected").setDescription(`${S} sends **${coin}**.\n${R} receives **${coin}**.`)],components:[]};
@@ -2051,7 +2063,10 @@ async function mmFlowGo(ch,to,opts){
   const t0=mmTicketOf(ch.id),f0=t0&&t0.mmFlow;if(!f0)return null;
   const from=f0.step,oldId=f0.msgId;
   mmSaveTicket(ch.id,x=>{if(x.mmFlow){x.mmFlow.step=to;x.mmFlow.at=Date.now();}});             // the step is written down first: a restart in between rebuilds the card
-  if(oldId)await mmFlowFreeze(ch,from,oldId);
+  if(oldId){
+    if(opts&&opts.drop){const m=await ch.messages.fetch(oldId).catch(()=>null);if(m)await m.delete().catch(()=>{});}
+    else await mmFlowFreeze(ch,from,oldId);
+  }
   return mmFlowPost(ch,to,opts);
 }
 // Same step (or back to an earlier one): the live card is edited in place
@@ -2111,7 +2126,7 @@ async function mmAssetReady(a){
 async function mmFlowStart(ch,ticket,by){
   if(mmActive(ch.id))return mmOpen(ch,ticket,{by});
   if(ticket.mmFlow)return mmFlowShow(ch,ticket,{fresh:true});
-  if(_mmMeta.paused)return mmOwnerFallback(ch,ticket,"paused");
+  if(_mmMeta.paused||_mmMeta.frozen)return mmOwnerFallback(ch,ticket,"paused");
   const plan=mmPlan(ticket);
   if(!plan.ok&&plan.why!=="amount")return mmOwnerFallback(ch,ticket,plan.why);       // an owner takes everything the bot does not hold (no claim yet, gifts, custom deals)
   if(!mmPickList(ticket).length)return mmOwnerFallback(ch,ticket,"coin");              // the bot holds no coin at all right now: nothing to pick from
@@ -2124,7 +2139,7 @@ async function mmFlowStart(ch,ticket,by){
 }
 const mmStartDeal=(ch,ticket,by)=>MM_FLOW_ON?mmFlowStart(ch,ticket,by):mmOpen(ch,ticket,{by});
 
-const MM_FLOW_STEP_TEXT={pick:"choosing the coin",roles:"choosing roles",rolesok:"confirming roles",amount:"entering the amount",amtok:"confirming the amount",warn:"reading the safety notes"};
+const MM_FLOW_STEP_TEXT={pick:"choosing the coin",roles:"choosing roles",rolesok:"confirming roles",amount:"entering the amount",amtok:"confirming the amount",warn:"reading the safety notes",confirm:"confirming the deal"};
 const mmFlowStatusText=t=>t&&t.mmFlow?`The middleman setup is open (${MM_FLOW_STEP_TEXT[t.mmFlow.step]||"in progress"}). Nothing is held yet. Type \`$mm\` to bring its card down, or \`$mm cancel\` to stop it.`:null;
 const MM_FLOW_OPEN_TEXT="The middleman setup is still open. Type `$mm cancel` first.";
 
@@ -2139,13 +2154,19 @@ function mmParseUsd(text){
 async function mmFlowSetAmount(ch,usd,uid){
   return mmFlowLock(ch.id,async()=>{
     const t1=mmTicketOf(ch.id),f1=t1&&t1.mmFlow;
-    if(!f1||f1.step!=="amount")return {ok:false,text:"That step is over, so nothing changed."};
+    const confirm=!!f1&&f1.step==="confirm";
+    if(!f1||(f1.step!=="amount"&&!confirm))return {ok:false,text:"That step is over, so nothing changed."};
     usd=Math.round(usd*100)/100;
     if(!(usd>=MM_MIN_USD))return {ok:false,text:`The smallest middleman deal is ${fmtUSD(MM_MIN_USD)}. Nothing changed. Enter the amount again.`};
     if(usd>_mmMeta.maxUsd){
       await mmFlowEnd(ch,"An Owner Takes This One",`${fmtUSD(usd)} is above the built-in middleman's ${fmtUSD(_mmMeta.maxUsd)} limit.`,"warn");
       await mmOwnerFallback(ch,mmTicketOf(ch.id)||t1,"limit");
       return {ok:true,owner:true};
+    }
+    if(confirm){
+      mmSaveTicket(ch.id,x=>{const g=x.mmFlow;if(g.ratio>0)g.fiat=Math.round(usd*g.ratio*100)/100;g.usd=usd;g.cok={};g.amtBy=uid;delete g.note;});
+      await mmFlowEdit(ch,"confirm");
+      return {ok:true};
     }
     mmSaveTicket(ch.id,x=>{const g=x.mmFlow;g.usd=usd;g.aok={};g.amtBy=uid;delete g.note;});
     await mmFlowGo(ch,"amtok",{ping:[t1.userId,t1.claimedBy]});
@@ -2155,7 +2176,7 @@ async function mmFlowSetAmount(ch,usd,uid){
 // A number typed in the chat while the amount is asked for (only the sender's counts)
 async function mmFlowTyped(ticket,x,text){
   const f=ticket.mmFlow;
-  if(!f||f.step!=="amount"||x.uid!==f.sender)return false;
+  if(!f||!(f.step==="amount"||(f.step==="confirm"&&!(f.usd>0)))||x.uid!==f.sender)return false;
   const usd=mmParseUsd(text);
   if(usd==null)return false;
   const r=await mmFlowSetAmount(x.ch,usd,x.uid);
@@ -2174,8 +2195,8 @@ async function mmFlowRoute(interaction,cid,parts){
   need(!t.reported||owner,"This ticket is flagged. An owner has to review it first. Nothing changed.");
   const stale="That card is out of date, so nothing changed. Use the newest card in this ticket, or type `$mm` to bring it down.",f=t.mmFlow;
   need(!!f,stale);
-  const STEP={mm_pick:"pick",mm_pickm:"pick",mm_fr:"roles",mm_fc:"rolesok",mm_fa:"amount",mm_fm_amount:"amount",mm_fo:"amtok",mm_fw:"warn"}[head];
-  need(f.step===STEP,stale);
+  const STEP={mm_pick:"pick",mm_pickm:"pick",mm_fr:"roles",mm_fc:"rolesok",mm_fk:"confirm",mm_fa:"amount",mm_fm_amount:"amount",mm_fo:"amtok",mm_fw:"warn"}[head];
+  need(f.step===STEP||(head==="mm_fm_amount"&&f.step==="confirm"),stale);
   if(head!=="mm_fm_amount"&&interaction.message&&f.msgId&&interaction.message.id!==f.msgId)throw new MmError("no",stale);
   const sides=party?[uid]:[t.userId,t.claimedBy];                         // an owner who is neither side answers for both
   const both=g=>!!(g[t.userId]&&g[t.claimedBy]);
@@ -2184,7 +2205,7 @@ async function mmFlowRoute(interaction,cid,parts){
   if(head==="mm_pick"||head==="mm_pickm"){
     const [coin,chain]=head==="mm_pick"?[parts[1],parts[2]]:String((interaction.values||[])[0]||"").split(":");
     const a=mmAsset(coin,chain);
-    need(!!a&&!!mmDepositAddress(chain),"That coin isn't available right now. Nothing changed. Pick another one.");
+    need(!!a&&!!mmDepositAddress(chain)&&MM_PICK_FULL.includes(a.coin+":"+a.chain),"That coin isn't available right now. Nothing changed. Pick another one.");
     await interaction.deferReply({flags:64});
     const ready=await mmAssetReady(a);
     need(ready.ok,ready.text);
@@ -2192,14 +2213,30 @@ async function mmFlowRoute(interaction,cid,parts){
       const t1=mmTicketOf(ch.id),f1=t1&&t1.mmFlow;need(!!f1&&f1.step==="pick",stale);
       const plan=mmPlan(t1);
       mmSaveTicket(ch.id,x=>{
-        const g=x.mmFlow;g.coin=a.coin;g.chain=a.chain;g.pickedBy=uid;g.picks={};g.rok={};g.aok={};g.wok={};delete g.note;
-        g.suggest=plan.ok?plan.usd:null;g.pays=plan.ok?plan.pays:null;
-        g.sender=plan.ok?plan.depositorId:null;g.receiver=plan.ok?plan.recipientId:null;          // clear from the ticket: who deposits and who receives
+        const g=x.mmFlow;g.coin=a.coin;g.chain=a.chain;g.pickedBy=uid;g.picks={};g.rok={};g.aok={};g.wok={};g.cok={};delete g.note;
+        g.suggest=plan.ok?plan.usd:null;g.pays=g.pays||plan.pays||null;
+        if(!g.sender&&plan.depositorId){g.sender=plan.depositorId;g.receiver=plan.recipientId;}          // clear from the ticket: who deposits and who receives
+        if(!(g.usd>0)){g.usd=plan.ok?plan.usd:null;g.fiat=plan.ok&&plan.fiat>0?plan.fiat:null;g.ratio=plan.ok&&plan.fiat>0&&plan.usd>0?plan.fiat/plan.usd:null;}
       });
-      await mmFlowGo(ch,plan.ok?"rolesok":"roles",{ping});
+      await mmFlowGo(ch,mmTicketOf(ch.id).mmFlow.sender?"confirm":"roles",{ping,drop:true});
     });
     await interaction.deleteReply().catch(()=>{});
     return;
+  }
+  // ── v20: the Confirm Deal card ──
+  if(head==="mm_fk"){
+    const act=parts[1];
+    if(act==="amt")return interaction.showModal(mmModal("mm_fm_amount","Deal Amount",[{id:"usd",label:"Amount in USD",hint:"for example 50",min:1,max:14}]));
+    await mmAck(interaction);
+    return mmFlowLock(ch.id,async()=>{
+      const t1=mmTicketOf(ch.id),f1=t1&&t1.mmFlow;need(!!f1&&f1.step==="confirm",stale);
+      if(act==="swap"){mmSaveTicket(ch.id,x=>{const g=x.mmFlow;[g.sender,g.receiver]=[g.receiver,g.sender];g.cok={};delete g.note;});return mmFlowEdit(ch,"confirm");}
+      if(act==="coin"){mmSaveTicket(ch.id,x=>{x.mmFlow.cok={};});return mmFlowGo(ch,"pick",{drop:true});}
+      need(f1.usd>0,"Set the amount first: press **Change Amount**. Nothing changed.");
+      let all=false;
+      mmSaveTicket(ch.id,x=>{const g=x.mmFlow;g.cok={...g.cok};for(const s of sides)g.cok[s]=Date.now();all=both(g.cok);});
+      return all?mmFlowFinish(ch):mmFlowEdit(ch,"confirm");
+    });
   }
   // ── roles (picked by hand) ──
   if(head==="mm_fr"){
@@ -2233,7 +2270,7 @@ async function mmFlowRoute(interaction,cid,parts){
   }
   // ── the deal amount ──
   if(head==="mm_fa"||head==="mm_fm_amount"){
-    need(uid===f.sender||owner,`Only <@${f.sender}> enters the amount, because they are the one sending. Nothing changed.`);
+    need(f.step==="confirm"?(party||owner):(uid===f.sender||owner),`Only <@${f.sender}> enters the amount, because they are the one sending. Nothing changed.`);
     if(head==="mm_fa"&&parts[1]==="enter")return interaction.showModal(mmModal("mm_fm_amount","Deal Amount",[{id:"usd",label:"Amount in USD",hint:"for example 50",min:1,max:14}]));
     const usd=head==="mm_fa"?f.suggest:mmParseUsd(interaction.fields.getTextInputValue("usd"));
     need(usd>0,"That is not an amount. Type a number like `50`. Nothing changed.");
@@ -2280,14 +2317,19 @@ function mmSummaryEmbed(e){
 async function mmFlowFinish(ch){
   const t0=mmTicketOf(ch.id),f=t0&&t0.mmFlow;
   if(!f||!f.coin||!f.chain||!f.sender||!f.receiver||!(f.usd>0))return null;
+  if(_mmMeta.frozen){                                                // an owner froze the middleman: nothing starts until it is back
+    mmSaveTicket(ch.id,t=>{if(t.mmFlow){t.mmFlow.cok={};t.mmFlow.note="The middleman is paused by an owner right now, so nothing was started. Confirm again when it is back.";}});
+    await mmFlowEdit(ch,"confirm");
+    return null;
+  }
   const plan=mmPlan(t0);
   let e;
   try{
     const id=await MMDB.lock("seq",async()=>{const n=(Number(await MMDB.get("seq"))||0)+1;await MMDB.set("seq",n);return "MM-"+String(n).padStart(4,"0");});
     const now=Date.now();
     e={v:2,flow:MM_FLOW_VER,id,channelId:ch.id,guildId:ch.guild?ch.guild.id:null,clientId:t0.userId,exchangerId:t0.claimedBy,startedBy:f.by||null,
-      depositorId:f.sender,recipientId:f.receiver,coin:f.coin,usd:f.usd,pays:f.pays||(plan.ok?plan.pays:"the agreed payment"),hero:dealOf(t0).hero,
-      state:"net",chain:null,nets:[f.chain],quotes:[],txs:[],watch:[],createdAt:now,updatedAt:now,log:[],agreed:{roles:f.rok||{},amount:f.aok||{},read:f.wok||{}}};
+      depositorId:f.sender,recipientId:f.receiver,coin:f.coin,usd:f.usd,pays:f.pays||(plan.ok?plan.pays:"the agreed payment"),hero:dealOf(t0).hero,fiat:f.fiat>0?f.fiat:null,c2c:!!dealOf(t0).c2c,
+      state:"net",chain:null,nets:[f.chain],quotes:[],txs:[],watch:[],createdAt:now,updatedAt:now,log:[],agreed:{roles:f.rok||{},amount:f.aok||{},read:f.wok||{},confirm:f.cok||{}}};
     mmNote(e,"started",f.by||null);
     await MMDB.set("e:"+id,e);_mmCache.set(id,e);
     try{e=await mmArm(id,f.chain);}
@@ -2304,10 +2346,12 @@ async function mmFlowFinish(ch){
     await mmFlowPost(ch,"pick");
     return null;
   }
-  await mmFlowFreeze(ch,"warn",f.msgId);
+  const v4=e.flow>=4;
+  if(v4&&f.step==="confirm"){const m0=f.msgId?await ch.messages.fetch(f.msgId).catch(()=>null):null;if(m0)await m0.delete().catch(()=>{});}      // v20: the confirm card goes away, the payment card is the one card
+  else await mmFlowFreeze(ch,f.step==="confirm"?"confirm":"warn",f.msgId);
   mmSaveTicket(ch.id,t=>{t.mmId=e.id;t.mmStage="net";delete t.mmFlow;delete t.mmOwner;delete t.mmAsk;});
-  await ch.send({embeds:[mmSummaryEmbed(e)],allowedMentions:{parse:[]}}).catch(()=>{});
-  await mmPostCard(ch,e,{fresh:true});
+  if(!v4)await ch.send({embeds:[mmSummaryEmbed(e)],allowedMentions:{parse:[]}}).catch(()=>{});
+  await mmPostCard(ch,e,{fresh:true,ping:v4?[e.depositorId]:null});
   mmStage(e);
   log(ch.guild,`MM OPEN: #${ch.name} | ${e.id} | ${fmtUSD(e.usd)} ${e.coin} | depositor ${e.depositorId} | recipient ${e.recipientId}`);
   return e;
@@ -2336,6 +2380,146 @@ async function mmFlowSweep(){
   }
 }
 
+// ── v20: one Confirm Deal card, Funds Secured / Check Your Payment, auto-complete, $freeze, $gas ─────────────────────
+const MM_AUTO_MS=10*60*1000;
+const mmPayWords=(pays,fiat,c2c)=>c2c||!(fiat>0)?`**${pays||"the payment"}**`:`**${fmtUSD(fiat)} ${pays||"payment"}**`;
+const MM_FROZEN_TEXT="Paused by an owner. Nothing can be released, refunded or cancelled right now. Your funds are safe and an owner is reviewing this deal.";
+const mmFrozenFor=e=>{if(e&&e.freeze)return e.freeze;if(_mmMeta.frozen&&!(e&&e.thaw))return _mmMeta.frozen;return null;};
+// The receipt after a release: one short card (a Get Help button until the ticket is marked complete)
+function mmReceiptV4(e,state){
+  const o=e.out||{},sent=o.sentRaw||o.amountRaw||e.gotRaw||"0";
+  const emb=mmEmb(e,"ok","Funds Released").setDescription([kHero(`${mmAmt(e,sent)}  ·  ${fmtUSD(e.usd)}`),`Sent to <@${e.recipientId}>${o.txid?`  ·  ${mmTxLink(e,o.txid)}`:""}`,
+    state==="done"?kNote("Marked complete."):state==="help"?kNote("An owner was asked to look. It will not be marked complete by itself."):kNote("Marked complete in 10 minutes. Problem? Press **Get Help**.")].join("\n"))
+    .setFooter(kFoot(`${e.id}  ·  ${mmTook(e)}`)).setTimestamp();
+  return {embeds:[emb],components:state?[]:[new ActionRowBuilder().addComponents(kBtn("mm_rhelp","Get Help",ButtonStyle.Secondary))]};
+}
+// Ten minutes after the release the ticket is marked complete by itself (same path as the manual confirm), unless somebody pressed Get Help
+async function mmAutoQueue(id,at){
+  _mmMeta.autoQ=_mmMeta.autoQ||{};
+  if(at)_mmMeta.autoQ[id]=at;else delete _mmMeta.autoQ[id];
+  await mmSaveMeta();
+}
+async function mmAutoComplete(id){
+  let go=false;
+  const e=await mmUpdate(id,x=>{if(x.state!=="released"||!x.autoAt||x.autoDone||x.helpAt||x.autoAt>Date.now())return;x.autoDone=Date.now();go=true;mmNote(x,"marked complete by itself");});
+  if(!go||!e)return false;
+  const ch=await mmChannelOf(e);if(!ch)return false;
+  const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets"),t=tickets[ch.id];
+  if(!t||t.status!=="open"||!t.claimedBy||t.reported||t.completionPending||t.mmId!==e.id)return false;
+  if(mmCompleteBlock(ch.id,false))return false;
+  t.completionPending=false;t.completionConfirmedAt=Date.now();delete t.completionConfirmedBy;delete t.completionMessageId;
+  const msg=e.receiptId?await ch.messages.fetch(e.receiptId).catch(()=>null):null;
+  if(msg)await msg.edit({content:null,...mmReceiptV4(e,"done")}).catch(()=>{});
+  t._overrideExchangerId=t.claimedBy;
+  const exUser=await client.users.fetch(t.claimedBy).catch(()=>({id:t.claimedBy,tag:t.claimedBy,username:t.claimedBy}));
+  const exMember=ch.guild?await ch.guild.members.fetch(t.claimedBy).catch(()=>null):null;
+  const proxy={_fake:true,guild:ch.guild,channel:ch,user:exUser,member:exMember,deferred:true,replied:false,editReply:async()=>{},followUp:async()=>{}};
+  await completeTrade(proxy,t,tickets);
+  log(ch.guild,`MM AUTO COMPLETE: #${ch.name} | ${e.id}`);
+  return true;
+}
+async function mmAutoSweep(){
+  const q=_mmMeta.autoQ||{},now=Date.now();
+  for(const [id,at] of Object.entries(q)){
+    if(at>now)continue;
+    await mmAutoComplete(id).catch(err=>console.error("[mm] auto complete:",err.message));
+    await mmAutoQueue(id,0).catch(()=>{});
+  }
+}
+// ── $freeze / $unfreeze [MM-0007] (owners): everything that moves money stops; deposits are still seen ──
+async function mmFreezeRun(sub,arg,uid){
+  const id=/^mm-\d+$/i.test(arg||"")?String(arg).toUpperCase():null;
+  const open=(await MMDB.list("e:")).map(([,e])=>e).filter(e=>!MM_TERMINAL.has(e.state));
+  if(id&&!open.some(e=>e.id===id))throw new MmError("no",`${id} is not an open deal.`);
+  if(sub==="freeze"){
+    if(id)await mmUpdate(id,x=>{x.freeze={by:uid,at:Date.now()};delete x.thaw;mmNote(x,"frozen by an owner",uid);});
+    else{_mmMeta.frozen={by:uid,at:Date.now()};await mmSaveMeta();}
+  }else{
+    if(id)await mmUpdate(id,x=>{delete x.freeze;delete x.thaw;mmNote(x,"unfrozen by an owner",uid);});
+    else{_mmMeta.frozen=null;await mmSaveMeta();for(const e of open)if(e.thaw||e.freeze)await mmUpdate(e.id,x=>{delete x.thaw;delete x.freeze;});}
+  }
+  for(const e of open.filter(x=>!id||x.id===id)){
+    const ch=await mmChannelOf(e).catch(()=>null),x=await mmFresh(e.id).catch(()=>null);
+    if(ch&&x)await mmRefreshCard(ch,x).catch(()=>{});
+  }
+  const d=await mmDealsReport();
+  return {id,on:sub==="freeze",count:d.count,text:d.text};
+}
+// ── $gas (owners): one private channel that lists every middleman wallet that needs gas, and closes itself when they are all funded ──
+const MM_GAS_PLAN=[{chain:"sol",coin:"SOL",dec:9,low:0.02,send:0.05,name:"Solana"},{chain:"eth",coin:"ETH",dec:18,low:0.003,send:0.01,name:"Ethereum"},{chain:"bsc",coin:"BNB",dec:18,low:0.005,send:0.01,name:"BNB Chain"}];
+async function mmGasRows(){
+  const out=[];
+  for(const p of MM_GAS_PLAN){
+    const addr=mmDepositAddress(p.chain);if(!addr)continue;
+    let bal=null;
+    try{bal=Number((await mmBalances(p.chain,null,addr)).native)/10**p.dec;}catch{}
+    out.push({...p,addr,bal,ok:bal==null?null:bal>=p.low});
+  }
+  return out;
+}
+function mmGasPayload(rows){
+  const state=r=>r.ok==null?"unknown":r.ok?"OK":"LOW",all=rows.length>0&&rows.every(r=>r.ok);
+  const evm=rows.find(r=>MM_CHAINS[r.chain].family==="evm"),sol=rows.find(r=>r.chain==="sol");
+  const L=[rows.map(r=>`**${r.coin}** on ${r.name}  ·  ${r.bal==null?"?":r.bal.toFixed(4)}  ·  **${state(r)}**${r.ok===false?`  ·  send about ${r.send} ${r.coin}`:""}`).join("\n"),"",
+    ...(sol?[`Solana\n\`\`\`${sol.addr}\`\`\``]:[]),...(evm?[`Ethereum and BNB Chain (one address)\n\`\`\`${evm.addr}\`\`\``]:[]),
+    kNote(`Konvert Swap destinations: ${rows.map(r=>`${r.coin} to ${r.addr}`).join("  ·  ")}`),
+    kNote(all?"Everything has enough. This channel closes by itself.":"This card updates by itself. The channel closes once everything is funded.")];
+  const emb=kEmbed("Middleman",all?"ok":"warn").setTitle(all?"Gas Is Funded":"Fund The Middleman Gas").setDescription(L.join("\n")).setFooter(kFoot("Built-in server middleman bot")).setTimestamp();
+  const row=new ActionRowBuilder().addComponents(...(sol?[kBtn("mm_gascopy__sol","Copy Solana Address",ButtonStyle.Secondary)]:[]),...(evm?[kBtn("mm_gascopy__evm","Copy EVM Address",ButtonStyle.Secondary)]:[]),kBtn("mm_gasrefresh","Refresh",ButtonStyle.Secondary));
+  return {embeds:[emb],components:[row],all};
+}
+async function mmGasRun(message){
+  const g=message.guild;if(!g)return null;
+  const {all,...payload}=mmGasPayload(await mmGasRows());
+  let ch=_mmMeta.gasCh?(g.channels.cache.get(_mmMeta.gasCh)||await g.channels.fetch(_mmMeta.gasCh).catch(()=>null)):null;
+  if(!ch){
+    const owners=[];
+    for(const id of CONFIG.OWNER_IDS){const m=await g.members.fetch(id).catch(()=>null);if(m)owners.push(id);}
+    const P=PermissionFlagsBits;
+    ch=await g.channels.create({name:"gas-funding",type:ChannelType.GuildText,parent:CONFIG.TICKET_CATEGORY||undefined,
+      permissionOverwrites:[{id:g.id,deny:[P.ViewChannel]},{id:client.user.id,allow:[P.ViewChannel,P.SendMessages,P.ManageChannels,P.ReadMessageHistory]},
+        ...owners.map(id=>({id,allow:[P.ViewChannel,P.SendMessages,P.ReadMessageHistory]}))]}).catch(err=>{console.error("[mm] gas channel:",err.message);return null;});
+    if(!ch)return null;
+  }
+  const sent=await ch.send({content:CONFIG.OWNER_IDS.map(id=>`<@${id}>`).join(" "),...payload,allowedMentions:{users:CONFIG.OWNER_IDS}}).catch(()=>null);
+  _mmMeta.gasCh=ch.id;_mmMeta.gasMsg=sent?sent.id:null;_mmMeta.gasOkAt=all?Date.now():0;
+  await mmSaveMeta();
+  return ch;
+}
+async function mmGasTick(){
+  if(!_mmMeta.gasCh)return;
+  const g=client.guilds.cache.get(CONFIG.GUILD_ID)||client.guilds.cache.first();if(!g)return;
+  const ch=g.channels.cache.get(_mmMeta.gasCh)||await g.channels.fetch(_mmMeta.gasCh).catch(()=>null);
+  if(!ch){_mmMeta.gasCh=null;await mmSaveMeta();return;}
+  const {all,...payload}=mmGasPayload(await mmGasRows());
+  const msg=_mmMeta.gasMsg?await ch.messages.fetch(_mmMeta.gasMsg).catch(()=>null):null;
+  if(msg)await msg.edit({content:null,...payload}).catch(()=>{});
+  if(all){
+    if(!_mmMeta.gasOkAt){_mmMeta.gasOkAt=Date.now();await mmSaveMeta();}
+    else if(Date.now()-_mmMeta.gasOkAt>=60*1000){await ch.delete().catch(()=>{});_mmMeta.gasCh=null;_mmMeta.gasMsg=null;_mmMeta.gasOkAt=0;await mmSaveMeta();}
+  }else if(_mmMeta.gasOkAt){_mmMeta.gasOkAt=0;await mmSaveMeta();}
+}
+async function mmGasButton(interaction,parts){
+  if(parts[0]==="mm_gascopy")return interaction.reply({content:mmDepositAddress(parts[1]==="sol"?"sol":"eth")||"No address right now.",flags:64});
+  await interaction.deferUpdate().catch(()=>{});
+  const {all,...payload}=mmGasPayload(await mmGasRows());
+  if(interaction.message)await interaction.message.edit({content:null,...payload}).catch(()=>{});
+}
+// ── the short info cards ──
+function mmCoinsShort(){
+  const by={};
+  for(const k of MM_PICK_FULL){const [c,ch]=k.split(":");if(mmDepositAddress(ch))(by[c]=by[c]||[]).push(ch);}
+  const coins=Object.keys(by);
+  if(!coins.length)return "Being set up. Until then an owner middlemans every deal.";
+  const nets=[...new Set(["USDT","USDC"].flatMap(c=>by[c]||[]))].map(ch=>MM_CHAINS[ch].name);
+  return coins.join(", ")+(nets.length?`. USDT and USDC on ${nets.join(", ")}.`:".");
+}
+const MM_INFO_LINES=()=>["Konvert's own middleman holds the crypto until both sides are done, so nobody goes first.","",
+  "**1.** The crypto sender pays the bot. It spots the payment by itself.","**2.** The other side pays. The sender checks they got it.","**3.** The bot releases the crypto. Done.","",
+  `**Coins:** ${mmCoinsShort()}`,"Stay inside your ticket. Stuck? Type `$mm help`."];
+function mmGuideEmbed(){return slim("Middleman Guide").setTitle("Built-In Server Middleman").setDescription(MM_INFO_LINES().join("\n")).setFooter({text:"Konvert Exchange  ·  Built-in server middleman"});}
+function mmInfoEmbed(){return kEmbed("Middleman").setTitle("Built-In Server Middleman").setThumbnail(IMG.LOGO).setDescription(MM_INFO_LINES().join("\n")).setImage(IMG.BANNER).setFooter(kFoot("Built-in server middleman"));}
+
 // ── v19: the cards of a deal that went through the flow ───────────────────────────────────────────────────────
 // Waiting For Payment (with a QR of the address) · Payment Detected · Shortfall Detected · Payment Confirmed. Deals from before v19 keep the v18 cards.
 let _qrLib;const _mmQrCache=new Map();
@@ -2358,7 +2542,7 @@ function mmFlowCardEmbed(e,note,qr){
     if(qr)emb.setThumbnail("attachment://qr.png");
     L.push(`${D}, send the amount shown below to the address below. A little off is fine.`,kHero(`${mmFmtUnits(e.needRaw,e.decimals,e.dp)} ${e.coin}`),
       `Worth about ${fmtUSD(e.usd)}  ·  this amount holds until <t:${Math.floor(e.quoteExp/1000)}:t>`,"```"+e.address+"```",
-      kNote("I spot your payment by myself, so there is nothing to paste. Sending from an exchange? It may take its fee out, so send a little extra."));
+      kNote("I spot the payment by myself. Sending from an exchange? Send a little extra for its fee."));
     if((e.watch||[]).length)L.push(`Looking for ${e.watch.map(w=>`\`${mmShort(w.txid)}\``).join("  ")}. The network can't see it yet, so I keep checking for 30 minutes.`);
   }else if(e.state==="confirming"){
     const v=mmVerdict(e);
@@ -2372,7 +2556,18 @@ function mmFlowCardEmbed(e,note,qr){
     L.push(`Received **${mmAmt(e,v.got)}** of **${mmAmt(e,v.asked,e.dp)}**  ·  **${mmAmt(e,v.diff)}** short. Your funds are safe.`);
     L.push(`${R}, press **Continue** to accept what arrived. Or press **Cancel Deal**: when both of you agree, it goes back to ${D}. ${D}, you can also send the rest to this address and it is added automatically:`);
     L.push("```"+e.address+"```");
-  }else{                                                             // funded, nothing decided yet: Payment Confirmed
+  }else if(e.flow>=4){                                               // v20: funded, nothing decided yet: Funds Secured, then Check Your Payment
+    const v=mmVerdict(e),amt=mmAmt(e,e.gotRaw),pay=mmPayWords(e.pays,e.fiat,e.c2c);
+    if(e.fiatSent){
+      emb=mmEmb(e,e.dispute?"bad":"brand","Check Your Payment");
+      L.push(`${R} says ${e.c2c?"they sent":"the payment was sent:"} ${pay}.`,`${D}, check that you got it. Once you did, press **Release Funds**.`,kNote(`${amt} is held for you`));
+    }else{
+      emb=mmEmb(e,e.dispute?"bad":"ok","Funds Secured");
+      L.push(`${kHero(`${amt} held`)}`,`${R}, send ${pay} to ${D} now, then press **I Sent The Payment**.`);
+    }
+    if(e.accepted)L.push(`<@${e.accepted.by}> accepted the shortfall.`);
+    if(v.got!==v.asked)L.push(mmRecvLine(e));
+  }else{                                                             // funded, nothing decided yet: Payment Confirmed (deals from v19)
     const v=mmVerdict(e),tx0=(e.txs||[])[0];
     emb=mmEmb(e,e.dispute?"bad":"ok","Payment Confirmed");
     L.push(`**Receiver**: ${R}, go ahead and send the payment to ${D} now (${e.pays}).`,`**Sender**: ${D}, release the funds once the payment is in your own account.`,"If the deal is cancelled, the refund goes to the sender.");
@@ -2390,13 +2585,21 @@ function mmFlowCardEmbed(e,note,qr){
 }
 // Which states of a deal from the flow have the new card (the rest, and every older deal, use the v18 one)
 const mmFlowStyled=e=>!!e.flow&&(e.state==="await"||e.state==="short"||(e.state==="confirming"&&!e.ref)||(e.state==="funded"&&!e.rel&&!e.ref));
-function mmCardEmbed(e,note,qr){return mmFlowStyled(e)?mmFlowCardEmbed(e,note,qr):mmCardEmbedV18(e,note);}
+function mmCardEmbed(e,note,qr){
+  const emb=mmFlowStyled(e)?mmFlowCardEmbed(e,note,qr):mmCardEmbedV18(e,note);
+  if(mmFrozenFor(e)&&!MM_TERMINAL.has(e.state))emb.setDescription(`${String((emb.data&&emb.data.description)||"")}\n**Paused by an owner.** Funds are safe. An owner is reviewing this deal.`.slice(0,4000));
+  return emb;
+}
 function mmCardRows(e){
   if(mmFlowStyled(e)&&!MM_TERMINAL.has(e.state)){
     const G=ButtonStyle.Secondary,row=(...b)=>new ActionRowBuilder().addComponents(...b);
     if(e.state==="await")return [row(kBtn("mm_copy","Copy Details",G),kBtn("mm_menu","Help",G))];
     if(e.state==="short"&&!e.dispute)return [row(kBtn("mm_cont","Continue",ButtonStyle.Success),kBtn("mm_cancel","Cancel Deal",ButtonStyle.Danger))];
-    if(e.state==="funded"&&!e.dispute)return [row(kBtn("mm_release","Release Funds",ButtonStyle.Success),kBtn("mm_cancel","Cancel Deal",ButtonStyle.Danger),kBtn("mm_menu","Get Help",G))];
+    if(e.state==="funded"&&!e.dispute){
+      if(mmFrozenFor(e))return [row(kBtn("mm_menu","Get Help",G))];
+      if(e.flow>=4&&!e.fiatSent)return [row(kBtn("mm_sent","I Sent The Payment",ButtonStyle.Success),kBtn("mm_release","Release Funds",G),kBtn("mm_cancel","Cancel Deal",ButtonStyle.Danger),kBtn("mm_menu","Get Help",G))];
+      return [row(kBtn("mm_release","Release Funds",ButtonStyle.Success),kBtn("mm_cancel","Cancel Deal",ButtonStyle.Danger),kBtn("mm_menu","Get Help",G))];
+    }
   }
   return mmCardRowsV18(e);
 }
@@ -2410,7 +2613,8 @@ async function mmPostCard(channel,e,opts){
   if(opts.ping&&opts.ping.length){payload.content=opts.ping.map(u=>`<@${u}>`).join(" ");payload.allowedMentions={users:opts.ping};}
   const old=e.cardId?await channel.messages.fetch(e.cardId).catch(()=>null):null;
   if(old&&!opts.fresh){const ok=await old.edit(e.flow?{...payload,attachments:[]}:payload).then(()=>true).catch(()=>false);if(ok)return old;}      // (a card from the flow carries its QR only while it waits for the payment)
-  if(old){                                                         // the old card loses its buttons; opts.freeze = [title, text] also turns it into a short line of what it was (an address and a QR must not stay behind as if the card were open)
+  if(old&&opts.drop&&e.flow>=4)await old.delete().catch(()=>{});      // v20: the old card goes away (fewer cards in the chat)
+  else if(old){                                                         // the old card loses its buttons; opts.freeze = [title, text] also turns it into a short line of what it was (an address and a QR must not stay behind as if the card were open)
     const gone=opts.freeze?{content:null,embeds:[mmEmb(e,"mute",opts.freeze[0]).setDescription(opts.freeze[1]).setFooter(kFoot(`${e.id}`))],components:[],attachments:[]}:{components:[]};
     await old.edit(gone).catch(()=>{});
   }
@@ -2498,10 +2702,11 @@ async function mmCancelSweep(e){
 // ── Release Funds: read first, and the button wakes up after five seconds ─────────────────────────────────────────
 // The wait is kept on the server too (e.relAsk), so an old or hurried button can't skip it.
 function mmReleaseAskPayload(e,left){
-  const tag=e.payout?mmAddrTag(e.payout):"-",emb=mmEmb(e,"warn","Read Before Confirming").setDescription([
-    "**READ BEFORE CONFIRMING.**",`You are sending **${mmAmt(e,e.gotRaw)}** to <@${e.recipientId}>.`,
-    "If anyone told you to release or cancel, stop. This cannot be undone.",
-    `Release only after the ${e.pays} payment is in your own account.${e.contract?"":" The network fee is taken out of the amount."}`].join("\n"));
+  const tag=e.payout?mmAddrTag(e.payout):"-",v4=e.flow>=4;
+  const lines=v4?["**Check and make sure you got the payment.**",`Once you did, you're safe to release **${mmAmt(e,e.gotRaw)}  (${fmtUSD(e.usd)})** to <@${e.recipientId}>. This cannot be undone.`,...(e.contract?[]:[kNote("The network fee comes out of the amount.")])]
+    :["**READ BEFORE CONFIRMING.**",`You are sending **${mmAmt(e,e.gotRaw)}** to <@${e.recipientId}>.`,"If anyone told you to release or cancel, stop. This cannot be undone.",
+      `Release only after the ${e.pays} payment is in your own account.${e.contract?"":" The network fee is taken out of the amount."}`];
+  const emb=mmEmb(e,"warn",v4?"Confirm Release":"Read Before Confirming").setDescription(lines.join("\n"));
   return {embeds:[emb],components:[new ActionRowBuilder().addComponents(
     left>0?kBtn("mm_wait",`Confirm Release (${left})`,ButtonStyle.Success).setDisabled(true):kBtn(`mm_go__release__${e.id}__${tag}`,"Confirm Release",ButtonStyle.Success),
     kBtn("mm_back","Cancel",ButtonStyle.Secondary))]};
@@ -2733,6 +2938,7 @@ async function mmDrive(id,opts){
     let e=await mmFresh(id);
     if(!e||(e.state!=="sending"&&!(opts.retry&&e.state==="stuck")))return e;
     const fam=MM_CHAINS[e.chain].family,o=e.out,sent=o.txids||[];
+    if(sent.length===0&&mmFrozenFor(e))return e;                       // v20: frozen and nothing was sent yet: it waits
     let nonce=null,minGas=null,again=sent.length===0;
     if(sent.length){
       let pending=null,failed=null;
@@ -2883,12 +3089,21 @@ async function mmAnnounceDone(e){
   if(e.kind){for(const u of new Set([e.depositorId]))mmDm(u,{embeds:[receipt]});return;}          // an owner's sweep or return: only the owner who asked hears about it
   for(const u of new Set([e.depositorId,e.recipientId]))mmDm(u,{embeds:[receipt]});
   if(!ch)return;
-  await mmRefreshCard(ch,e);
-  await ch.send({content:`<@${e.depositorId}> <@${e.recipientId}>`,embeds:[receipt],allowedMentions:{users:[e.depositorId,e.recipientId]}}).catch(()=>{});
+  const v4=e.flow>=4&&!refund;
+  if(v4){const oc=e.cardId?await ch.messages.fetch(e.cardId).catch(()=>null):null;if(oc)await oc.delete().catch(()=>{});}      // v20: one short receipt instead of the card and a long receipt
+  else await mmRefreshCard(ch,e);
+  const both=`<@${e.depositorId}> <@${e.recipientId}>`;
+  const rsent=await ch.send(v4?{content:both,...mmReceiptV4(e),allowedMentions:{users:[e.depositorId,e.recipientId]}}:{content:both,embeds:[receipt],allowedMentions:{users:[e.depositorId,e.recipientId]}}).catch(()=>null);
   log(ch.guild,`MM ${refund?"REFUND":"RELEASE"}: #${ch.name} | ${e.id} | ${mmAmt(e,sent)} -> ${o.to} | ${o.txid||"by hand"}`);
   if(!refund){
-    const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets"),t=tickets[ch.id];
-    if(t&&t.status==="open"&&t.claimedBy&&!t.completionPending&&!t.reported)await requestCompletion(ch,t,tickets).catch(()=>{});
+    if(v4){
+      const at=Date.now()+MM_AUTO_MS;
+      await mmUpdate(e.id,x=>{x.autoAt=at;if(rsent)x.receiptId=rsent.id;}).catch(()=>{});
+      await mmAutoQueue(e.id,at).catch(()=>{});
+    }else{
+      const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets"),t=tickets[ch.id];
+      if(t&&t.status==="open"&&t.claimedBy&&!t.completionPending&&!t.reported)await requestCompletion(ch,t,tickets).catch(()=>{});
+    }
   }
 }
 // The deposit is confirmed: tell both sides what happens next
@@ -2902,7 +3117,7 @@ async function mmAnnounceFunded(e){
   mmStage(e);
   if(!ch)return;
   if(e.flow){                                                        // a deal from the flow: one fresh "Payment Confirmed" card that pings both sides
-    await mmPostCard(ch,e,{fresh:true,ping:[e.recipientId,e.depositorId],freeze:["Payment Received",`${mmAmt(e,e.gotRaw)} arrived and is confirmed on the network. The card below is the one to use.`]});
+    await mmPostCard(ch,e,e.flow>=4?{fresh:true,drop:true,ping:[e.recipientId]}:{fresh:true,ping:[e.recipientId,e.depositorId],freeze:["Payment Received",`${mmAmt(e,e.gotRaw)} arrived and is confirmed on the network. The card below is the one to use.`]});
     log(ch.guild,`MM FUNDED: #${ch.name} | ${e.id} | ${mmAmt(e,e.gotRaw)} | ${(e.txs[0]||{}).txid||"by hand"}`);
     return;
   }
@@ -3537,6 +3752,8 @@ async function mmSweep(){
       try{await mmSweepOne(e);}catch(err){if(!(err instanceof MmError&&(err.code==="rpc"||err.code==="busy"||err.code==="state")))console.error(`[mm] sweep ${e.id}:`,err.message);}
     }
     await mmFlowSweep().catch(err=>console.error("[mm] flow sweep:",err.message));
+    await mmAutoSweep().catch(err=>console.error("[mm] auto sweep:",err.message));
+    await mmGasTick().catch(err=>console.error("[mm] gas:",err.message));
     const again=(await MMDB.list("e:")).map(([,x])=>x);
     await mmSweepDeposits(again);                                                                       // deposits are found by the bot itself: nobody has to paste a transaction
     await mmScanStray(again);                                                                           // and money that belongs to no deal is noticed too
@@ -3974,6 +4191,10 @@ async function mmDecide(id,kind,by,opts){
 async function mmGoPayout(id,kind,by,opts){
   opts=opts||{};
   const cur=await mmFresh(id);
+  if(cur&&mmFrozenFor(cur)){                                         // v20: frozen. Only an owner can go ahead, and that is remembered for this deal
+    if(!opts.owner)throw new MmError("state",MM_FROZEN_TEXT);
+    await mmUpdate(id,x=>{x.thaw={by,at:Date.now()};delete x.freeze;mmNote(x,"an owner went ahead while frozen",by);});
+  }
   if(cur&&(cur.state==="sending"||cur.state==="stuck"||cur.state==="payout"))return mmRetryPayout(id,kind,by,opts);
   const d=await mmDecide(id,kind,by,opts);
   let e=d.e;
@@ -4037,6 +4258,7 @@ function mmPayoutText(r,kind){
 
 // Cancelling: a deal that holds nothing is simply cancelled. Once funds have arrived (or are arriving), cancelling IS the refund flow.
 async function mmCancelDo(e,uid,owner){
+  if(!owner&&mmFrozenFor(e))throw new MmError("state",MM_FROZEN_TEXT);
   const id=e.id,need=(ok,text)=>{if(!ok)throw new MmError("no",text);};
   if((e.state==="net"||e.state==="await")&&!(e.txs||[]).length){
     need(!(e.watch||[]).length||owner,"A transaction is still being looked for, so this can't be cancelled yet. Nothing changed and your funds are safe. Wait for it, or press **Ping Owners**.");
@@ -4292,7 +4514,11 @@ const mmFollow=(i,content)=>i.followUp({content,flags:64}).catch(()=>{});
 async function mmRoute(interaction,cid){
   const parts=cid.split("__"),head=parts[0],ch=interaction.channel;
   const need=(ok,text)=>{if(!ok)throw new MmError("no",text);};
-  if(/^mm_(?:pick|pickm|fr|fc|fa|fo|fw|fm_amount)$/.test(head))return mmFlowRoute(interaction,cid,parts);       // v19: the steps of the setup in the ticket
+  if(/^mm_(?:pick|pickm|fr|fc|fk|fa|fo|fw|fm_amount)$/.test(head))return mmFlowRoute(interaction,cid,parts);
+  if(head==="mm_gascopy"||head==="mm_gasrefresh"){                  // v20: the gas channel (owners only)
+    need(isOwner(interaction.user.id,interaction.member),"Only an owner can do that.");
+    return mmGasButton(interaction,parts);
+  }       // v19: the steps of the setup in the ticket
   // ── owner actions (they carry the deal's ID, so they also work from a DM or from /mmadmin) ──
   if(head==="mm_x"||head==="mm_xm"){
     const act=parts[1],{e,uid,owner}=await mmCtx(interaction,parts[2]);
@@ -4371,6 +4597,29 @@ async function mmRoute(interaction,cid){
   const id=e.id,party=isDep||isRec;
   need(party||owner,"Only the two people in this exchange (or an owner) can use the middleman.");
   const flagged=!!(ticket&&ticket.reported);
+  if(!owner&&["mm_release","mm_refund","mm_go","mm_cancel","mm_cc","mm_sent"].includes(head)&&mmFrozenFor(e))throw new MmError("state",MM_FROZEN_TEXT);
+  if(head==="mm_sent"){                                              // v20: the person who sends the payment says so, and the other side is asked to check
+    need(isRec||owner,`Only <@${e.recipientId}> sends the payment, so only they press this. Nothing changed.`);
+    need(!flagged||owner,"This ticket is flagged. An owner has to review it first. Nothing changed.");
+    need(e.state==="funded"&&!e.rel&&!e.ref&&!e.dispute,mmStateWhy(e)||"That step is over. Nothing changed.");
+    if(e.fiatSent)return interaction.reply({content:"That is already marked as sent. Nothing changed.",flags:64});
+    await interaction.deferUpdate().catch(()=>{});
+    const x=await mmUpdate(id,y=>{if(y.state==="funded"&&!y.rel&&!y.ref&&!y.fiatSent)y.fiatSent={by:uid,at:Date.now()};});
+    if(ch&&x.fiatSent&&x.fiatSent.by===uid)await mmPostCard(ch,x,{fresh:true,drop:true,ping:[x.depositorId]});
+    return;
+  }
+  if(head==="mm_rhelp"){                                             // v20: a problem after the release: the ticket is not marked complete by itself
+    need(e.state==="released"&&!e.autoDone,"This one is already closed out. Type `$mm help` if you still need an owner.");
+    await interaction.deferUpdate().catch(()=>{});
+    const x=await mmUpdate(id,y=>{if(!y.autoDone&&!y.helpAt){y.helpAt=Date.now();mmNote(y,"help asked after the release",uid);}});
+    await mmAutoQueue(id,0).catch(()=>{});
+    if(ch){
+      const m=x.receiptId?await ch.messages.fetch(x.receiptId).catch(()=>null):null;
+      if(m)await m.edit({content:null,...mmReceiptV4(x,"help")}).catch(()=>{});
+      await mmHelp(ch,uid,x,"Asked for help right after the funds were released.");
+    }
+    return;
+  }
   if(head==="mm_menu")return interaction.reply({...mmMenuPayload(e,{isDep,isRec,owner}),flags:64});
   if(head==="mm_help"){
     const r=await mmHelp(ch,uid,e);
@@ -4579,7 +4828,7 @@ async function mmRoute(interaction,cid){
 // "$mm" asks (or brings the card back) · "$mm help" pings the owners · "we need mm" asks too · the receiving person pastes their address here · owners run the
 // whole deal with "$mm release", "$mm refund", "$mm funded 0.1", "$mm sent <tx>", "$mm approve", "$mm panel" ... and, anywhere, "$mm wallet", "$mm deals", ...
 const MM_HELP_PARTY="`$mm` shows the card  ·  `$mm help` pings the owners  ·  `$mm status`  ·  `$mm release`  ·  `$mm refund`  ·  `$mm continue` (accept a shortfall)  ·  `$mm cancel`  ·  `$mm dispute <what went wrong>`  ·  `$mm address <your address>`\nYou can also just say **we need mm** to start it, and paste your address in the chat when the funds are released.";
-const MM_HELP_OWNER="Owner commands: `$mm status`  ·  `$mm panel`  ·  `$mm release`  ·  `$mm refund`  ·  `$mm accept`  ·  `$mm funded <amount> [tx]`  ·  `$mm approve`  ·  `$mm reject`  ·  `$mm sent [tx]`  ·  `$mm retry`  ·  `$mm payout <address>`  ·  `$mm refundto <address>`  ·  `$mm cancel`  ·  `$mm undispute`  ·  `$mm wallet`  ·  `$mm deals`  ·  `$mm send <deal> <address>`  ·  `$mm sweep <chain> <address>`  ·  `$mm close <deal>`  ·  `$mm history <deal>`  ·  `$mm help`";
+const MM_HELP_OWNER="Owner commands: `$mm status`  ·  `$mm panel`  ·  `$mm release`  ·  `$mm refund`  ·  `$mm accept`  ·  `$mm funded <amount> [tx]`  ·  `$mm approve`  ·  `$mm reject`  ·  `$mm sent [tx]`  ·  `$mm retry`  ·  `$mm payout <address>`  ·  `$mm refundto <address>`  ·  `$mm cancel`  ·  `$mm undispute`  ·  `$mm wallet`  ·  `$mm deals`  ·  `$mm send <deal> <address>`  ·  `$mm sweep <chain> <address>`  ·  `$mm close <deal>`  ·  `$mm history <deal>`  ·  `$freeze`  ·  `$unfreeze`  ·  `$gas`  ·  `$mm help`";
 const _mmIntentAt=new Map();
 async function mmMessage(message,ticket){
   if(!ticket||ticket.status!=="open")return false;
@@ -4592,7 +4841,7 @@ async function mmMessage(message,ticket){
   const x={uid,ch,owner,party,say,message};
   try{
     if(cmd)return await mmCommand(ticket,String(cmd[1]||"").trim(),x);
-    if(ticket.mmFlow&&ticket.mmFlow.step==="amount"&&await mmFlowTyped(ticket,x,text))return false;          // the sender typed the amount (an ordinary message as far as everything else is concerned)
+    if(ticket.mmFlow&&(ticket.mmFlow.step==="amount"||ticket.mmFlow.step==="confirm")&&await mmFlowTyped(ticket,x,text))return false;          // the sender typed the amount (an ordinary message as far as everything else is concerned)
     if(text.length<=70&&mmWantsMm(text)){await mmIntent(ticket,x);return false;}       // (an ordinary message as far as everything else is concerned)
     const e=mmActive(ch.id);
     if(!e)return false;
@@ -4738,7 +4987,7 @@ async function mmCommand(ticket,arg,x){
 
 // ── Owner tools that work anywhere ("$mm wallet", "$mm deals", "$mm send ...") ──────────────────────────────────
 // The answer goes to the owner's DMs (a ticket has clients in it, and the wallet is nobody else's business).
-const MM_GLOBAL_SUBS=new Set(["wallet","deals","send","sweep","close","history"]);
+const MM_GLOBAL_SUBS=new Set(["wallet","deals","send","sweep","close","history","freeze","unfreeze","gas"]);
 const mmAge=ms=>{const s=Math.max(0,Math.round(ms/1000)),d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60);return d?`${d}d ${h}h`:h?`${h}h ${m}m`:m?`${m}m`:`${s}s`;};
 async function mmWalletReport(){
   const w=mmWallets(),rows=await mmWalletRows(),out=[];
@@ -4802,7 +5051,8 @@ async function mmSweepConfirm(act,code,uid){
 async function mmGlobalCommand(message,ticket){
   const text=String(message.content||"").trim();
   if(!text||text.length>400||text[0]!=="$")return false;
-  const m=text.match(/^\$(?:mm|middleman)\s+(\w+)(?:\s+([\s\S]*))?$/i);
+  let m=text.match(/^\$(?:mm|middleman)\s+(\w+)(?:\s+([\s\S]*))?$/i);
+  if(!m)m=text.match(/^\$(freeze|unfreeze|gas)(?:\s+([\s\S]*))?$/i);          // v20: $freeze, $unfreeze and $gas work without "mm"
   if(!m)return false;
   const sub=m[1].toLowerCase(),rest=String(m[2]||"").trim(),sp=rest.split(/\s+/).filter(Boolean);
   if(!MM_GLOBAL_SUBS.has(sub)||(sub==="wallet"&&rest))return false;                // ("$mm wallet <address>" is the receiver's payout address)
@@ -4816,6 +5066,14 @@ async function mmGlobalCommand(message,ticket){
   };
   const dealArg=()=>(sp[0]&&/^mm-\d+$/i.test(sp[0])?sp[0].toUpperCase():(ticket&&ticket.mmId)||null);
   try{
+    if(sub==="freeze"||sub==="unfreeze"){
+      const r=await mmFreezeRun(sub,sp[0],uid);
+      return await dm({embeds:[kEmbed("Middleman",r.on?"warn":"ok").setTitle(`${r.id||"Middleman"} ${r.on?"Frozen":"Unfrozen"}`).setDescription((r.on?`Releases, refunds, cancels and new deals are stopped${r.id?` for ${r.id}`:""}. Deposits are still seen. A payout that was already sent can't be recalled.\n\nOpen deals (${r.count}):\n${r.text}\n\nTo release or refund one deal while frozen, type \`$mm release\` or \`$mm refund\` in its ticket. \`$unfreeze\` turns everything back on.`:"Everything works again.").slice(0,4000)).setTimestamp()]}),true;
+    }
+    if(sub==="gas"){
+      const ch=await mmGasRun(message);
+      return await dm({content:ch?`The gas list is open in <#${ch.id}>. It updates by itself and closes when every wallet is funded.`:"I couldn't open the gas channel. Check my permissions, or use `$mm wallet`."}),true;
+    }
     if(sub==="wallet")return await dm({embeds:[kEmbed("Middleman").setTitle("Middleman Wallet").setDescription((await mmWalletReport()).slice(0,4000))]}),true;
     if(sub==="deals"){const d=await mmDealsReport();return await dm({embeds:[kEmbed("Middleman").setTitle(`Open Middleman Deals (${d.count})`).setDescription(d.text.slice(0,4000))]}),true;}
     if(sub==="history"){
@@ -4853,29 +5111,7 @@ function mmCoinsText(){
   const out=Object.entries(by).map(([c,n])=>{const nets=n.filter(Boolean);return nets.length?`**${c}** (${nets.join(", ")})`:`**${c}**`;});
   return out.length?out.join("  ·  "):"Being set up. Until then an owner middlemans every deal.";
 }
-function mmGuideEmbed(){
-  return slim("Middleman Guide").setTitle("Built-In Server Middleman Bot")
-    .setDescription("Konvert has its own **built-in server middleman bot**. It runs inside your ticket and holds the crypto side of an exchange until both sides are done, so nobody has to go first and nobody has to join another server.")
-    .addFields(
-      {name:"When it is used",value:"Whenever an exchange is above your exchanger's go-first limit (it is in their name, like **Up To $50**), or their name says **Use MM Always**. You can also ask for it on any exchange: just say **we need mm** in your ticket, or type `$mm`.",inline:false},
-      {name:"How it works",value:"**1.** Whoever is sending the crypto sends it to the address on the card. The bot spots the payment by itself, so there is nothing to paste.\n**2.** It confirms the payment on the blockchain and says **Funds Secured**.\n**3.** The other side pays.\n**4.** The sender presses **Release Funds**, the receiver pastes their address in the chat, and the bot sends the crypto on. If the exchange is called off it is refunded instead.",inline:false},
-      {name:"Coins it holds",value:mmCoinsText().slice(0,1024),inline:false},
-      {name:"Anything else",value:`For other coins, gift cards, custom orders or amounts above **${fmtUSD(_mmMeta.maxUsd)}**, a Konvert owner acts as the middleman in your ticket.`,inline:false},
-      {name:"Stay safe",value:"The middleman only ever appears **inside your ticket**, as a card from Konvert Bot. Staff never DM first, and nobody will ever send you a middleman address in DMs. If something doesn't work, type `$mm help` (or press **Help** on the card, then **Ping Owners**) and an owner is pinged.",inline:false})
-    .setFooter({text:"Konvert Exchange  ·  Built-in server middleman bot"});
-}
 // The public post for /postmm
-function mmInfoEmbed(){
-  return kEmbed("Middleman").setTitle("Built-In Server Middleman Bot").setThumbnail(IMG.LOGO)
-    .setDescription("Konvert runs its own **built-in server middleman bot** inside every ticket. It holds the crypto side of an exchange until both sides are done, so **nobody has to go first** and nobody has to join another server.\n​")
-    .addFields(
-      {name:"How it works",value:"**1.** Whoever is sending the crypto sends it to the address on the middleman card. The bot spots the payment by itself, so there is nothing to paste.\n**2.** It confirms the payment on the blockchain and says **Funds Secured**.\n**3.** The other side pays.\n**4.** The sender presses **Release Funds**, the receiver pastes their address in the chat, and the bot sends the crypto on. If the exchange is called off, it is refunded instead.",inline:false},
-      {name:"Coins it holds",value:mmCoinsText().slice(0,1024),inline:false},
-      {name:"Other coins and large amounts",value:"A Konvert owner acts as the middleman in your ticket.",inline:false},
-      {name:"Important",value:"**Do NOT go first** above your exchanger's go-first limit, unless an owner says so in your ticket. The middleman only ever appears **inside your ticket**, as a card from Konvert Bot. Staff never DM first.",inline:false},
-      {name:"Something not working?",value:"Type `$mm help` in your ticket (or press **Help** on the middleman card, then **Ping Owners**). The owners are pinged right away.",inline:false})
-    .setImage(IMG.BANNER).setFooter(kFoot("Built-in server middleman bot"));
-}
 async function mmSelfCheck(opts){
   opts=opts||{};
   const lines=[],w=mmWallets(),libs=mmLibs();
