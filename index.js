@@ -2460,9 +2460,10 @@ async function mmGasRows(){
 function mmGasPayload(rows){
   const state=r=>r.ok==null?"unknown":r.ok?"OK":"LOW",all=rows.length>0&&rows.every(r=>r.ok);
   const evm=rows.find(r=>MM_CHAINS[r.chain].family==="evm"),sol=rows.find(r=>r.chain==="sol");
+  const low=rows.filter(r=>r.ok!==true),cmd=`/gasfund targets:${low.map(r=>`${r.coin}@${r.chain}:${r.addr}:${r.send}`).join(" ")}`;      // the command for Konvert Swap: coin@chain:address:amount, one entry per wallet that needs gas
   const L=[rows.map(r=>`**${r.coin}** on ${r.name}  ·  ${r.bal==null?"?":r.bal.toFixed(4)}  ·  **${state(r)}**${r.ok===false?`  ·  send about ${r.send} ${r.coin}`:""}`).join("\n"),"",
     ...(sol?[`Solana\n\`\`\`${sol.addr}\`\`\``]:[]),...(evm?[`Ethereum and BNB Chain (one address)\n\`\`\`${evm.addr}\`\`\``]:[]),
-    kNote(`Konvert Swap destinations: ${rows.map(r=>`${r.coin} to ${r.addr}`).join("  ·  ")}`),
+    ...(low.length?["Konvert Swap: run this there. Send SOL and it swaps and pays each address by itself.",`\`\`\`${cmd}\`\`\``]:[]),
     kNote(all?"Everything has enough. This channel closes by itself.":"This card updates by itself. The channel closes once everything is funded.")];
   const emb=kEmbed("Middleman",all?"ok":"warn").setTitle(all?"Gas Is Funded":"Fund The Middleman Gas").setDescription(L.join("\n")).setFooter(kFoot("Built-in server middleman bot")).setTimestamp();
   const row=new ActionRowBuilder().addComponents(...(sol?[kBtn("mm_gascopy__sol","Copy Solana Address",ButtonStyle.Secondary)]:[]),...(evm?[kBtn("mm_gascopy__evm","Copy EVM Address",ButtonStyle.Secondary)]:[]),kBtn("mm_gasrefresh","Refresh",ButtonStyle.Secondary));
