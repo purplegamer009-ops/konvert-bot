@@ -22,7 +22,7 @@ const { Pool } = require("pg");
 
 // Which build is running. Shown at the bottom of /ping and printed in the logs, so a deploy that did not go through is easy to spot.
 // BOT_BUILD is the first 7 characters of the commit Railway built (it matches the commit on GitHub); it is blank when run anywhere else.
-const BOT_VERSION="v21";
+const BOT_VERSION="v22";
 const BOT_BUILD=String(process.env.RAILWAY_GIT_COMMIT_SHA||"").slice(0,7);
 const BUILD_TEXT=BOT_BUILD?`${BOT_VERSION}  ·  ${BOT_BUILD}`:BOT_VERSION;
 
@@ -5667,6 +5667,37 @@ function describeLimit(lim){
   return {limitText:"Not listed",rule:`No go-first limit is listed. Ask the exchanger to confirm it. Above it, the built-in server middleman bot holds the crypto.`};
 }
 
+// ---- Mandatory middleman: one rule, asked again on every claim ----
+let TICKET_ONE=true;      // opening a ticket asks for ONE payment method; more are added later with the Add Method button
+let MM_STRICT=true;       // an exchanger with no go-first limit in their name always uses the middleman, like "Use MM Always"
+// What an exchanger already has out on their other open tickets: open, claimed by them, not held by the middleman, channel still there
+function exchangerExposure(tickets,guild,userId,exceptId){
+  let held=0,count=0;
+  for(const [cid,t] of Object.entries(tickets||{})){
+    // open tickets only (a ticket stays open until the client confirms it's complete); middleman tickets carry no go-first risk
+    if(cid===exceptId||!t||t.status!=="open"||t.claimedBy!==userId||t.mmRequired)continue;
+    if(guild&&guild.channels&&guild.channels.cache&&!guild.channels.cache.has(cid))continue;
+    held+=parseFloat(t.amountUSD)||0;count++;
+  }
+  return {held,count};
+}
+// Does this claim need the middleman? Asked fresh on EVERY claim, and again when the exchanger confirms a middleman claim.
+//   owners are trusted and never need it · "Use MM Always" · no go-first limit listed (MM_STRICT) · the ticket is above the limit
+//   · the ticket plus everything already open on their other tickets is above the limit
+// Returns {needs, reason (what the client is told), warn (what the exchanger is told)}.
+function mmGate({userId,owner,chId,tickets,guild,lim,amt}){
+  if(owner)return {needs:false};
+  if(lim&&lim.mm)return {needs:true,reason:"This exchanger always uses a middleman.",warn:"Your name says **Use MM Always**."};
+  if(!lim){
+    if(MM_STRICT&&amt>0)return {needs:true,reason:"This exchanger has no go-first limit listed, so a middleman is required.",warn:"Your name has no go-first limit, so this ticket uses the middleman. Put your limit in your name (for example **Up To $50**) to go first up to it."};
+    return {needs:false};
+  }
+  if(amt>lim.amount+0.005)return {needs:true,reason:`This exchange is above their **${_money(lim.amount)}** go-first limit.`,warn:`This ticket (**${_money(amt)}**) is above your **${_money(lim.amount)}** limit.`};
+  const {held}=exchangerExposure(tickets,guild,userId,chId);
+  if(held+amt>lim.amount+0.005)return {needs:true,reason:`They're at their **${_money(lim.amount)}** go-first limit across other tickets.`,warn:`You have **${_money(held)}** open — this would bring you to **${_money(held+amt)}**, over your **${_money(lim.amount)}** limit.`};
+  return {needs:false};
+}
+
 // ---- One panel message; its buttons always follow the ticket's real state ----
 // Green = go ahead · red = report a problem (Flag Ticket is the only red button on a ticket, so it is easy to find in a hurry) · grey = everything else.
 function closeButton(){return kBtn("btn_close","Close Ticket",ButtonStyle.Secondary);}
@@ -5872,31 +5903,12 @@ async function claimTicket(interaction,opts={}){
     else return methodPicker(interaction,ticket,options);
   }
 
-  // Does this claim need a middleman? Over their limit, over it in total across open tickets, or "Use MM Always".
+  // Does this claim need a middleman? Asked again on every claim: over their limit, over it in total across their open tickets, no limit listed, or "Use MM Always".
   const lim=parseExchangerLimit(interaction.member);
   const amt=parseFloat(ticket.amountUSD)||0;
-  let mmReason=null,warnText=null;
-  if(!owner&&lim){
-    if(lim.mm){
-      mmReason="This exchanger always uses a middleman.";
-      warnText="Your name says **Use MM Always**.";
-    }else if(amt>lim.amount+0.005){
-      mmReason=`This exchange is above their **${_money(lim.amount)}** go-first limit.`;
-      warnText=`This ticket (**${_money(amt)}**) is above your **${_money(lim.amount)}** limit.`;
-    }else{
-      let held=0;
-      for(const [cid,t] of Object.entries(tickets)){
-        // open tickets only (a ticket stays open until the client confirms it's complete); middleman tickets carry no go-first risk
-        if(cid===ch.id||!t||t.status!=="open"||t.claimedBy!==interaction.user.id||t.mmRequired)continue;
-        if(interaction.guild.channels.cache.has(cid))held+=parseFloat(t.amountUSD)||0;
-      }
-      if(held+amt>lim.amount+0.005){
-        mmReason=`They're at their **${_money(lim.amount)}** go-first limit across other tickets.`;
-        warnText=`You have **${_money(held)}** open \u2014 this would bring you to **${_money(held+amt)}**, over your **${_money(lim.amount)}** limit.`;
-      }
-    }
-  }
-  const needsMm=!!mmReason;
+  const gate=mmGate({userId:interaction.user.id,owner,chId:ch.id,tickets,guild:interaction.guild,lim,amt});
+  const mmReason=gate.reason||null,warnText=gate.warn||null;
+  const needsMm=!!gate.needs;
 
   // Step 1 for a middleman claim: the exchanger has to knowingly opt in
   if(needsMm&&!opts.mmConfirmed){
@@ -6257,6 +6269,7 @@ async function hopIn(interaction){
   if(uid===ticket.userId)return interaction.reply({content:"You can't hop into your own ticket.",flags:64});
   if(!ticket.openToAll)return interaction.reply({content:"This ticket isn't open to everyone.",flags:64});
   if(!ticket.claimedBy)return interaction.reply({content:"Nobody has claimed this yet — press Claim Ticket instead.",flags:64});
+  if(ticket.mmPending)return interaction.reply({content:"The client hasn't confirmed the middleman yet. Hop in once they have.",flags:64});
   if(ticket.reported)return interaction.reply({content:"This ticket is flagged — an owner needs to review it first.",flags:64});
   const owner=isOwner(uid,interaction.member);
   if(isSuspended(uid)&&!owner)return interaction.reply({content:"Your exchanger access is suspended pending owner review.",flags:64});
@@ -8015,8 +8028,8 @@ function _gExchangers(){
   ]),_gembed([
     "## Run the ticket",
     _gkey("$unclaim","release your claim. The ticket reopens with fresh buttons and pings the exchangers again"),
-    _gkey("$all","open it to every exchanger: anyone can see it and hop in"),
-    _gkey("$open","ping the exchangers who can take this payment method"),
+    _gkey("$open","open it to every exchanger: they can all see it and claim it, or hop in once it is claimed"),
+    _gkey("$all","the same as $open"),
     _gkey("$complete","mark the deal done. The client confirms it"),
     _gkey("$remind","nudge the client: they get 12 hours to reply before the ticket closes"),
     _gkey("$close","close the ticket"),
@@ -8355,11 +8368,11 @@ async function registerCommands(){
 
 function mainEmbed(){
   return kEmbed().setTitle("Exchange with Konvert")
-    .setDescription(`${kHero("Simple · Smooth · Seamless")}\nPress **Exchange Now** to open a private ticket. Choose your payment method. **You can select more than one**, and the exchangers for each are pinged at once, so your ticket is claimed faster.\n​`)
+    .setDescription(`${kHero("Simple · Smooth · Seamless")}\nPress **Exchange Now** to open a private ticket. ${TICKET_ONE?"Choose your payment method. You can add more inside your ticket later.":"Choose your payment method. **You can select more than one**, and the exchangers for each are pinged at once, so your ticket is claimed faster."}\n​`)
     .addFields(
       {name:"Fee",value:`5% – 10%, tiered\nMinimum fee ${fmtUSD(CONFIG.MIN_FEE)} per exchange`,inline:true},
       {name:"Minimum Amount",value:`${fmtUSD(CONFIG.MIN_AMOUNT)} per exchange`,inline:true},
-      {name:`Payment Methods  ·  choose up to ${MAX_TICKET_METHODS}`,value:"PayPal · Cash App · Zelle · Interac · Venmo · Apple Pay · Google Pay · Skrill · Revolut · Bank · Wire · IBAN · UPI · Gift Card",inline:false},
+      {name:TICKET_ONE?"Payment Methods":`Payment Methods  ·  choose up to ${MAX_TICKET_METHODS}`,value:"PayPal · Cash App · Zelle · Interac · Venmo · Apple Pay · Google Pay · Skrill · Revolut · Bank · Wire · IBAN · UPI · Gift Card",inline:false},
       {name:"Crypto",value:"BTC · ETH · SOL · LTC · USDT · USDC · XRP · BNB · ADA · DOGE · and more",inline:false},
     ).setThumbnail(IMG.LOGO).setImage(IMG.BANNER).setFooter(kFoot("Fast · Safe · Simple"));
 }
@@ -8384,6 +8397,23 @@ function backupEmbed(url){
 const backupRow=url=>new ActionRowBuilder().addComponents(kLink("Join Backup Server",cleanInvite(url)||backupInvite()));
 // Backup posts made before v15 show the Invite line as raw text. This finds them in the channels named like "backup" and rewrites that line as a plain link,
 // keeping the invite that was posted (the button under the post is not touched). A post that is already fine is left alone, so running it again changes nothing.
+// The Exchange panel in the exchange channel follows the ticket flow: when it still tells people to pick several methods it is redrawn (once, shortly after the bot starts).
+async function healExchangePanel(guild){
+  if(!TICKET_ONE||!guild||!guild.channels||!CONFIG.EXCHANGE_CHANNEL)return false;
+  const ch=guild.channels.cache.get(CONFIG.EXCHANGE_CHANNEL);
+  if(!ch||!ch.messages||typeof ch.isTextBased!=="function"||!ch.isTextBased())return false;
+  let msgs;
+  try{msgs=await ch.messages.fetch({limit:50});}catch{return false;}
+  const want=mainEmbed(),flat=s=>String(s||"").replace(/[\s\u200b]+/g,"");
+  for(const m of msgs.values()){
+    const e=m.author&&client.user&&m.author.id===client.user.id&&m.embeds&&m.embeds[0];
+    if(!e||e.title!=="Exchange with Konvert"||!(m.components||[]).some(r=>(r.components||[]).some(c=>(c.customId||c.custom_id)==="btn_exchange_now")))continue;
+    if(flat(e.description)===flat(want.toJSON().description)&&(e.fields||[]).some(f=>f.name==="Payment Methods"))return false;       // already current
+    try{await m.edit({embeds:[want],components:mainButtons()});console.log("[panel] redrew the Exchange panel for the one-method ticket flow");return true;}
+    catch(err){console.log("[panel] could not redraw the Exchange panel:",err.message);return false;}
+  }
+  return false;
+}
 async function healBackupPosts(guild){
   let fixed=0;
   if(!guild||!guild.channels||!guild.channels.cache)return 0;
@@ -8412,6 +8442,9 @@ function mainButtons(){
   )];
 }
 function step1Embed(){
+  if(TICKET_ONE)return kEmbed().setTitle("Step 1 · Choose Your Payment Method").setThumbnail(IMG.LOGO)
+    .setDescription(`${kHero("Pick the one you use")}\nChoose your payment method below and its exchangers are pinged.\n\nNeed another one later? Press **Add Method** inside your ticket.\n${kNote("Gift Card, Buy For You and Custom Exchange are chosen on their own.")}\n\u200b`)
+    .setFooter(kFoot("Step 1 of 3"));
   return kEmbed().setTitle("Step 1 · Choose Your Payment Method").setThumbnail(IMG.LOGO)
     .setDescription(`${kHero("One is fine. More is faster.")}\nChoose the payment method you use. **You can select more than one** (up to ${MAX_TICKET_METHODS}): exchangers for every method you pick are pinged at once, so the first one available can take your ticket.\n\nTick what works for you, then press **Select** (on desktop, click outside the menu).\n${kNote("Gift Card, Buy For You and Custom Exchange are chosen on their own.")}\n​`)
     .setFooter(kFoot("Step 1 of 3"));
@@ -8419,8 +8452,8 @@ function step1Embed(){
 // Step 1's controls: a menu of payment methods (pick up to MAX_TICKET_METHODS) and, under it, the flows that are chosen on their own
 function methodPickRows(){
   const std=METHODS.filter(m=>!isSoloMethod(m.value));
-  const menu=new StringSelectMenuBuilder().setCustomId("select_method").setPlaceholder("Choose a method (select more to speed it up)...")
-    .setMinValues(1).setMaxValues(Math.min(MAX_TICKET_METHODS,std.length))
+  const menu=new StringSelectMenuBuilder().setCustomId("select_method").setPlaceholder(TICKET_ONE?"Choose your payment method...":"Choose a method (select more to speed it up)...")
+    .setMinValues(1).setMaxValues(TICKET_ONE?1:Math.min(MAX_TICKET_METHODS,std.length))
     .addOptions(std.map(m=>new StringSelectMenuOptionBuilder().setLabel(m.label).setValue(m.value).setDescription(`Exchange crypto with ${m.label}`)));
   const solo=SOLO_METHODS.map(getMethod).filter(Boolean).map(m=>kBtn(`btn_pick__${m.value}`,m.label,ButtonStyle.Secondary));
   return [new ActionRowBuilder().addComponents(menu),new ActionRowBuilder().addComponents(...solo)];
@@ -8436,7 +8469,7 @@ function directionRow(list){
 // Step 2's buttons: the two directions and, when only one ordinary method was picked, a way to add more before the ticket exists
 function step2Rows(list,opts){
   const rows=[directionRow(list)],one=list.length===1?list[0]:null;
-  if(one&&getMethod(one)&&!isSoloMethod(one)&&!(opts&&opts.noMore))rows.push(new ActionRowBuilder().addComponents(kBtn(`btn_more__${methodTag(list)}`,"Add More Methods",ButtonStyle.Secondary)));
+  if(!TICKET_ONE&&one&&getMethod(one)&&!isSoloMethod(one)&&!(opts&&opts.noMore))rows.push(new ActionRowBuilder().addComponents(kBtn(`btn_more__${methodTag(list)}`,"Add More Methods",ButtonStyle.Secondary)));
   return rows;
 }
 // "Add More Methods": the other ordinary methods, up to the limit, and a way to carry on with what was picked
@@ -8472,7 +8505,7 @@ function step2Embed(method,opts){
   if(method==="buyforyou")return kEmbed().setTitle("Buy For You").setDescription(`Tell us what you want us to purchase and we will handle it.\n\nDescribe the item, link, and amount in your ticket — a helper will reach out.\n\n${minLine()}`).setFooter(kFoot("Step 2 of 3"));
   if(method==="custom")return kEmbed().setTitle("Custom Exchange").setDescription(`Something unique? No problem.\n\nExplain what you need in your ticket and a helper will assist you.\n\n${minLine()}`).setFooter(kFoot("Step 2 of 3"));
   return kEmbed().setTitle(`Step 2 · ${m.label}`)
-    .setDescription(`${kHero("Choose your direction")}\n**Send Crypto → Get ${m.label}**\nYou send crypto and we pay you through ${m.label}.\n\n**Send ${m.label} → Get Crypto**\nYou pay through ${m.label} and we send crypto to your wallet.\n\n${!isSoloMethod(method)&&!(opts&&opts.noTip)?`${kNote(`Tip: only ${m.label} exchangers are pinged. Add more methods to speed it up, and any of them can claim your ticket.`)}\n\n`:""}${minLine()}`)
+    .setDescription(`${kHero("Choose your direction")}\n**Send Crypto → Get ${m.label}**\nYou send crypto and we pay you through ${m.label}.\n\n**Send ${m.label} → Get Crypto**\nYou pay through ${m.label} and we send crypto to your wallet.\n\n${!isSoloMethod(method)&&!(opts&&opts.noTip)?`${kNote(TICKET_ONE?`Only ${m.label} exchangers are pinged first. Press **Add Method** in your ticket any time to add more.`:`Tip: only ${m.label} exchangers are pinged. Add more methods to speed it up, and any of them can claim your ticket.`)}\n\n`:""}${minLine()}`)
     .setFooter(kFoot("Step 2 of 3"));
 }
 
@@ -8665,7 +8698,7 @@ async function createTicket(interaction,method,direction,amountUSD,coin,walletIn
   const rulesEmbed=kEmbed("Safety","warn")
     .setTitle(`Before You Proceed`)
     .setDescription(
-      `**1 · Go-first limit**\nShown in your exchanger's name. Above it, or if it says "Use MM Always", Konvert's built-in server middleman bot holds the crypto inside this ticket. Never send anything before its card appears here.\n\n`
+      `**1 · Go-first limit**\nShown in your exchanger's name. ${MM_STRICT?'Above it (their other open tickets count too), with no limit shown, or if it says "Use MM Always", ':'Above it, or if it says "Use MM Always", '}Konvert's built-in server middleman bot holds the crypto inside this ticket. Never send anything before its card appears here.\n\n`
       +"**2 · Impersonators**\n**@3uce** and **@jswaps** never DM first. Anyone who does is an impersonator.\n\n"
       +"**3 · Stay in the ticket**\nKeep every message and every payment detail inside this ticket."
     )
@@ -8867,15 +8900,15 @@ client.on(Events.MessageCreate,async message=>{
       if(!_clDm){const _clNote=await message.channel.send({content:_clMsg,allowedMentions:{parse:[]}}).catch(()=>null);if(_clNote)setTimeout(()=>_clNote.delete().catch(()=>{}),6000);}
       return;
     }
-    // $open — ping exchangers
+    // $unclaim — give the ticket back to the queue
     if(message.content.trim()==="$unclaim"&&ticket&&ticket.status==="open"&&ticket.claimedBy&&(message.author.id===ticket.claimedBy||isOwner(message.author.id,message.member))){
       const _tks=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
       _tks[message.channel.id]=ticket;
       await releaseClaim(message.channel,ticket,_tks,{by:message.author.id});
       return;
     }
-    // $all — open the ticket to every exchanger (any payment method): they can all see it and claim it, or hop into a claimed one
-    if(/^\$all$/i.test(message.content.trim())&&ticket&&ticket.status==="open"&&(isExchanger(message.member)||isOwner(message.author.id,message.member))){
+    // $open (also $all) — open the ticket to every exchanger (any payment method): they can all see it and claim it, or hop into a claimed one
+    if(/^\$(?:open|all)$/i.test(message.content.trim())&&ticket&&ticket.status==="open"&&(isExchanger(message.member)||isOwner(message.author.id,message.member))){
       const _staffAll=!!(CONFIG.STAFF_ROLE&&message.member?.roles.cache.has(CONFIG.STAFF_ROLE));
       if(ticket.claimedBy&&message.author.id!==ticket.claimedBy&&!isOwner(message.author.id,message.member)&&!_staffAll){
         const _no=await message.reply("Only the exchanger on this ticket or staff can open it to everyone.").catch(()=>null);
@@ -8892,24 +8925,6 @@ client.on(Events.MessageCreate,async message=>{
         const _blind=await message.channel.send({content:`I couldn't give ${_resAll.failed.map(r=>`<@&${r}>`).join(" ")} access to this ticket, so they can't see it. Check that I have **Manage Permissions** in this channel.`,allowedMentions:{parse:[]}}).catch(()=>null);
         if(_blind)setTimeout(()=>_blind.delete().catch(()=>{}),15000);
       }
-      return;
-    }
-    if(message.content.trim()==="$open"&&ticket&&ticket.status==="open"&&(isExchanger(message.member)||isOwner(message.author.id,message.member))){
-      const _allRoleIds=[...new Set([
-        ...(CONFIG.STAFF_ROLE?[CONFIG.STAFF_ROLE]:[]),
-        ...(CONFIG.EXCHANGER_ROLE?[CONFIG.EXCHANGER_ROLE]:[]),
-        ...Object.values(CONFIG.ROLES||{}).filter(Boolean),
-      ])];
-      // Only ping roles that can actually view this ticket channel
-      const _visible=_allRoleIds.filter(rid=>{
-        const role=message.guild.roles.cache.get(rid);
-        if(!role)return false;
-        try{return !!message.channel.permissionsFor(role)?.has(PermissionFlagsBits.ViewChannel);}catch{return false;}
-      });
-      const _mOpen=getMethod(ticket.method);
-      if(!_visible.length)return void message.reply("No exchanger role has access to this channel. Add one to the channel permissions first.").catch(()=>{});
-      const _pings=_visible.map(r=>"<@&"+r+">").join(" ");
-      await message.channel.send({content:`${_pings} — **${ticketMethodText(ticket)}** ticket needs an exchanger. ${fmtUSD(ticket.amountUSD||0)}`,allowedMentions:{roles:_visible}}).catch(()=>{});
       return;
     }
     // $info — ticket summary
@@ -10431,7 +10446,7 @@ This is active immediately and persists until revoked or the bot restarts.
 
     if(interaction.isStringSelectMenu()){
       if(interaction.customId==="select_method"){
-        const _vals=interaction.values||[],_picked=pickedMethods(_vals),method=(_vals.length===1&&_vals[0]==="crypto")?"crypto":_picked[0];
+        const _vals=interaction.values||[],_picked=TICKET_ONE?pickedMethods(_vals).slice(0,1):pickedMethods(_vals),method=(_vals.length===1&&_vals[0]==="crypto")?"crypto":_picked[0];
         if(!method)return interaction.update({embeds:[step1Embed()],components:methodPickRows()});
         if(method==="crypto"){const c2cCoins=["BTC","ETH","SOL","LTC","USDT","USDC","XRP","BNB","ADA","DOGE","MATIC","AVAX","DOT","LINK","TRX","SHIB","UNI","ATOM","NEAR","ARB","OP","CAKE","INJ","RUNE","KAVA"];const coinOpts=c2cCoins.map(c=>new StringSelectMenuOptionBuilder().setLabel(c).setValue(c).setDescription(`Exchange ${c}`));return interaction.update({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor(kAuthor()).setTitle(`Step 2 · Crypto to Crypto`).setDescription(`Select the coin you are **sending** and the coin you want to **receive** below.\n\n${minLine()}`).setFooter(kFoot("Step 2 of 3"))],components:[new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("c2c_send").setPlaceholder("Select coin you are SENDING...").addOptions(coinOpts)),new ActionRowBuilder().addComponents(new StringSelectMenuBuilder().setCustomId("c2c_recv").setPlaceholder("Select coin you want to RECEIVE...").addOptions(coinOpts))]});}
         return interaction.update({embeds:[step2Embed(_picked)],components:step2Rows(_picked)});
@@ -11163,6 +11178,7 @@ client.once(Events.ClientReady,async()=>{
     setTimeout(()=>healBanners(guild).catch(e=>console.log("[banner] heal:",e.message)),22*1000);
     // Backup-server posts made before v15 get a clickable Invite link (once, shortly after the bot starts)
     setTimeout(()=>healBackupPosts(guild).catch(e=>console.log("[backup] heal:",e.message)),12*1000);
+    setTimeout(()=>healExchangePanel(guild).catch(e=>console.log("[panel] heal:",e.message)),14*1000);
     // Shows in the logs which price services answer from this server (so a blocked one is easy to spot)
     setTimeout(()=>priceSelfCheck().catch(()=>{}),40*1000);
     // Safety system: settles unanswered worries, notices silent exchangers (quietly), retires old holds (every 30 seconds)
