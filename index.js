@@ -22,7 +22,7 @@ const { Pool } = require("pg");
 
 // Which build is running. Shown at the bottom of /ping and printed in the logs, so a deploy that did not go through is easy to spot.
 // BOT_BUILD is the first 7 characters of the commit Railway built (it matches the commit on GitHub); it is blank when run anywhere else.
-const BOT_VERSION="v23";
+const BOT_VERSION="v24";
 const BOT_BUILD=String(process.env.RAILWAY_GIT_COMMIT_SHA||"").slice(0,7);
 const BUILD_TEXT=BOT_BUILD?`${BOT_VERSION}  ·  ${BOT_BUILD}`:BOT_VERSION;
 
@@ -9502,20 +9502,7 @@ client.on(Events.InteractionCreate,async interaction=>{
 
       if(cmd==="leaderboard"){
         await interaction.deferReply();
-        const byUser=buildLeaderboardVolumes();
-        if(!Object.keys(byUser).length)return interaction.editReply({embeds:[new EmbedBuilder().setColor(CONFIG.COLOR).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Client Leaderboard").setThumbnail(IMG.LOGO).setDescription("No completed exchanges on record yet.\n\nComplete an exchange to appear here.\n\u200b").setImage(IMG.BANNER).setFooter({text:"Konvert Exchange  ·  Leaderboard"}).setTimestamp()]});
-        const ranked=Object.entries(byUser).sort((a,b)=>b[1]-a[1]).slice(0,10);
-        const lines=ranked.map(([uid,vol],i)=>`**${i+1}.**  <@${uid}>  \u2014  **${fmtUSD(vol)}**`).join("\n");
-        const totalVol=ranked.reduce((s,[,v])=>s+v,0);
-        return interaction.editReply({embeds:[new EmbedBuilder().setColor(0x7C4DFF)
-          .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
-          .setTitle("Leaderboard")
-          .setThumbnail(IMG.LOGO)
-          .setDescription(`Top ${ranked.length===1?"client":`${ranked.length} clients`} by volume\n\u200b`)
-          .addFields({name:"\u200b",value:lines,inline:false})
-          .setFooter({text:`Konvert Exchange  ·  ${fmtUSD(totalVol)} total volume`})
-          .setTimestamp()]});
-
+        return interaction.editReply({embeds:[await buildLbEmbed(interaction.guild)]});
       }
 
       if(cmd==="market"){
@@ -9925,7 +9912,7 @@ Deleting in 10 seconds.`)
 
       if(cmd==="postleaderboard"){
         await interaction.deferReply({flags:64});
-        const embed=await buildLiveLeaderboardEmbed();
+        const embed=await buildLiveLeaderboardEmbed(interaction.guild);
         const msg=await interaction.channel.send({embeds:[embed]});
         state.liveLbMessageId=msg.id;
         state.liveLbChannelId=interaction.channel.id;
@@ -10837,33 +10824,31 @@ This is active immediately and persists until revoked or the bot restarts.
 });
 
 // ── LIVE LEADERBOARD ─────────────────────────────────────────────────────────
-async function buildLiveLeaderboardEmbed(){
-  const byUser=buildLeaderboardVolumes();
-  const ranked=Object.entries(byUser).sort((a,b)=>b[1]-a[1]).slice(0,10);
-  const totalVol=ranked.reduce((s,[,v])=>s+v,0);
-  const timeStr=new Date().toLocaleTimeString("en-US",{hour:"2-digit",minute:"2-digit"});
-  if(!ranked.length){
-    return new EmbedBuilder()
-      .setColor(0x7C4DFF)
-      .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
-      .setTitle("Leaderboard")
-      .setDescription("No exchanges yet.")
-      .setFooter({text:`Konvert Exchange  ·  Updated ${timeStr}`})
-      .setTimestamp();
+// One card for /leaderboard and the live post, laid out like the Konvert Swap "Top Swappers" card: a title, then "rank name · $amount", nothing else.
+// The only differences are the labels that say it is the exchange one: Konvert Exchange, "Top Exchange Clients", "exchange volume".
+const lbMoney=n=>{n=Number(n)||0;return n>=1?"$"+Math.round(n).toLocaleString("en-US"):fmtUSD(n);};
+const _lbGone=new Map();     // people who are not in the server any more: the member lookup is skipped for 10 minutes
+async function lbName(guild,uid){
+  // someone in the server is a mention (it follows their name); someone who left is their plain name; never a raw <@id>
+  let m=guild&&guild.members.cache.get(uid);
+  if(!m&&guild&&!((_lbGone.get(uid)||0)>Date.now())){
+    m=await guild.members.fetch(uid).catch(()=>null);
+    if(!m)_lbGone.set(uid,Date.now()+10*60*1000);
   }
-  const lines=ranked.map(([uid,vol],i)=>{
-    const tier=getTier(vol);
-    const rank=`\`#${i+1}\``;
-    return `${rank} <@${uid}>  \u2014  **${fmtUSD(vol)}** `;
-  }).join("\n");
-  return new EmbedBuilder()
-    .setColor(0x7C4DFF)
-    .setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO})
-    .setTitle("Top 10 Leaderboard")
-    .setDescription(lines)
-    .setFooter({text:`Konvert Exchange  ·  Total: ${fmtUSD(totalVol)}  ·  Updated ${timeStr}`})
-    .setTimestamp();
+  if(m)return `<@${uid}>`;
+  const u=await client.users.fetch(uid).catch(()=>null);
+  const nm=u&&(u.globalName||u.username);
+  return nm?String(nm).replace(/[*_`~|>\\\[\]]/g,"\\$&").slice(0,40):"Former member";
 }
+async function buildLbEmbed(guild,{live=false}={}){
+  const ranked=Object.entries(buildLeaderboardVolumes()).sort((a,b)=>b[1]-a[1]).slice(0,10);
+  const e=new EmbedBuilder().setColor(0x7C4DFF).setAuthor({name:"Konvert Exchange",iconURL:IMG.LOGO}).setTitle("Top Exchange Clients")
+    .setFooter({text:live?"Ranked by exchange volume · updates live":"Ranked by exchange volume"});
+  if(!ranked.length)return e.setDescription("No completed exchanges on record yet.\n\nComplete an exchange to appear here.");
+  const names=await Promise.all(ranked.map(([uid])=>lbName(guild,uid)));
+  return e.setDescription(ranked.map(([,vol],i)=>`**${i+1}** ${names[i]} · ${lbMoney(vol)}`).join("\n"));
+}
+async function buildLiveLeaderboardEmbed(guild){return buildLbEmbed(guild,{live:true});}
 
 async function updateLiveLeaderboard(guild){
   if(!state.liveLbMessageId||!state.liveLbChannelId)return;
@@ -10872,7 +10857,7 @@ async function updateLiveLeaderboard(guild){
     if(!ch){state.liveLbMessageId=null;state.liveLbChannelId=null;saveLiveLb();return;}
     const msg=await ch.messages.fetch(state.liveLbMessageId).catch(()=>null);
     if(!msg){state.liveLbMessageId=null;state.liveLbChannelId=null;saveLiveLb();return;}
-    await msg.edit({embeds:[await buildLiveLeaderboardEmbed()]});
+    await msg.edit({embeds:[await buildLiveLeaderboardEmbed(guild)]});
     console.log("[liveLeaderboard] updated");
   }catch(e){console.log("[liveLeaderboard]",e.message);}
 }
