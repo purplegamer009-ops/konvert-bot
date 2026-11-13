@@ -22,7 +22,7 @@ const { Pool } = require("pg");
 
 // Which build is running. Shown at the bottom of /ping and printed in the logs, so a deploy that did not go through is easy to spot.
 // BOT_BUILD is the first 7 characters of the commit Railway built (it matches the commit on GitHub); it is blank when run anywhere else.
-const BOT_VERSION="v22";
+const BOT_VERSION="v23";
 const BOT_BUILD=String(process.env.RAILWAY_GIT_COMMIT_SHA||"").slice(0,7);
 const BUILD_TEXT=BOT_BUILD?`${BOT_VERSION}  ·  ${BOT_BUILD}`:BOT_VERSION;
 
@@ -4888,6 +4888,7 @@ async function mmRoute(interaction,cid){
       return mmFollow(interaction,"That question is out of date, so nothing changed. Type `$mm` to ask again.");
     }
     if(head==="mm_no"){
+      need(!t.mmRequired,"A middleman is required on this ticket, so it can't be turned down.");
       mmSaveTicket(ch.id,x=>{delete x.mmAsk;});
       return interaction.update({content:null,embeds:[mmKE("mute").setTitle("No Middleman").setDescription(`<@${uid}> said no thanks, so the server middleman is not used. Nothing was started and nothing was lost. Type \`$mm\` any time to ask again.`).setFooter(kFoot("Built-in server middleman bot"))],components:[]}).catch(()=>{});
     }
@@ -5670,6 +5671,7 @@ function describeLimit(lim){
 // ---- Mandatory middleman: one rule, asked again on every claim ----
 let TICKET_ONE=true;      // opening a ticket asks for ONE payment method; more are added later with the Add Method button
 let MM_STRICT=true;       // an exchanger with no go-first limit in their name always uses the middleman, like "Use MM Always"
+let MM_AUTO=true;         // a claim that needs the middleman STARTS it by itself: no "Claim with Middleman" step, nobody confirms anything, no Use Middleman button
 // What an exchanger already has out on their other open tickets: open, claimed by them, not held by the middleman, channel still there
 function exchangerExposure(tickets,guild,userId,exceptId){
   let held=0,count=0;
@@ -5685,7 +5687,8 @@ function exchangerExposure(tickets,guild,userId,exceptId){
 //   owners are trusted and never need it · "Use MM Always" · no go-first limit listed (MM_STRICT) · the ticket is above the limit
 //   · the ticket plus everything already open on their other tickets is above the limit
 // Returns {needs, reason (what the client is told), warn (what the exchanger is told)}.
-function mmGate({userId,owner,chId,tickets,guild,lim,amt}){
+function mmGate({userId,owner,chId,tickets,guild,lim,amt,forced}){
+  if(forced)return {needs:true,reason:"A middleman is required on this ticket.",warn:"A middleman is required on this ticket."};     // an owner required it here: it applies to whoever claims, owners too
   if(owner)return {needs:false};
   if(lim&&lim.mm)return {needs:true,reason:"This exchanger always uses a middleman.",warn:"Your name says **Use MM Always**."};
   if(!lim){
@@ -5785,6 +5788,9 @@ function buildClaimEmbed(ticket,mode){
       .setFooter(kFoot("Something wrong? Press Flag Ticket")).setTimestamp();
   }
   const why=ticket.mmReason||"This exchange needs a middleman.";
+  if(mode==="mmAuto")return kEmbed("Ticket","warn").setTitle("Middleman Required")
+    .setDescription(`${hero}\n<@${cl}>, your ticket was claimed by <@${ex}>.\n\n${methodNote(ticket)}${why} The built-in server middleman bot holds the crypto, so **nobody goes first and nothing is sent to the exchanger directly.**\n\nIt starts now \u2014 follow its card below.`)
+    .setFooter(kFoot("Required  \u00b7  starts automatically")).setTimestamp();
   return kEmbed("Ticket","warn").setTitle("Middleman Required")
     .setDescription(`${hero}\n<@${cl}>, your ticket was claimed by <@${ex}>.\n\n${methodNote(ticket)}${why} The built-in server middleman bot will hold the crypto, so **nobody has to go first and nothing is sent to the exchanger directly.**\n\n<@${cl}>, press **Confirm Middleman** to start it.`)
     .setFooter(kFoot("Exchanger confirmed  \u00b7  waiting for the client")).setTimestamp();
@@ -5906,12 +5912,12 @@ async function claimTicket(interaction,opts={}){
   // Does this claim need a middleman? Asked again on every claim: over their limit, over it in total across their open tickets, no limit listed, or "Use MM Always".
   const lim=parseExchangerLimit(interaction.member);
   const amt=parseFloat(ticket.amountUSD)||0;
-  const gate=mmGate({userId:interaction.user.id,owner,chId:ch.id,tickets,guild:interaction.guild,lim,amt});
+  const gate=mmGate({userId:interaction.user.id,owner,chId:ch.id,tickets,guild:interaction.guild,lim,amt,forced:!!ticket.mmForced});
   const mmReason=gate.reason||null,warnText=gate.warn||null;
   const needsMm=!!gate.needs;
 
   // Step 1 for a middleman claim: the exchanger has to knowingly opt in
-  if(needsMm&&!opts.mmConfirmed){
+  if(needsMm&&!opts.mmConfirmed&&!MM_AUTO){
     const prompt={
       embeds:[kEmbed("Ticket","warn").setTitle(`Middleman Required`)
         .setDescription(`${warnText}\n\nYou can still take it: Konvert's built-in server middleman bot holds the crypto. The client must confirm first, and you can't message until they do.`)],
@@ -5928,9 +5934,9 @@ async function claimTicket(interaction,opts={}){
   if(chosen)lockTicketMethod(ticket,chosen);
   ticket.claimLimit=(!owner&&lim)?(lim.mm?{mm:true}:{amount:lim.amount}):null;
   if(owner)ticket.ownerClaim=true;else delete ticket.ownerClaim;   // owners are trusted: no limits, no middleman wording
-  if(needsMm){ticket.mmRequired=true;ticket.mmPending=true;ticket.mmReason=mmReason;}
+  if(needsMm){ticket.mmRequired=true;ticket.mmReason=mmReason;if(MM_AUTO)delete ticket.mmPending;else ticket.mmPending=true;}
   await interaction.deferUpdate().catch(()=>{});
-  if(!needsMm){
+  if(!needsMm||MM_AUTO){
     try{
       await ch.permissionOverwrites.edit(interaction.user,_CLAIM_PERMS);
     }catch(e){
@@ -5949,19 +5955,25 @@ async function claimTicket(interaction,opts={}){
 
   const payload={
     content:`<@${interaction.user.id}> <@${ticket.userId}>`,
-    embeds:[buildClaimEmbed(ticket,needsMm?"mmPending":(owner?"owner":"normal"))],
+    embeds:[buildClaimEmbed(ticket,needsMm?(MM_AUTO?"mmAuto":"mmPending"):(owner?"owner":"normal"))],
     allowedMentions:{users:[interaction.user.id,ticket.userId]}
   };
-  if(needsMm)payload.components=[mmConfirmRow()];
+  if(needsMm)payload.components=MM_AUTO?[]:[mmConfirmRow()];
   else payload.components=[new ActionRowBuilder().addComponents(kBtn("mm_start","Use Middleman",ButtonStyle.Secondary))];     // the client or the exchanger (an owner too) can ask for the built-in middleman any time
   const sent=await ch.send(payload).catch(()=>null);
   if(sent){ticket.claimMessageId=sent.id;_mem.tickets=tickets;save("tickets",tickets);}
+  if(needsMm&&MM_AUTO){                                             // a required middleman starts by itself: nobody confirms or chooses anything
+    delete ticket.mmWanted;_mem.tickets=tickets;save("tickets",tickets);
+    try{await mmStartDeal(ch,ticket,interaction.user.id);}catch(err){console.error("[mm] could not open at claim:",err.message);await mmOwnerFallback(ch,ticket,"error",err.message).catch(()=>{});}
+  }
   if(ticket.mmWanted){                                              // the client already said "we need mm": it starts right away (when the exchanger is limited, the client confirms it first)
     delete ticket.mmWanted;_mem.tickets=tickets;save("tickets",tickets);
     if(!needsMm)try{await mmBegin(ch,ticket,ticket.userId);}catch(err){console.error("[mm] could not open at claim:",err.message);await mmOwnerFallback(ch,ticket,"error",err.message).catch(()=>{});}
   }
   const via=chosen?` through ${methodLabel(chosen)}`:"";
-  if(fromEphemeral)await interaction.editReply({content:needsMm?`You claimed this ticket${via}. Waiting for the client to confirm the middleman.`:`You claimed this ticket${via}.`,embeds:[],components:[]}).catch(()=>{});
+  const autoNote=(needsMm&&MM_AUTO)?`You claimed this ticket${via}. ${warnText} The middleman starts now \u2014 follow its card in the ticket.`:null;     // only the exchanger sees this
+  if(fromEphemeral)await interaction.editReply({content:autoNote||(needsMm?`You claimed this ticket${via}. Waiting for the client to confirm the middleman.`:`You claimed this ticket${via}.`),embeds:[],components:[]}).catch(()=>{});
+  else if(autoNote)await interaction.followUp({content:autoNote,flags:64}).catch(()=>{});
   log(interaction.guild,`CLAIM: #${ch.name} | ${interaction.user.tag} | client <@${ticket.userId}> | ${needsMm?"MIDDLEMAN":owner?"OWNER":"limit "+describeLimit(ticket.claimLimit).limitText}${chosen?" | "+methodLabel(chosen):""}`);
 }
 
@@ -5991,6 +6003,42 @@ async function confirmMiddleman(interaction){
   try{await mmStartDeal(ch,ticket,interaction.user.id);}              // the built-in server middleman bot starts the setup (an owner steps in for anything it does not hold)
   catch(err){console.error("[mm] could not open after confirm:",err.message);await mmOwnerFallback(ch,ticket,"error",err.message).catch(()=>{});}
   log(interaction.guild,`MM CONFIRMED: #${ch.name} | client <@${ticket.userId}> | exchanger <@${ticket.claimedBy}>`);
+}
+
+// HIDDEN owner command ($forcemm): the client and the exchanger on this ticket MUST use the built-in middleman. Nobody confirms or chooses anything.
+//   claimed ticket: the middleman starts right now · unclaimed ticket: it starts the moment an exchanger claims (whoever claims, an owner too)
+// It is not in $help, the command message is deleted, nobody but an owner can use it, and the owner is answered by DM (never in the ticket).
+async function forceMiddleman(ch,owner,guild){
+  const dm=txt=>client.users.fetch(owner.id).then(u=>u.send({content:txt,allowedMentions:{parse:[]}})).catch(()=>{});
+  const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
+  const t=ch&&tickets[ch.id];
+  if(!t||t.status!=="open")return dm("`$forcemm` works inside an open ticket.");
+  if(t.reported)return dm("This ticket is flagged. Review it first.");
+  t.mmForced=true;t.mmForcedBy=owner.id;t.mmForcedAt=Date.now();
+  if(!t.claimedBy){                                                  // nobody has it yet: the rule waits for the claim
+    _mem.tickets=tickets;save("tickets",tickets);
+    await ch.send({embeds:[kEmbed("Ticket","warn").setTitle("Middleman Required")
+      .setDescription(`${kHero(dealOf(t).hero)}\nThis ticket uses the built-in server middleman bot. It starts as soon as an exchanger claims it, and nobody has to go first.`)
+      .setFooter(kFoot("Required  ·  starts automatically")).setTimestamp()]}).catch(()=>{});
+    log(guild,`MM FORCED: #${ch.name} | ${owner.tag||owner.id} | applies when an exchanger claims`);
+    return dm(`Done. #${ch.name} needs the middleman; it starts when an exchanger claims it.`);
+  }
+  const wasPending=!!t.mmPending;
+  t.mmRequired=true;t.mmReason="A middleman is required on this ticket.";delete t.mmWanted;
+  if(wasPending){t.mmPending=false;t.mmConfirmedAt=Date.now();}
+  const q=t.mmAsk&&t.mmAsk.msgId?await ch.messages.fetch(t.mmAsk.msgId).catch(()=>null):null;     // an open "Use the server middleman?" question has nothing left to ask
+  delete t.mmAsk;
+  _mem.tickets=tickets;save("tickets",tickets);
+  if(q)await q.edit({components:[]}).catch(()=>{});
+  if(wasPending)await ch.permissionOverwrites.edit(t.claimedBy,_CLAIM_PERMS,{type:1}).catch(()=>{});
+  const cm=t.claimMessageId?await ch.messages.fetch(t.claimMessageId).catch(()=>null):null;
+  if(cm)await cm.edit({embeds:[buildClaimEmbed(t,"mmAuto")],components:[]}).catch(()=>{});     // the claim card says required, and its Use Middleman / Confirm button is gone
+  await refreshPanel(ch,t).catch(()=>{});
+  await ch.send({content:`<@${t.userId}> <@${t.claimedBy}> A middleman is now required on this ticket. It starts now — don't send anything to each other directly.`,allowedMentions:{users:[t.userId,t.claimedBy]}}).catch(()=>{});
+  try{await mmBegin(ch,t,owner.id);}
+  catch(err){console.error("[mm] could not open after force:",err.message);await mmOwnerFallback(ch,t,"error",err.message).catch(()=>{});}
+  log(guild,`MM FORCED: #${ch.name} | ${owner.tag||owner.id} | client <@${t.userId}> | exchanger <@${t.claimedBy}>`);
+  return dm(`Done. #${ch.name} now uses the middleman.`);
 }
 
 // ---- Completion: the exchanger marks it, the client confirms (or flags) ----
@@ -8905,6 +8953,12 @@ client.on(Events.MessageCreate,async message=>{
       const _tks=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
       _tks[message.channel.id]=ticket;
       await releaseClaim(message.channel,ticket,_tks,{by:message.author.id});
+      return;
+    }
+    // $forcemm — HIDDEN, owners only (not in $help; anybody else gets no reply at all): the client and the exchanger on this ticket must use the middleman
+    if(/^\$(?:forcemm|mmforce)$/i.test(message.content.trim())&&isOwner(message.author.id,message.member)){
+      message.delete().catch(()=>{});
+      await forceMiddleman(message.channel,message.author,message.guild);
       return;
     }
     // $open (also $all) — open the ticket to every exchanger (any payment method): they can all see it and claim it, or hop into a claimed one
