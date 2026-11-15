@@ -22,7 +22,7 @@ const { Pool } = require("pg");
 
 // Which build is running. Shown at the bottom of /ping and printed in the logs, so a deploy that did not go through is easy to spot.
 // BOT_BUILD is the first 7 characters of the commit Railway built (it matches the commit on GitHub); it is blank when run anywhere else.
-const BOT_VERSION="v26";
+const BOT_VERSION="v27";
 const BOT_BUILD=String(process.env.RAILWAY_GIT_COMMIT_SHA||"").slice(0,7);
 const BUILD_TEXT=BOT_BUILD?`${BOT_VERSION}  ·  ${BOT_BUILD}`:BOT_VERSION;
 
@@ -1869,19 +1869,30 @@ function mmLgTime(ms){
 }
 
 // ── writing ──
-function mmLgCreate(cid,id,kind,at,uid,full){
+function mmLgCreate(cid,id,kind,at,uid,full,extra){
   return mmLgSerial(mmLgKey(cid,id),async()=>{
     const key=mmLgKey(cid,id);
     if(await MMDB.get(key))return;
-    await MMDB.set(key,{k:kind,c:cid,m:String(id),at,u:uid||null,v:[{at,x:full.slice(0,MM_LG_TXT)}],ad:mmLgAddrs(full)});
+    await MMDB.set(key,Object.assign({k:kind,c:cid,m:String(id),at,u:uid||null,v:[{at,x:full.slice(0,MM_LG_TXT)}],ad:mmLgAddrs(full)},extra||{}));
   });
 }
+// Who a message from another app (or a webhook) really came from: its name and id, the webhook, the command and the person who ran it.
+// A look-alike of this bot would be one of these, and it is the one thing a person reading the channel can't tell apart by eye.
+function mmLgAppInfo(d){
+  const im=d.interaction_metadata||d.interaction||null,iu=im&&im.user;
+  return {n:String((d.author&&d.author.username)||"").slice(0,60),ap:d.application_id||null,wh:d.webhook_id||null,ic:String((d.interaction&&d.interaction.name)||(im&&im.name)||"").slice(0,60)||null,iu:(iu&&iu.id)||null};
+}
+function mmLgAppLive(m){
+  const im=m.interactionMetadata||m.interaction||null,u=im&&im.user;
+  return {n:String((m.author&&m.author.username)||"").slice(0,60),ap:m.applicationId||null,wh:m.webhookId||null,ic:String((im&&(im.commandName||im.name))||"").slice(0,60)||null,iu:(u&&u.id)||null};
+}
+const mmLgAppWho=(g,r)=>`${r.n||"?"} (id ${r.u||"?"})${r.wh?`, webhook ${r.wh}`:""}${r.ap?`, application ${r.ap}`:""}${r.ic?`, command /${r.ic}`:""}${r.iu?`, run by ${mmLgName(g,r.iu)}`:""}`;
 function mmLgEdit(cid,id,o){
   return mmLgSerial(mmLgKey(cid,id),async()=>{
     const key=mmLgKey(cid,id),x=o.full.slice(0,MM_LG_TXT),ad=mmLgAddrs(o.full),r=await MMDB.get(key);
     if(!r){
       if(!o.bot&&!ad.length)return;                                   // a person's edit is kept only when the text now holds a wallet address
-      await MMDB.set(key,{k:o.bot?"bot":"human",c:cid,m:String(id),at:o.created||o.at,u:o.uid||null,v:[{at:o.at,x,ed:1}],ad,late:1});      // late = sent before the recording began, so the first version kept is an edit
+      await MMDB.set(key,Object.assign({k:o.kind||(o.bot?"bot":"human"),c:cid,m:String(id),at:o.created||o.at,u:o.uid||null,v:[{at:o.at,x,ed:1}],ad,late:1},o.extra||{}));      // late = sent before the recording began, so the first version kept is an edit
       return;
     }
     const last=r.v[r.v.length-1];
@@ -1919,14 +1930,15 @@ function mmLgRaw(p){
     if(t==="MESSAGE_DELETE"){mmLgDelete(cid,d.id);return;}
     if(t==="MESSAGE_DELETE_BULK"){for(const id of d.ids||[])mmLgDelete(cid,id);return;}
     const bot=!!(d.author&&d.author.id===client.user.id);
+    const app=!bot&&!!(d.author&&(d.author.bot||d.webhook_id)),extra=app?mmLgAppInfo(d):null;        // another app or a webhook (a look-alike of this bot would be one)
     if(t==="MESSAGE_CREATE"){
       const full=mmLgFlat(mmLgRawO(d)),at=Date.parse(d.timestamp)||Date.now();
       if(bot)mmLgCreate(cid,d.id,"bot",at,null,full);
-      else if(d.author&&!d.author.bot&&!d.webhook_id&&mmLgAddrs(full).length)mmLgCreate(cid,d.id,"human",at,d.author.id,full);
+      else if(d.author&&mmLgAddrs(full).length)mmLgCreate(cid,d.id,app?"app":"human",at,d.author.id,full,extra);
       return;
     }
     if(typeof d.content!=="string"||!Array.isArray(d.embeds))return;                 // (an update that carries only a link preview or the like)
-    mmLgEdit(cid,d.id,{bot,uid:d.author&&d.author.id,full:mmLgFlat(mmLgRawO(d)),at:Date.parse(d.edited_timestamp)||Date.now(),created:Date.parse(d.timestamp)||null});
+    mmLgEdit(cid,d.id,{bot,kind:bot?"bot":app?"app":"human",extra,uid:d.author&&d.author.id,full:mmLgFlat(mmLgRawO(d)),at:Date.parse(d.edited_timestamp)||Date.now(),created:Date.parse(d.timestamp)||null});
   }catch(err){console.error("[mm] ledger:",err&&err.message);}
 }
 // The private replies of the middleman's buttons (only the person who pressed the button sees them, so the channel itself never shows them)
@@ -2029,10 +2041,10 @@ async function mmLgCollect(cid,pick){
   let minLive=null;
   if(live)for(const id of live.keys()){const b=BigInt(id);if(minLive===null||b<minLive)minLive=b;}
   if(live)for(const [id,m] of live){
-    const bot=!!(m.author&&m.author.id===me),full=mmLgFlat(mmLgLiveO(m)),human=!bot&&!!m.author&&!m.author.bot&&mmLgAddrs(full).length>0;
-    if(!bot&&!human)continue;
+    const bot=!!(m.author&&m.author.id===me),full=mmLgFlat(mmLgLiveO(m)),app=!bot&&!!m.author&&!!(m.author.bot||m.webhookId),hasAd=mmLgAddrs(full).length>0,human=!bot&&!app&&!!m.author&&hasAd;
+    if(!bot&&!human&&!(app&&hasAd))continue;
     let r=byId.get(String(id));
-    if(!r){r={k:bot?"bot":"human",c:cid,m:String(id),at:m.createdTimestamp,u:bot?null:m.author.id,v:[{at:m.createdTimestamp,x:full.slice(0,MM_LG_TXT)}],ad:mmLgAddrs(full),pre:1};byId.set(String(id),r);rows.push(r);}
+    if(!r){r={k:bot?"bot":app?"app":"human",c:cid,m:String(id),at:m.createdTimestamp,u:bot?null:m.author.id,v:[{at:m.createdTimestamp,x:full.slice(0,MM_LG_TXT)}],ad:mmLgAddrs(full),pre:1};if(app)Object.assign(r,mmLgAppLive(m));byId.set(String(id),r);rows.push(r);}
     else if(!r.d&&r.v[r.v.length-1].x!==full.slice(0,MM_LG_TXT))r.v.push({at:m.editedTimestamp||Date.now(),x:full.slice(0,MM_LG_TXT),now:1});
     r.live=true;
   }
@@ -2058,7 +2070,7 @@ function mmLgRender(D){
     for(const o of [d.out,d.lastOut])if(o&&o.to)put(o.to,`${d.id} payout destination`);
   }
   const labelOf=a=>(lbl.get(mmLgNorm(a))||[]).join(", ");
-  const bots=rows.filter(r=>r.k==="bot"),priv=rows.filter(r=>r.k==="priv"),ppl=rows.filter(r=>r.k==="human");
+  const bots=rows.filter(r=>r.k==="bot"),priv=rows.filter(r=>r.k==="priv"),ppl=rows.filter(r=>r.k==="human"),apps=rows.filter(r=>r.k==="app");
   const shown=new Map();
   for(const r of rows){
     if(r.k!=="bot"&&r.k!=="priv")continue;
@@ -2081,6 +2093,12 @@ function mmLgRender(D){
     for(const s of [...shown.values()].sort((a,b)=>a.first-b.first))L.push(`  ${s.a}`,`     in ${s.n} message${s.n===1?"":"s"}${s.priv?` (${s.priv} private)`:""}  ·  first ${mmLgTime(s.first)}  ·  last ${mmLgTime(s.last)}`,`     ${labelOf(s.a)||"NOT an address of this deal or of the middleman  <-- CHECK THIS ONE"}`);
     L.push(foreign.length?`\n${foreign.length} address${foreign.length===1?"":"es"} above ${foreign.length===1?"is":"are"} not the deal's or the middleman's own. Look at those messages below.`:"\nEvery address the bot showed is the deal's own or the middleman's own. The bot did not show any other address in this ticket.");
   }
+  L.push("","ANOTHER APP OR WEBHOOK (NOT THIS BOT)","-".repeat(64));
+  if(!apps.length)L.push("No other app or webhook posted a wallet address in this ticket (that I recorded, or that is still in the channel).");
+  else{
+    L.push(`${apps.length} message${apps.length===1?"":"s"} with a wallet address came from something that is NOT this bot. An app that copies this bot's name and picture, or a webhook, can post a card that looks like the bot's own:`);
+    for(const r of apps)L.push(`  [${mmLgTime(r.at)}] ${mmLgAppWho(g,r)}`,`     addresses: ${(r.ad||[]).join(", ")||"-"}${stat(r)?`  ·  ${stat(r)}`:""}`);
+  }
   L.push("","DEALS IN THIS TICKET","-".repeat(64));
   if(!deals.length)L.push("No middleman deal is recorded for this ticket.");
   for(const d of deals){
@@ -2097,7 +2115,7 @@ function mmLgRender(D){
   L.push(`MESSAGES (oldest first)`,"-".repeat(64),"BOT = a message the bot sent in the channel.  PRIVATE = a reply only one person saw.  PERSON = a person's message that held a wallet address.");
   if(!rows.length)L.push("","Nothing recorded and nothing in the channel to show.");
   for(const r of rows){
-    const who=r.k==="bot"?"BOT":r.k==="priv"?`PRIVATE reply to ${mmLgName(g,r.u)}${r.b?` (pressed ${r.b})`:""}`:`PERSON ${mmLgName(g,r.u)}`;
+    const who=r.k==="bot"?"BOT":r.k==="priv"?`PRIVATE reply to ${mmLgName(g,r.u)}${r.b?` (pressed ${r.b})`:""}`:r.k==="app"?`OTHER APP (NOT THIS BOT) ${mmLgAppWho(g,r)}`:`PERSON ${mmLgName(g,r.u)}`;
     L.push("",`[${mmLgTime(r.at)}] ${who}${r.m?`   message ${r.m}`:""}`);
     const st=stat(r);if(st)L.push(`  status: ${st}`);
     if(r.pre)L.push("  note: it is in the channel but was not in the recording (sent before recording began), so this is only what it says now");
@@ -2112,7 +2130,8 @@ function mmLgRender(D){
   const summary=[`**Message log: ${ch?"#"+ch.name:D.cid}**${deals.length?`  ·  ${deals.map(d=>d.id).join(", ")}`:""}`,
     `Bot messages: ${bots.length} (${edited} edited, ${dBot} deleted by the bot itself, ${dOther} deleted by someone else or missing)  ·  private replies: ${priv.length}  ·  people's address messages: ${ppl.length}`,
     !shown.size?"The bot showed no wallet address in this ticket (that I recorded).":foreign.length?`CHECK: the bot showed ${foreign.length} address${foreign.length===1?"":"es"} that ${foreign.length===1?"is":"are"} not this deal's or the middleman's: ${foreign.slice(0,3).map(s=>`\`${mmShort(s.a)}\``).join(", ")}`:`The bot showed ${shown.size} address${shown.size===1?"":"es"} and ${shown.size===1?"it is":"all are"} the deal's or the middleman's own. It showed no other address.`,
-    meta&&meta.since?`Recording started <t:${Math.floor(meta.since/1000)}:f>. Anything deleted before that can't be recovered. The full text is in the file.`:"The full text is in the file."].join("\n");
+    apps.length?`CHECK: ${apps.length} message${apps.length===1?"":"s"} with a wallet address came from another app or a webhook, not this bot. See the file.`:"",
+    meta&&meta.since?`Recording started <t:${Math.floor(meta.since/1000)}:f>. Anything deleted before that can't be recovered. The full text is in the file.`:"The full text is in the file."].filter(Boolean).join("\n");
   const nm=(ch?ch.name:D.cid).replace(/[^a-z0-9-]/gi,"-").slice(0,40);
   return {name:`mm-log-${nm}.txt`,text:L.join("\n")+"\n",summary:summary.slice(0,1900)};
 }
@@ -2162,7 +2181,7 @@ async function mmLogFind(q){
   const hits=await mmLgSearch(needle);
   L.push("",`RECORDED MESSAGES THAT MENTION IT: ${hits.length}${hits.length>=300?" (the first 300)":""}`);
   for(const [,r] of hits.slice(0,60)){
-    const who=r.k==="bot"?"BOT":r.k==="priv"?`PRIVATE reply to ${mmLgName(g,r.u)}`:`PERSON ${mmLgName(g,r.u)}`;
+    const who=r.k==="bot"?"BOT":r.k==="priv"?`PRIVATE reply to ${mmLgName(g,r.u)}`:r.k==="app"?`OTHER APP (NOT THIS BOT) ${mmLgAppWho(g,r)}`:`PERSON ${mmLgName(g,r.u)}`;
     const ver=r.v.find(v=>String(v.x).toLowerCase().includes(needle))||r.v[r.v.length-1],lo=String(ver.x).toLowerCase(),at=Math.max(0,lo.indexOf(needle));
     L.push(`  [${mmLgTime(r.at)}] ${who}  ·  channel ${r.c}${r.m?`  ·  message ${r.m}`:""}${r.d?`  ·  DELETED ${mmLgTime(r.d.at)}`:""}`,`      ...${String(ver.x).slice(Math.max(0,at-70),at+needle.length+70).replace(/\s+/g," ")}...`);
   }
@@ -2170,6 +2189,182 @@ async function mmLogFind(q){
   return {name:"mm-log-find.txt",text:L.join("\n")+"\n",summary:`**Search for** \`${s.slice(0,60)}\`\n${isMine?"It is one of the middleman's own deposit addresses.":"It is **not** one of the middleman's own deposit addresses."}\nDeals that mention it: **${dh.length}**  ·  recorded messages that mention it: **${hits.length}**\nRecording of ticket messages only covers the time since it started. The details are in the file.`};
 }
 // ── end of the v26 ledger ──
+
+// ── v27: a one-time case file, printed into the deploy log ──────────────────────────────────────────────────────────────────
+// For the two tickets where an exchanger paid USDT to an address that was not the middleman's (Nov 15 2026). On the first start after this build it reads,
+// from the bot's own records and from Discord: each ticket's deal as saved, every message still in the channel (who wrote it, when, what it said, and
+// whether another app or a webhook wrote it), the delete entries of the server's audit log, every webhook, and every channel the bot can read (for the
+// two addresses). It only reads: nothing is sent to Discord and nothing is changed. Every line starts with FORENSIC.
+const FX_RUN="fx-2026-11-15-a",FX_TICKETS=["skrill-x68s","cashapp-vats"];
+const FX_NEEDLES=["0xab77acedea8ef7a7ac1a7683c00e779814037aee","0x77dbdcac4978ef82d82606c61770489b0ef870e2"];
+const FX_SECRET=/private|secret|seed|mnemonic|password|apikey|api_key|authtoken|privkey|^key$|^pk$/i;
+let _fxRan=false;
+const fxSleep=ms=>new Promise(r=>setTimeout(r,ms));
+const fxIso=ms=>{try{return new Date(ms).toISOString();}catch{return String(ms);}};
+const fxHit=text=>{const low=String(text||"").toLowerCase();return FX_NEEDLES.some(n=>low.includes(n)||low.includes(n.slice(0,8))||low.includes(n.slice(-8)));};
+// One log line at a time and slowly (the host drops lines when more than a few hundred arrive per second)
+async function fxOut(tag,text){
+  for(const raw of String(text==null?"":text).split("\n")){
+    const line=raw.length?raw:" ";
+    for(let i=0;i<line.length;i+=1400){console.log(`FORENSIC ${tag} | ${line.slice(i,i+1400)}`);await fxSleep(12);}
+  }
+}
+function fxScrub(o,depth){
+  depth=depth||0;
+  if(o==null||typeof o!=="object")return o;
+  if(depth>6)return "…";
+  if(Array.isArray(o))return o.slice(0,80).map(x=>fxScrub(x,depth+1));
+  const r={};
+  for(const k of Object.keys(o))r[k]=FX_SECRET.test(k)?"(hidden)":fxScrub(o[k],depth+1);
+  return r;
+}
+// One message of a channel as one line: when, who (this bot, another app, a webhook or a person), what it says and which addresses it holds
+function fxMsg(m,me){
+  const a=m.author||{};
+  const kind=a.id===me?"THISBOT":m.webhookId?`WEBHOOK(${m.webhookId})`:a.bot?"OTHERBOT":"HUMAN";
+  const dn=m.member&&m.member.displayName,meta=[];
+  if(m.applicationId&&m.applicationId!==me)meta.push(`application ${m.applicationId}`);
+  const im=m.interactionMetadata||m.interaction;
+  if(im){const u=im.user||im.interactedUser;meta.push(`via ${im.commandName||im.name||"interaction"} by ${u?`${u.username}(${u.id})`:"?"}`);}
+  if(m.editedTimestamp)meta.push(`edited ${fxIso(m.editedTimestamp)}`);
+  if(m.reference&&m.reference.messageId)meta.push(`reply-to ${m.reference.messageId}`);
+  if(m.type!==0&&m.type!==19&&m.type!==20)meta.push(`type ${m.type}`);
+  if(m.pinned)meta.push("pinned");
+  const full=mmLgFlat(mmLgLiveO(m)).replace(/\s*\n\s*/g," ⏎ "),ad=mmLgAddrs(full),hit=fxHit(full);
+  return {kind,hit,ad,line:`${fxIso(m.createdTimestamp)} ${m.id} ${kind} ${a.username||"?"}(${a.id||"?"})${dn&&dn!==a.username?` aka "${dn}"`:""}${meta.length?` [${meta.join("; ")}]`:""}${ad.length?` ADDR[${ad.join(", ")}]`:""}${hit?" <<<HIT>>>":""} :: ${full.slice(0,900)}`};
+}
+async function fxHistory(ch,pages,pace){
+  const all=[];let before;
+  for(let n=0;n<pages;n++){
+    const b=await ch.messages.fetch(before?{limit:100,before}:{limit:100}).catch(e=>{console.log(`FORENSIC ERR | could not read #${ch.name}: ${e&&e.message}`);return null;});
+    if(!b||!b.size)break;
+    for(const m of b.values())all.push(m);
+    before=b.last().id;
+    if(b.size<100)break;
+    await fxSleep(pace);
+  }
+  return all.sort((a,b)=>a.createdTimestamp-b.createdTimestamp);
+}
+async function fxChannel(g,ch,me,authors){
+  const tk=(_mem.tickets&&_mem.tickets[ch.id])||null;
+  await fxOut(`CHANNEL ${ch.name}`,`id ${ch.id} · created ${fxIso(ch.createdTimestamp)} · ticket record: ${JSON.stringify(fxScrub(tk))}`);
+  try{
+    const ow=[];
+    for(const o of ch.permissionOverwrites.cache.values()){
+      const al=o.allow.toArray().filter(x=>/ManageWebhooks|UseExternalApps|Administrator|ManageMessages|ManageChannels|MentionEveryone/.test(x));
+      ow.push(`${o.type===0||o.type==="role"?"role":"member"} ${o.id}${al.length?` allow ${al.join("+")}`:""}`);
+    }
+    await fxOut(`CHANNEL ${ch.name}`,`permission overwrites (${ow.length}): ${ow.join(" | ")}`);
+  }catch(e){await fxOut(`CHANNEL ${ch.name}`,`permission overwrites: ${e&&e.message}`);}
+  const deals=[...(await MMDB.list("e:")),...(await MMDB.list("done:"))].map(([,x])=>x).filter(x=>x&&x.channelId===ch.id);
+  await fxOut(`DEALS ${ch.name}`,`${deals.length} deal(s) saved for this channel`);
+  for(const d of deals)await fxOut(`DEAL ${d.id}`,JSON.stringify(fxScrub(d)));
+  const all=await fxHistory(ch,15,300);
+  await fxOut(`MESSAGES ${ch.name}`,`${all.length} message(s) still in the channel${all.length?`, from ${fxIso(all[0].createdTimestamp)} to ${fxIso(all[all.length-1].createdTimestamp)}`:""}`);
+  for(const m of all){
+    const x=fxMsg(m,me),a=m.author;
+    if(a){let s=authors.get(a.id);if(!s)authors.set(a.id,s={a,n:0,ch:new Set(),kind:x.kind});s.n++;s.ch.add(ch.name);}
+    await fxOut(`MSG ${ch.name}`,x.line);
+  }
+  // what the recorder (the message ledger) has kept for this channel since it started, deleted messages included
+  const rec=(await MMDB.list(`lg:${ch.id}:`)).map(([,r])=>r).filter(Boolean).sort((p,q)=>p.at-q.at);
+  await fxOut(`LEDGER ${ch.name}`,`${rec.length} message(s) recorded in this channel`);
+  for(const r of rec)await fxOut(`LEDGER ${ch.name}`,`${fxIso(r.at)} ${r.k}${r.m?` ${r.m}`:""}${r.u?` by ${r.u}`:""}${r.n?` (${r.n}${r.ap?`, application ${r.ap}`:""}${r.wh?`, webhook ${r.wh}`:""})`:""}${r.d?` DELETED ${fxIso(r.d.at)} by ${r.d.by}`:""}${r.v.length>1?` · ${r.v.length} versions`:""}${(r.ad||[]).length?` ADDR[${r.ad.join(", ")}]`:""} :: ${String((r.v[r.v.length-1]||{}).x||"").replace(/\s*\n\s*/g," ⏎ ").slice(0,500)}`);
+}
+async function fxAuthors(g,authors){
+  for(const [id,s] of authors){
+    const a=s.a;let mem=g.members.cache.get(id)||null;
+    if(!mem&&!a.bot)mem=await g.members.fetch(id).catch(()=>null);
+    const roles=mem?[...mem.roles.cache.values()].filter(r=>r.id!==g.id).sort((x,y)=>y.position-x.position).slice(0,8).map(r=>r.name).join(", "):"";
+    await fxOut("AUTHOR",`${id} ${a.username||"?"}${mem&&mem.displayName!==a.username?` aka "${mem.displayName}"`:""} · ${s.kind} · account created ${fxIso(a.createdTimestamp)} · ${mem?`joined this server ${fxIso(mem.joinedTimestamp)} · roles: ${roles||"none"}`:"not in this server now"} · ${s.n} message(s) in ${[...s.ch].join(", ")}`);
+    await fxSleep(120);
+  }
+}
+async function fxAudit(g,ids){
+  const kinds=[[72,"MESSAGE_DELETE",1],[73,"MESSAGE_BULK_DELETE",1],[50,"WEBHOOK_CREATE",0],[51,"WEBHOOK_UPDATE",0],[28,"BOT_ADD",0],[80,"INTEGRATION_CREATE",0]];
+  for(const [type,name,onlyTickets] of kinds){
+    try{
+      const r=await g.fetchAuditLogs({type,limit:100});
+      let n=0;
+      for(const e of r.entries.values()){
+        const cid=type===73?(e.target&&e.target.id):(e.extra&&e.extra.channel&&e.extra.channel.id);
+        if(onlyTickets&&!ids.has(cid))continue;
+        n++;
+        await fxOut(`AUDIT ${name}`,`${fxIso(e.createdTimestamp)} by ${e.executor?`${e.executor.username}(${e.executor.id})`:"?"} · target ${e.target?`${e.target.username||e.target.name||""}(${e.target.id})`:"?"}${cid?` · channel ${cid}`:""}${e.extra&&e.extra.count?` · count ${e.extra.count}`:""}${e.reason?` · reason ${e.reason}`:""}`);
+      }
+      await fxOut(`AUDIT ${name}`,`${n} listed (${r.entries.size} read)`);
+    }catch(err){await fxOut(`AUDIT ${name}`,`can't read: ${err&&err.message}`);}
+    await fxSleep(300);
+  }
+}
+async function fxWebhooks(g){
+  try{
+    const ws=await g.fetchWebhooks();
+    await fxOut("WEBHOOKS",`${ws.size} webhook(s) in the server`);
+    for(const w of ws.values())await fxOut("WEBHOOK",`${w.name} (${w.id}) · channel ${w.channelId} · created ${fxIso(w.createdTimestamp)} · by ${w.owner?`${w.owner.username||"?"}(${w.owner.id})`:"?"} · application ${w.applicationId||"-"} · type ${w.type}`);
+  }catch(e){await fxOut("WEBHOOKS",`can't read: ${e&&e.message}`);}
+}
+// Every other channel the bot can read: any message that holds either address, and which other apps or webhooks have posted wallet addresses
+async function fxScan(g,me,skip){
+  let chans=0,msgs=0,hits=0;const apps=new Map();
+  for(const ch of g.channels.cache.values()){
+    if(skip.has(ch.id)||typeof ch.isTextBased!=="function"||!ch.isTextBased()||!ch.messages||typeof ch.messages.fetch!=="function")continue;
+    let can=true;try{const p=ch.permissionsFor(g.members.me||client.user);if(p)can=p.has("ViewChannel")&&p.has("ReadMessageHistory");}catch{}
+    if(!can)continue;
+    chans++;
+    const got=await fxHistory(ch,3,250).catch(()=>[]);
+    for(const m of got){
+      msgs++;
+      const a=m.author||{},full=mmLgFlat(mmLgLiveO(m));
+      if(fxHit(full)){hits++;await fxOut(`SCAN-HIT #${ch.name}`,fxMsg(m,me).line);}
+      else if((a.bot||m.webhookId)&&a.id!==me&&mmLgAddrs(full).length){
+        let s=apps.get(a.id);
+        if(!s)apps.set(a.id,s={name:a.username,n:0,webhook:!!m.webhookId,first:m.createdTimestamp,last:m.createdTimestamp,ch:new Set(),sample:null,app:m.applicationId||null});
+        s.n++;s.first=Math.min(s.first,m.createdTimestamp);s.last=Math.max(s.last,m.createdTimestamp);if(s.ch.size<6)s.ch.add(ch.name);
+        if(!s.sample){const im=m.interactionMetadata||m.interaction;s.sample=`${fxIso(m.createdTimestamp)} in #${ch.name}${im?` via ${im.commandName||im.name||"interaction"} by ${im.user?`${im.user.username}(${im.user.id})`:"?"}`:""}`;}
+      }
+    }
+    await fxSleep(150);
+  }
+  await fxOut("SCAN",`channels read ${chans}, messages looked at ${msgs}, messages that hold either address (or its first or last 8 characters) ${hits}`);
+  for(const [id,s] of apps)await fxOut("SCAN-OTHERAPP",`${s.name} (id ${id}${s.app?`, application ${s.app}`:""}${s.webhook?", WEBHOOK":""}) posted ${s.n} message(s) with a wallet address · ${fxIso(s.first)} to ${fxIso(s.last)} · channels ${[...s.ch].join(", ")} · first: ${s.sample}`);
+}
+async function mmForensics(){
+  if(_fxRan)return;
+  _fxRan=true;
+  if(await MMDB.get("fx:"+FX_RUN))return;
+  const say=fxOut;
+  await say("START",`${FX_RUN} · bot ${client.user&&client.user.id} · ${BOT_VERSION} · looking for ${FX_TICKETS.join(", ")}`);
+  const g=client.guilds.cache.get(CONFIG.GUILD_ID)||client.guilds.cache.first();
+  if(!g){await say("ERR","no server");return;}
+  const me=client.user.id,authors=new Map();
+  const stage=async(name,fn)=>{try{await fn();}catch(e){await say("ERR",`${name}: ${e&&e.stack?String(e.stack).split("\n").slice(0,3).join(" / "):e}`);}};
+  const chs=[...g.channels.cache.values()].filter(c=>FX_TICKETS.includes(c.name));
+  await say("CHANNELS",`found ${chs.length} of ${FX_TICKETS.length}: ${chs.map(c=>`#${c.name} (${c.id})`).join(", ")||"none"}`);
+  await stage("deals",async()=>{
+    const rows=[...(await MMDB.list("e:")).map(([,x])=>["open",x]),...(await MMDB.list("done:")).map(([,x])=>["done",x])].filter(([,x])=>x);
+    rows.sort((a,b)=>(b[1].createdAt||0)-(a[1].createdAt||0));
+    await say("DEALS",`${rows.length} deal(s) in the database (newest first, the first 40)`);
+    for(const [w,d] of rows.slice(0,40))await say("DEALS",`${w} ${d.id} · ${d.state} · ${d.coin||"?"} ${d.chain||""} · $${d.usd} · created ${d.createdAt?fxIso(d.createdAt):"?"} · channel ${d.channelId||"-"} · sender ${d.depositorId||"-"} to receiver ${d.recipientId||"-"} · deposit address ${d.address||"-"} · payout ${d.payout||"-"} · refund ${d.refundTo||"-"}`);
+  });
+  await stage("find",async()=>{
+    for(const a of ["0xAB77acedEa8EF7a7Ac1a7683c00e779814037AEe","0x77dbdcac4978ef82d82606c61770489b0ef870e2"]){const r=await mmLogFind(a);await say(`FIND ${a.slice(0,8)}`,r.text);}
+  });
+  await stage("ledger",async()=>{
+    const rows=(await MMDB.list("lg:")).map(([,r])=>r).filter(Boolean),by={},meta=await MMDB.get("lgmeta");
+    for(const r of rows)by[r.k]=(by[r.k]||0)+1;
+    await say("LEDGER",`${rows.length} record(s) in ${new Set(rows.map(r=>r.c)).size} channel(s) since ${meta&&meta.since?fxIso(meta.since):"?"} · by kind ${JSON.stringify(by)} · deleted ${rows.filter(r=>r.d).length}`);
+    for(const r of rows.filter(x=>x.k==="app").slice(0,30))await say("LEDGER-APP",`${fxIso(r.at)} channel ${r.c} ${r.m||""} ${r.n||"?"} (id ${r.u||"?"}${r.ap?`, application ${r.ap}`:""}${r.wh?`, webhook ${r.wh}`:""}${r.ic?`, command ${r.ic}`:""}${r.iu?`, run by ${r.iu}`:""}) ADDR[${(r.ad||[]).join(", ")}]`);
+  });
+  for(const ch of chs)await stage("channel "+ch.name,()=>fxChannel(g,ch,me,authors));
+  await stage("authors",()=>fxAuthors(g,authors));
+  await stage("audit",()=>fxAudit(g,new Set(chs.map(c=>c.id))));
+  await stage("webhooks",()=>fxWebhooks(g));
+  await stage("scan",()=>fxScan(g,me,new Set(chs.map(c=>c.id))));
+  await MMDB.set("fx:"+FX_RUN,{at:Date.now()});
+  await say("END","done");
+}
+// ── end of the v27 case file ──
 
 // An owner steps in as the middleman (anything the bot does not or cannot hold). Owners are pinged in the ticket and by DM, at most once every ten minutes.
 async function mmOwnerFallback(channel,ticket,why,detail){
@@ -12018,6 +12213,7 @@ client.once(Events.ClientReady,async()=>{
     setTimeout(()=>mmTick().catch(()=>{}),8*1000);
     setTimeout(()=>mmStartup().catch(e=>console.error("[mm] startup:",e.message)),20*1000);
     setTimeout(()=>mmLgStart(),9*1000);
+    setTimeout(()=>mmForensics().catch(e=>console.error("FORENSIC failed:",e&&e.message)),25*1000);
 
     // The new Konvert banner on posts that still show the old one (once per banner)
     setTimeout(()=>healBanners(guild).catch(e=>console.log("[banner] heal:",e.message)),22*1000);
