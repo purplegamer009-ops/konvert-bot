@@ -22,7 +22,7 @@ const { Pool } = require("pg");
 
 // Which build is running. Shown at the bottom of /ping and printed in the logs, so a deploy that did not go through is easy to spot.
 // BOT_BUILD is the first 7 characters of the commit Railway built (it matches the commit on GitHub); it is blank when run anywhere else.
-const BOT_VERSION="v25";
+const BOT_VERSION="v26";
 const BOT_BUILD=String(process.env.RAILWAY_GIT_COMMIT_SHA||"").slice(0,7);
 const BUILD_TEXT=BOT_BUILD?`${BOT_VERSION}  ·  ${BOT_BUILD}`:BOT_VERSION;
 
@@ -1257,10 +1257,14 @@ async function mmVerifyEvm(chainKey,asset,address,txid,opts){
   const out={found:true,ok:null,toUs:false,amountRaw:0n,from:tx.from?String(tx.from).toLowerCase():null,self:String(tx.from||"").toLowerCase()===low,mined:false,conf:0,final:false,blockTime:null,viaContract:false};
   if(!asset.contract){
     if(String(tx.to||"").toLowerCase()===low){out.toUs=true;out.amountRaw=BigInt(tx.value||"0x0");}
-    else out.viaContract=String(tx.input||tx.data||"0x").length>2;   // a contract call (some exchanges batch their withdrawals) cannot be read from here; a plain transfer to somebody else is just not ours
+    else{
+      out.viaContract=String(tx.input||tx.data||"0x").length>2;   // a contract call (some exchanges batch their withdrawals) cannot be read from here; a plain transfer to somebody else is just not ours
+      if(!out.viaContract&&tx.to){out.dest=String(tx.to).toLowerCase();out.destRaw=BigInt(tx.value||"0x0");}      // v26: where the money goes instead
+    }
   }else if(String(tx.to||"").toLowerCase()===asset.contract&&/^0xa9059cbb[0-9a-f]{128}/i.test(String(tx.input||tx.data||""))){
     const inp=String(tx.input||tx.data);                          // a plain transfer(to, amount): readable before it is mined
     if(("0x"+inp.slice(34,74)).toLowerCase()===low){out.toUs=true;out.amountRaw=BigInt("0x"+inp.slice(74,138));}
+    else{out.dest=("0x"+inp.slice(34,74)).toLowerCase();out.destRaw=BigInt("0x"+inp.slice(74,138));}                // v26: where the money goes instead
   }
   if(tx.blockNumber==null)return out;
   const rc=await mmRpc(chainKey,"eth_getTransactionReceipt",[txid],q);
@@ -1270,15 +1274,18 @@ async function mmVerifyEvm(chainKey,asset,address,txid,opts){
   out.mined=true;out.ok=rc.status==="0x1";
   if(asset.contract){
     let sum=0n,from=null;
+    const away=new Map();                                           // v26: where this token went instead (recipient -> amount)
     for(const l of rc.logs||[]){
       const t=l.topics||[];
       if(l.removed||String(l.address||"").toLowerCase()!==asset.contract||t.length!==3||t[0]!==MM_TRANSFER_TOPIC)continue;
-      if(("0x"+String(t[2]).slice(26)).toLowerCase()!==low)continue;
-      sum+=BigInt(l.data&&l.data!=="0x"?l.data:"0x0");
+      const to=("0x"+String(t[2]).slice(26)).toLowerCase(),amt=BigInt(l.data&&l.data!=="0x"?l.data:"0x0");
+      if(to!==low){away.set(to,(away.get(to)||0n)+amt);continue;}
+      sum+=amt;
       if(!from)from=("0x"+String(t[1]).slice(26)).toLowerCase();
     }
     out.amountRaw=sum;out.toUs=sum>0n;
     if(from){out.from=from;out.self=from===low;}
+    if(!out.toUs){let best=null;for(const [a,n] of away)if(n>0n&&(!best||n>best[1]))best=[a,n];if(best){out.dest=best[0];out.destRaw=best[1];}}
   }
   const head=BigInt(await mmRpc(chainKey,"eth_blockNumber",[],opts)),bn=BigInt(rc.blockNumber);
   out.conf=head>=bn?Number(head-bn)+1:0;
@@ -1787,6 +1794,370 @@ async function mmTmpSweep(){
   }finally{_mmTmpBusy=false;}
 }
 
+// ── v26: the message ledger ──────────────────────────────────────────────────────────────────────────────────────────────
+// A flight recorder for tickets. Every message the bot sends in a ticket is written down the moment it is sent, with every later edit and the moment it is
+// deleted (and whether the bot itself deleted it). The private replies it gives to buttons are written down too (Copy Details shows the address in one).
+// A message a person posts that holds a wallet address is kept as well. "$mm log" (owners, answered in DMs) turns it into a text file, and
+// "$mm log find <address>" searches every deal and every recorded message for an address. Records are kept for 45 days.
+// Nothing in here can change or block anything else: every hook swallows its own errors.
+const MM_LG_KEEP_MS=45*24*60*60*1000,MM_LG_TXT=3500,MM_LG_VERS=12,MM_LG_TZ=process.env.MM_LOG_TZ||"America/Toronto",_mmLgBootAt=Date.now();
+const MM_LG_ADDR=/\b0x[a-fA-F0-9]{40}\b|\b(?:bc1|ltc1)[a-z0-9]{20,80}\b|\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/g;
+const _mmLgQ=new Map(),_mmLgBotDel=new Map();
+const mmLgKey=(cid,id)=>`lg:${cid}:${id}`;
+const mmLgTicket=cid=>{const t=_mem.tickets;return !!(t&&cid&&t[cid]);};                 // (no disk read: this runs for every message in the server)
+const _mmLgJ=v=>{try{return v&&typeof v.toJSON==="function"?v.toJSON():v;}catch{return v;}};
+// One change at a time per message (the create, the edit and the delete of one message can arrive almost together)
+function mmLgSerial(key,fn){
+  const next=(_mmLgQ.get(key)||Promise.resolve()).then(fn).catch(err=>console.error("[mm] ledger:",err&&err.message));
+  _mmLgQ.set(key,next);
+  next.then(()=>{if(_mmLgQ.get(key)===next)_mmLgQ.delete(key);});
+  return next;
+}
+function mmLgAddrs(text){
+  const out=[],seen=new Set();
+  for(const a of String(text||"").match(MM_LG_ADDR)||[]){
+    const k=/^0x/i.test(a)?a.toLowerCase():a;
+    if(seen.has(k))continue;
+    seen.add(k);out.push(a);
+    if(out.length>=16)break;
+  }
+  return out;
+}
+// A message (from the gateway, from the channel, or the payload the bot is about to send) as plain text: the words, the embeds, the file names and the buttons
+function mmLgFlat(o){
+  const L=[];
+  if(o.content)L.push(String(o.content));
+  for(const e of o.embeds||[]){
+    if(!e)continue;
+    const x=[];
+    if(e.author&&e.author.name)x.push(`[${e.author.name}]`);
+    if(e.title)x.push(`## ${e.title}`);
+    if(e.description)x.push(String(e.description));
+    for(const f of e.fields||[])x.push(`${f.name}: ${f.value}`);
+    if([e.thumbnail&&e.thumbnail.url,e.image&&e.image.url].some(u=>u&&/qr\.png/i.test(String(u))))x.push("(QR code picture)");
+    if(e.footer&&e.footer.text)x.push(`-- ${e.footer.text}`);
+    if(x.length)L.push("[embed]\n"+x.join("\n"));
+  }
+  if((o.files||[]).length)L.push(`(file: ${o.files.join(", ")})`);
+  const b=[];
+  for(const r of o.components||[])for(const c of (r&&r.components)||[])b.push(c.label?`[${c.label}${c.url?` -> ${c.url}`:""}]`:c.custom_id?`[${c.custom_id}]`:"[menu]");
+  if(b.length)L.push("buttons: "+b.join(" "));
+  return L.join("\n");
+}
+const mmLgRawO=d=>({content:d.content||"",embeds:d.embeds||[],components:d.components||[],files:(d.attachments||[]).map(a=>a.filename||a.name||"file")});
+const mmLgLiveO=m=>({content:m.content||"",embeds:[...(m.embeds||[])].map(_mmLgJ),components:[...(m.components||[])].map(_mmLgJ),files:[...(m.attachments?m.attachments.values():[])].map(a=>a.name||"file")});
+const mmLgSendO=p=>{p=typeof p==="string"?{content:p}:(p||{});return {content:p.content==null?"":String(p.content),embeds:[].concat(p.embeds||[]).map(_mmLgJ),components:[].concat(p.components||[]).map(_mmLgJ),files:[].concat(p.files||[]).map(f=>(f&&(f.name||(f.attachment&&f.attachment.name)))||"file")};};
+function mmLgTime(ms){
+  try{
+    const f=new Intl.DateTimeFormat("en-CA",{timeZone:MM_LG_TZ,year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit",hourCycle:"h23",timeZoneName:"short"}),o={};
+    for(const p of f.formatToParts(new Date(ms)))o[p.type]=p.value;
+    return `${o.year}-${o.month}-${o.day} ${o.hour}:${o.minute}:${o.second} ${o.timeZoneName}`;
+  }catch{return new Date(ms).toISOString();}
+}
+
+// ── writing ──
+function mmLgCreate(cid,id,kind,at,uid,full){
+  return mmLgSerial(mmLgKey(cid,id),async()=>{
+    const key=mmLgKey(cid,id);
+    if(await MMDB.get(key))return;
+    await MMDB.set(key,{k:kind,c:cid,m:String(id),at,u:uid||null,v:[{at,x:full.slice(0,MM_LG_TXT)}],ad:mmLgAddrs(full)});
+  });
+}
+function mmLgEdit(cid,id,o){
+  return mmLgSerial(mmLgKey(cid,id),async()=>{
+    const key=mmLgKey(cid,id),x=o.full.slice(0,MM_LG_TXT),ad=mmLgAddrs(o.full),r=await MMDB.get(key);
+    if(!r){
+      if(!o.bot&&!ad.length)return;                                   // a person's edit is kept only when the text now holds a wallet address
+      await MMDB.set(key,{k:o.bot?"bot":"human",c:cid,m:String(id),at:o.created||o.at,u:o.uid||null,v:[{at:o.at,x,ed:1}],ad,late:1});      // late = sent before the recording began, so the first version kept is an edit
+      return;
+    }
+    const last=r.v[r.v.length-1];
+    if(last&&last.x===x)return;
+    r.v.push({at:o.at,x});
+    if(r.v.length>MM_LG_VERS)r.v.splice(1,r.v.length-MM_LG_VERS);     // the first version and the newest ones stay
+    for(const a of ad)if(!r.ad.some(b=>/^0x/i.test(a)?b.toLowerCase()===a.toLowerCase():b===a))r.ad.push(a);
+    r.ad=r.ad.slice(0,24);
+    await MMDB.set(key,r);
+  });
+}
+function mmLgDelete(cid,id){
+  const at=Date.now();
+  return mmLgSerial(mmLgKey(cid,id),async()=>{
+    const key=mmLgKey(cid,id),r=await MMDB.get(key);
+    if(!r||r.d)return;
+    r.d={at,by:_mmLgBotDel.has(String(id))?"bot":"other"};
+    await MMDB.set(key,r);
+  });
+}
+// The bot's own deletes are noted just before they are made (see mmLgStart), so a delete can be told apart from one a person made
+function mmLgBotDelete(id){
+  if(!id)return;
+  _mmLgBotDel.set(String(id),Date.now());
+  if(_mmLgBotDel.size>2000){const cut=Date.now()-10*60*1000;for(const [k,t] of _mmLgBotDel)if(t<cut)_mmLgBotDel.delete(k);}
+}
+// Every gateway event about messages in a ticket: the bot's own messages (and a person's, only when it holds a wallet address)
+function mmLgRaw(p){
+  try{
+    const t=p&&p.t,d=p&&p.d;
+    if(!d||!client.user||(t!=="MESSAGE_CREATE"&&t!=="MESSAGE_UPDATE"&&t!=="MESSAGE_DELETE"&&t!=="MESSAGE_DELETE_BULK"))return;
+    if(!d.guild_id||(CONFIG.GUILD_ID&&d.guild_id!==CONFIG.GUILD_ID))return;
+    const cid=d.channel_id;
+    if(!cid||!mmLgTicket(cid))return;
+    if(t==="MESSAGE_DELETE"){mmLgDelete(cid,d.id);return;}
+    if(t==="MESSAGE_DELETE_BULK"){for(const id of d.ids||[])mmLgDelete(cid,id);return;}
+    const bot=!!(d.author&&d.author.id===client.user.id);
+    if(t==="MESSAGE_CREATE"){
+      const full=mmLgFlat(mmLgRawO(d)),at=Date.parse(d.timestamp)||Date.now();
+      if(bot)mmLgCreate(cid,d.id,"bot",at,null,full);
+      else if(d.author&&!d.author.bot&&!d.webhook_id&&mmLgAddrs(full).length)mmLgCreate(cid,d.id,"human",at,d.author.id,full);
+      return;
+    }
+    if(typeof d.content!=="string"||!Array.isArray(d.embeds))return;                 // (an update that carries only a link preview or the like)
+    mmLgEdit(cid,d.id,{bot,uid:d.author&&d.author.id,full:mmLgFlat(mmLgRawO(d)),at:Date.parse(d.edited_timestamp)||Date.now(),created:Date.parse(d.timestamp)||null});
+  }catch(err){console.error("[mm] ledger:",err&&err.message);}
+}
+// The private replies of the middleman's buttons (only the person who pressed the button sees them, so the channel itself never shows them)
+function mmLgIsEph(i,k,p){
+  const f=p&&p.flags;
+  if(p&&p.ephemeral===true)return true;
+  if(typeof f==="number")return (f&64)===64;
+  if(f&&typeof f.bitfield==="number")return (f.bitfield&64)===64;
+  if(Array.isArray(f))return f.some(x=>x===64||x==="Ephemeral");
+  if(typeof f==="string")return /ephemeral/i.test(f);
+  if(k==="editReply"||k==="update"){
+    if(i.ephemeral===true)return true;
+    try{return !!(i.message&&i.message.flags&&i.message.flags.has&&i.message.flags.has(64));}catch{return false;}
+  }
+  return false;
+}
+function mmLgPrivate(i,k,payload,n){
+  const p=typeof payload==="string"?{content:payload}:(payload||{});
+  if(!mmLgIsEph(i,k,p))return;
+  const full=mmLgFlat(mmLgSendO(p));
+  if(!full)return;
+  const cid=i.channelId,at=Date.now(),key=mmLgKey(cid,`i${i.id}.${n}`);
+  mmLgSerial(key,async()=>{await MMDB.set(key,{k:"priv",c:cid,m:null,at,u:(i.user&&i.user.id)||null,b:String(i.customId||"").slice(0,80),v:[{at,x:full.slice(0,MM_LG_TXT)}],ad:mmLgAddrs(full)});});
+}
+function mmLgWatch(i){
+  try{
+    if(!i||i._mmLg||!i.channelId||!mmLgTicket(i.channelId))return;
+    i._mmLg=true;
+    let n=0;
+    for(const k of ["reply","followUp","editReply","update"]){
+      const f=i[k];
+      if(typeof f!=="function")continue;
+      i[k]=function(...a){try{mmLgPrivate(i,k,a[0],++n);}catch{}return f.apply(i,a);};
+    }
+  }catch{}
+}
+async function mmLgPrune(){
+  const cutoff=Date.now()-MM_LG_KEEP_MS;
+  if(pgPool){
+    const like=(MM_PREFIX+"lg:").replace(/[\\%_]/g,"\\$&")+"%";
+    const r=await pgPool.query("DELETE FROM kv_store WHERE key LIKE $1 AND updated_at<$2",[like,new Date(cutoff)]);
+    return r.rowCount;
+  }
+  let n=0;
+  for(const [k,v] of await MMDB.list("lg:"))if(v&&v.at<cutoff){await MMDB.del(k);n++;}
+  return n;
+}
+function mmLgStart(){
+  try{
+    MMDB.add("lgmeta",{since:_mmLgBootAt}).catch(()=>{});
+    const DJ=require("discord.js"),orig=DJ.Message&&DJ.Message.prototype&&DJ.Message.prototype.delete;
+    if(typeof orig==="function"&&!orig._mmLg){const f=function(...a){try{mmLgBotDelete(this&&this.id);}catch{}return orig.apply(this,a);};f._mmLg=true;DJ.Message.prototype.delete=f;}
+    setTimeout(()=>mmLgPrune().catch(()=>{}),3*60*1000);
+    setInterval(()=>mmLgPrune().catch(()=>{}),12*60*60*1000);
+  }catch(err){console.error("[mm] ledger start:",err&&err.message);}
+}
+
+// ── reading ──
+function mmLgName(g,uid){
+  if(!uid)return "?";
+  try{const m=g&&g.members.cache.get(uid),u=client.users.cache.get(uid),n=(m&&m.displayName)||(u&&u.username);return n?`${n} (${uid})`:String(uid);}catch{return String(uid);}
+}
+function mmLgPretty(g,s){
+  return String(s||"")
+    .replace(/<t:(\d{9,11})(?::[a-zA-Z])?>/g,(_,n)=>mmLgTime(Number(n)*1000))
+    .replace(/<@!?(\d{15,25})>/g,(_,id)=>{const n=mmLgName(g,id);return `@${n}`;});
+}
+const mmLgNorm=a=>/^0x/i.test(String(a))?String(a).toLowerCase():String(a);
+async function mmLgChannel(cid){
+  const g=client.guilds.cache.get(CONFIG.GUILD_ID)||client.guilds.cache.first();
+  if(!g)return {g:null,ch:null};
+  const ch=g.channels.cache.get(cid)||await g.channels.fetch(cid).catch(()=>null);
+  return {g,ch};
+}
+// What is in the ticket right now (the newest 300 messages)
+async function mmLgLive(ch){
+  if(!ch||!ch.messages||typeof ch.messages.fetch!=="function")return null;
+  const out=new Map();let before;
+  for(let n=0;n<3;n++){
+    const b=await ch.messages.fetch(before?{limit:100,before}:{limit:100}).catch(()=>null);
+    if(!b)return out.size?out:null;
+    if(!b.size)break;
+    for(const [id,m] of b)out.set(id,m);
+    before=b.last().id;
+    if(b.size<100)break;
+  }
+  return out;
+}
+// The recording of one ticket, put together with what is in the channel now and the deals of that ticket
+async function mmLgCollect(cid,pick){
+  const {g,ch}=await mmLgChannel(cid);
+  const recs=(await MMDB.list(`lg:${cid}:`)).map(([,r])=>r).filter(Boolean);
+  const live=await mmLgLive(ch);
+  const meta=await MMDB.get("lgmeta").catch(()=>null);
+  const deals=[...(await MMDB.list("e:")),...(await MMDB.list("done:"))].map(([,x])=>x).filter(x=>x&&x.channelId===cid);
+  if(pick&&!deals.some(x=>x.id===pick.id))deals.push(pick);
+  deals.sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
+  const me=client.user&&client.user.id,byId=new Map(),rows=[];
+  for(const r of recs){if(r.m)byId.set(String(r.m),r);rows.push(r);}
+  let minLive=null;
+  if(live)for(const id of live.keys()){const b=BigInt(id);if(minLive===null||b<minLive)minLive=b;}
+  if(live)for(const [id,m] of live){
+    const bot=!!(m.author&&m.author.id===me),full=mmLgFlat(mmLgLiveO(m)),human=!bot&&!!m.author&&!m.author.bot&&mmLgAddrs(full).length>0;
+    if(!bot&&!human)continue;
+    let r=byId.get(String(id));
+    if(!r){r={k:bot?"bot":"human",c:cid,m:String(id),at:m.createdTimestamp,u:bot?null:m.author.id,v:[{at:m.createdTimestamp,x:full.slice(0,MM_LG_TXT)}],ad:mmLgAddrs(full),pre:1};byId.set(String(id),r);rows.push(r);}
+    else if(!r.d&&r.v[r.v.length-1].x!==full.slice(0,MM_LG_TXT))r.v.push({at:m.editedTimestamp||Date.now(),x:full.slice(0,MM_LG_TXT),now:1});
+    r.live=true;
+  }
+  for(const r of rows){
+    if(!r.m||r.live||r.d)continue;
+    if(!live)r.noread=true;
+    else if(minLive!==null&&BigInt(r.m)>=minLive)r.gone=true;          // inside the part of the channel that was read, yet not there: it was deleted and the delete was missed
+    else r.old=true;
+  }
+  rows.sort((a,b)=>a.at-b.at);
+  return {cid,g,ch,rows,live,meta,deals};
+}
+// The text file. Returns {name, text, summary}.
+function mmLgRender(D){
+  const {g,ch,rows,live,meta,deals}=D,L=[],P=s=>mmLgPretty(g,s),ind=(s,n)=>String(s).split("\n").map(x=>" ".repeat(n)+x).join("\n");
+  const lbl=new Map(),put=(a,l)=>{if(!a)return;const k=mmLgNorm(a);let v=lbl.get(k);if(!v)lbl.set(k,v=[]);if(!v.includes(l))v.push(l);};
+  for(const ck of Object.keys(MM_CHAINS)){try{put(mmDepositAddress(ck),"the middleman's current deposit address");}catch{}}
+  for(const a of MM_ASSETS)put(a.contract,`${a.coin} token contract`);
+  for(const d of deals){
+    put(d.address,`${d.id} deposit address`);put(d.payout,`${d.id} payout address`);put(d.refundTo,`${d.id} refund address`);
+    for(const q of d.quotes||[])put(q.addr,`${d.id} deposit address`);
+    for(const x of d.txs||[])put(x.from,`${d.id} the address the deposit came from`);
+    for(const o of [d.out,d.lastOut])if(o&&o.to)put(o.to,`${d.id} payout destination`);
+  }
+  const labelOf=a=>(lbl.get(mmLgNorm(a))||[]).join(", ");
+  const bots=rows.filter(r=>r.k==="bot"),priv=rows.filter(r=>r.k==="priv"),ppl=rows.filter(r=>r.k==="human");
+  const shown=new Map();
+  for(const r of rows){
+    if(r.k!=="bot"&&r.k!=="priv")continue;
+    for(const a of r.ad||[]){const k=mmLgNorm(a);let s=shown.get(k);if(!s)shown.set(k,s={a,n:0,first:r.at,last:r.at,priv:0});s.n++;s.first=Math.min(s.first,r.at);s.last=Math.max(s.last,r.at);if(r.k==="priv")s.priv++;}
+  }
+  const foreign=[...shown.values()].filter(s=>!labelOf(s.a));
+  const stat=r=>r.d?`DELETED ${mmLgTime(r.d.at)} ${r.d.by==="bot"?"(by the bot itself: its own tidy-up, or a card it replaced)":"(not by the bot's own delete calls: an owner or moderator, or the person who wrote it)"}`
+    :r.gone?"GONE from the channel (it was deleted and I missed the delete event)"
+    :r.live?"still in the channel"
+    :r.old?"not checked (older than the newest 300 messages in the channel)"
+    :r.noread?"not checked (I can't read the channel)":"";
+  L.push("KONVERT MIDDLEMAN MESSAGE LOG","=".repeat(64));
+  L.push(`Ticket: ${ch?"#"+ch.name:"(the channel no longer exists)"}   channel ${D.cid}`,`Made: ${mmLgTime(Date.now())}   (times in this file are ${MM_LG_TZ} time)`);
+  L.push(meta&&meta.since?`Recording of ticket messages started: ${mmLgTime(meta.since)}. A message deleted before then is not in here and can't be recovered.`:"Recording of ticket messages has only just started.");
+  L.push(live?`Messages read from the channel just now: ${live.size} (the newest 300 at most).`:"The channel could not be read (it may be deleted), so only recorded messages are shown.");
+  L.push("","WHAT THE BOT SHOWED","-".repeat(64));
+  if(!shown.size)L.push("No wallet address appears in any recorded bot message in this ticket.");
+  else{
+    L.push("Every wallet address that appeared in the bot's messages (and private button replies) in this ticket:");
+    for(const s of [...shown.values()].sort((a,b)=>a.first-b.first))L.push(`  ${s.a}`,`     in ${s.n} message${s.n===1?"":"s"}${s.priv?` (${s.priv} private)`:""}  ·  first ${mmLgTime(s.first)}  ·  last ${mmLgTime(s.last)}`,`     ${labelOf(s.a)||"NOT an address of this deal or of the middleman  <-- CHECK THIS ONE"}`);
+    L.push(foreign.length?`\n${foreign.length} address${foreign.length===1?"":"es"} above ${foreign.length===1?"is":"are"} not the deal's or the middleman's own. Look at those messages below.`:"\nEvery address the bot showed is the deal's own or the middleman's own. The bot did not show any other address in this ticket.");
+  }
+  L.push("","DEALS IN THIS TICKET","-".repeat(64));
+  if(!deals.length)L.push("No middleman deal is recorded for this ticket.");
+  for(const d of deals){
+    let amt="";try{amt=d.decimals!=null&&d.needRaw?mmFmtUnits(d.needRaw,d.decimals):"";}catch{}
+    L.push(`${d.id}  ·  ${d.state}  ·  ${d.coin||"?"}${d.chain&&MM_CHAINS[d.chain]?` on ${MM_CHAINS[d.chain].name}`:""}  ·  $${d.usd}`,`  sender ${mmLgName(g,d.depositorId)}  ->  receiver ${mmLgName(g,d.recipientId)}`,
+      `  deposit address stored on the deal: ${d.address||"none"}`,`  payout address: ${d.payout||"none"}   ·   refund address: ${d.refundTo||"none"}${d.sender?`   ·   deposit came from: ${d.sender}`:""}`);
+    if((d.quotes||[]).length){
+      L.push("  amounts asked, and the address each one carried:");
+      for(const q of d.quotes){let a="";try{a=d.decimals!=null?mmFmtUnits(q.needRaw,d.decimals):q.needRaw;}catch{a=q.needRaw;}L.push(`    ${mmLgTime(q.at)}  ${a} ${d.coin||""}  ->  ${q.addr||"(the address was not stored for this one: it was made before v26)"}`);}
+    }else if(amt)L.push(`  amount asked: ${amt} ${d.coin||""}`);
+    if((d.log||[]).length){L.push("  what happened:");for(const l of d.log)L.push(`    ${mmLgTime(l.at)}  ${l.ev}${l.by?`  (${mmLgName(g,l.by)})`:""}`);}
+    L.push("");
+  }
+  L.push(`MESSAGES (oldest first)`,"-".repeat(64),"BOT = a message the bot sent in the channel.  PRIVATE = a reply only one person saw.  PERSON = a person's message that held a wallet address.");
+  if(!rows.length)L.push("","Nothing recorded and nothing in the channel to show.");
+  for(const r of rows){
+    const who=r.k==="bot"?"BOT":r.k==="priv"?`PRIVATE reply to ${mmLgName(g,r.u)}${r.b?` (pressed ${r.b})`:""}`:`PERSON ${mmLgName(g,r.u)}`;
+    L.push("",`[${mmLgTime(r.at)}] ${who}${r.m?`   message ${r.m}`:""}`);
+    const st=stat(r);if(st)L.push(`  status: ${st}`);
+    if(r.pre)L.push("  note: it is in the channel but was not in the recording (sent before recording began), so this is only what it says now");
+    if(r.late)L.push("  note: it was sent before recording began, so the recording has it from its first edit on");
+    if(r.v.length>=MM_LG_VERS)L.push(`  note: only its first version and its newest ${MM_LG_VERS-1} are kept`);
+    r.v.forEach((v,i)=>{
+      if(r.v.length>1)L.push(`  version ${i+1} of ${r.v.length}  (${mmLgTime(v.at)}${v.now?", what it says now":""}):`);
+      L.push(ind(P(v.x),4));
+    });
+  }
+  const edited=bots.filter(r=>r.v.length>1).length,dBot=bots.filter(r=>r.d&&r.d.by==="bot").length,dOther=bots.filter(r=>(r.d&&r.d.by!=="bot")||r.gone).length;
+  const summary=[`**Message log: ${ch?"#"+ch.name:D.cid}**${deals.length?`  ·  ${deals.map(d=>d.id).join(", ")}`:""}`,
+    `Bot messages: ${bots.length} (${edited} edited, ${dBot} deleted by the bot itself, ${dOther} deleted by someone else or missing)  ·  private replies: ${priv.length}  ·  people's address messages: ${ppl.length}`,
+    !shown.size?"The bot showed no wallet address in this ticket (that I recorded).":foreign.length?`CHECK: the bot showed ${foreign.length} address${foreign.length===1?"":"es"} that ${foreign.length===1?"is":"are"} not this deal's or the middleman's: ${foreign.slice(0,3).map(s=>`\`${mmShort(s.a)}\``).join(", ")}`:`The bot showed ${shown.size} address${shown.size===1?"":"es"} and ${shown.size===1?"it is":"all are"} the deal's or the middleman's own. It showed no other address.`,
+    meta&&meta.since?`Recording started <t:${Math.floor(meta.since/1000)}:f>. Anything deleted before that can't be recovered. The full text is in the file.`:"The full text is in the file."].join("\n");
+  const nm=(ch?ch.name:D.cid).replace(/[^a-z0-9-]/gi,"-").slice(0,40);
+  return {name:`mm-log-${nm}.txt`,text:L.join("\n")+"\n",summary:summary.slice(0,1900)};
+}
+// $mm log [MM-0003 | #ticket | channel id]: the target is the ticket you type it in when you name nothing
+async function mmLogReport(arg,message,ticket){
+  const a=String(arg||"").trim();
+  let cid=null,pick=null;
+  if(/^mm-\d+$/i.test(a)){
+    pick=await mmFresh(a.toUpperCase());
+    if(!pick)throw new MmError("gone","No deal with that ID. Nothing changed.");
+    cid=pick.channelId;
+    if(!cid)throw new MmError("no","That deal has no ticket, so there is no chat to show.");
+  }else if(/^<#\d+>$|^\d{15,25}$/.test(a))cid=a.replace(/\D/g,"");
+  else if(!a&&ticket)cid=message.channel.id;
+  else throw new MmError("no","Say which ticket: type `$mm log` inside it, or `$mm log MM-0003`, or `$mm log #the-channel`. To look for one address everywhere: `$mm log find <address>`.");
+  return mmLgRender(await mmLgCollect(cid,pick));
+}
+// $mm log find <address>: every deal and every recorded message that mentions it
+async function mmLgSearch(needle){
+  const like="%"+String(needle).replace(/[\\%_]/g,"\\$&")+"%";
+  if(pgPool){
+    const r=await pgPool.query("SELECT key,value FROM kv_store WHERE key LIKE $1 AND value::text ILIKE $2 ORDER BY key LIMIT 300",[(MM_PREFIX+"lg:").replace(/[\\%_]/g,"\\$&")+"%",like]);
+    return r.rows.map(x=>[x.key.slice(MM_PREFIX.length),x.value]);
+  }
+  return (await MMDB.list("lg:")).filter(([,v])=>JSON.stringify(v).toLowerCase().includes(needle)).slice(0,300);
+}
+async function mmLogFind(q){
+  const s=String(q||"").trim();
+  if(s.length<6)throw new MmError("no","Give me the address, or at least 6 characters of it: `$mm log find 0x83a768…`.");
+  const needle=s.toLowerCase(),g=client.guilds.cache.get(CONFIG.GUILD_ID)||client.guilds.cache.first();
+  const L=[`SEARCH FOR  ${s}`,`Made ${mmLgTime(Date.now())}   (times in this file are ${MM_LG_TZ} time)`,""];
+  const mine=[];
+  for(const ck of Object.keys(MM_CHAINS)){let a=null;try{a=mmDepositAddress(ck);}catch{}if(a&&String(a).toLowerCase().includes(needle))mine.push(`${MM_CHAINS[ck].name}: ${a}`);}
+  const isMine=mine.length>0;
+  L.push(isMine?`This IS one of the middleman's own deposit addresses (${[...new Set(mine)].join("; ")}).`:"This is NOT one of the middleman's own deposit addresses.");
+  const deals=[...(await MMDB.list("e:")),...(await MMDB.list("done:"))].map(([,x])=>x).filter(Boolean),dh=[];
+  for(const d of deals){
+    const where=[],chk=(v,l)=>{if(v&&String(v).toLowerCase().includes(needle))where.push(l);};
+    chk(d.address,"its deposit address");chk(d.payout,"its payout address");chk(d.refundTo,"its refund address");chk(d.sender,"the sender");
+    for(const q of d.quotes||[])chk(q.addr,"a quote's deposit address");
+    for(const x of d.txs||[])chk(x.from,"where a deposit came from");
+    for(const o of [d.out,d.lastOut])if(o)chk(o.to,"where it paid out");
+    if(!where.length&&JSON.stringify(d).toLowerCase().includes(needle))where.push("somewhere in its record");
+    if(where.length)dh.push(`${d.id}  ·  ${d.coin||"?"}  ·  ${d.state}  ·  ${d.channelId?`channel ${d.channelId}`:"no ticket"}  ·  ${[...new Set(where)].join(", ")}`);
+  }
+  L.push("",`DEALS THAT MENTION IT: ${dh.length}`,...dh.map(x=>"  "+x));
+  const hits=await mmLgSearch(needle);
+  L.push("",`RECORDED MESSAGES THAT MENTION IT: ${hits.length}${hits.length>=300?" (the first 300)":""}`);
+  for(const [,r] of hits.slice(0,60)){
+    const who=r.k==="bot"?"BOT":r.k==="priv"?`PRIVATE reply to ${mmLgName(g,r.u)}`:`PERSON ${mmLgName(g,r.u)}`;
+    const ver=r.v.find(v=>String(v.x).toLowerCase().includes(needle))||r.v[r.v.length-1],lo=String(ver.x).toLowerCase(),at=Math.max(0,lo.indexOf(needle));
+    L.push(`  [${mmLgTime(r.at)}] ${who}  ·  channel ${r.c}${r.m?`  ·  message ${r.m}`:""}${r.d?`  ·  DELETED ${mmLgTime(r.d.at)}`:""}`,`      ...${String(ver.x).slice(Math.max(0,at-70),at+needle.length+70).replace(/\s+/g," ")}...`);
+  }
+  if(hits.length>60)L.push(`  (${hits.length-60} more not listed)`);
+  return {name:"mm-log-find.txt",text:L.join("\n")+"\n",summary:`**Search for** \`${s.slice(0,60)}\`\n${isMine?"It is one of the middleman's own deposit addresses.":"It is **not** one of the middleman's own deposit addresses."}\nDeals that mention it: **${dh.length}**  ·  recorded messages that mention it: **${hits.length}**\nRecording of ticket messages only covers the time since it started. The details are in the file.`};
+}
+// ── end of the v26 ledger ──
+
 // An owner steps in as the middleman (anything the bot does not or cannot hold). Owners are pinged in the ticket and by DM, at most once every ten minutes.
 async function mmOwnerFallback(channel,ticket,why,detail){
   const text=why==="limit"?`This exchange is above the built-in server middleman bot's **${fmtUSD(_mmMeta.maxUsd)}** limit.`:(MM_OWNER_WHY[why]||MM_OWNER_WHY.error);
@@ -1919,10 +2290,10 @@ async function mmArm(id,chainKey){
       if((e.txs||[]).length)throw new MmError("state","A deposit was already seen for this deal, so the amount and the network can't change any more. Nothing changed and your funds are safe.");
       const now=Date.now(),same=e.chain===chainKey;
       Object.assign(e,{chain:chainKey,contract:asset.contract||null,decimals:asset.decimals,dp,address,auto:mmIsAuto(chainKey,address),price,needRaw:need.toString(),quotedAt:now,quoteExp:now+MM_QUOTE_MS,state:"await"});
-      e.quotes=(same?(e.quotes||[]):[]).concat([{needRaw:e.needRaw,at:now,exp:e.quoteExp}]).slice(-10);       // (amounts asked on another network or coin mean nothing here)
+      e.quotes=(same?(e.quotes||[]):[]).concat([{needRaw:e.needRaw,at:now,exp:e.quoteExp,addr:address}]).slice(-10);       // (amounts asked on another network or coin mean nothing here; v26: each one keeps the address it carried)
       e.watch=[];delete e.remindedAt;delete e.netSlow;
       if(!e.shownAt)e.shownAt=now;
-      mmNote(e,`asked for ${mmAmt(e,e.needRaw,dp)} on ${chainKey}`);
+      mmNote(e,`asked for ${mmAmt(e,e.needRaw,dp)} on ${chainKey}, to ${mmShort(address)}`);
     });
   });
 }
@@ -2613,7 +2984,7 @@ function mmCardV21(e,note,qr){
     if(qr)emb.setThumbnail("attachment://qr.png");
     B.push(kHero(mmMoney(e,e.needRaw)),`${D}, send this to the address below${net}.`,"```"+e.address+"```");
     const ex=mmExactLine(e);if(ex)B.push(ex);
-    B.push(kNote(`Send only to this address, never to ${R}. Detected automatically. This amount holds until <t:${Math.floor(e.quoteExp/1000)}:t>.`));
+    B.push(kNote(`Send only to this address. Anyone who gives you a different one, even ${R}, is scamming you.`),kNote(`Detected automatically. Sent it? Paste the transaction ID here and I check where it went. This amount holds until <t:${Math.floor(e.quoteExp/1000)}:t>.`));
     if((e.watch||[]).length)B.push(`Looking for ${e.watch.map(w=>`\`${mmShort(w.txid)}\``).join("  ")}. The network can't see it yet, so I keep checking for 30 minutes.`);
   }else if(e.state==="confirming"){
     const v=mmVerdict(e),N=MM_CHAINS[e.chain].confs,tx=(e.txs||[]).find(t=>!t.final)||(e.txs||[])[0]||{};
@@ -3178,12 +3549,29 @@ function mmSettle(x,now){
   }else{x.state="short";x.shortAt=now||Date.now();mmNote(x,`shortfall: ${mmAmt(x,v.got)} of ${mmAmt(x,v.asked)}`);}
   return true;
 }
+// v26: a transaction that was pasted moves the money, but to another address than the middleman's. It is said once per transaction: to the receiver (who must not pay yet) and to the owners.
+async function mmElsewhere(e,txid,more,by){
+  if(!e||!e.id||!e.chain)return;
+  if(!(await MMDB.add(`else:${e.chain}:${txid}`,{id:e.id,at:Date.now()})))return;
+  const amt=`${mmFmtUnits(more.destRaw,e.decimals)} ${e.coin}`,link=`[transaction](${MM_CHAINS[e.chain].tx}${txid})`;
+  await mmUpdate(e.id,x=>{mmNote(x,`a payment of ${amt} goes to ${more.dest}, not to the middleman (${txid})`,by);}).catch(()=>{});
+  const ch=await mmChannelOf(e).catch(()=>null);
+  if(ch)await ch.send({content:`<@${e.recipientId}>`,embeds:[mmEmb(e,"bad","Do Not Pay Yet").setDescription(`A transaction pasted for this deal sends **${amt}** to a different address than the middleman's. **The middleman does not have it.**\n<@${e.recipientId}>, do not send any payment until the card says **Funds Secured**.`).setFooter(kFoot(e.id))],allowedMentions:{users:[e.recipientId]}}).catch(()=>{});
+  mmAlertOwners({embeds:[mmKE("bad").setTitle("Payment Went To A Different Address").setDescription(`<@${by||e.depositorId}> pasted a payment on **${e.id}** (${link}) of **${amt}** that goes to\n\`${more.dest}\`\ninstead of the middleman address\n\`${e.address}\`\nThe bot does not hold it and cannot return it. The receiver <@${e.recipientId}> was told not to pay.`).setTimestamp()],components:mmLinkRow(e)});
+}
 async function mmJudge(id,txid,v,by){
   const e0=await mmGet(id);
-  const drop=async why=>{await mmUpdate(id,x=>{x.watch=(x.watch||[]).filter(w=>w.txid!==txid);}).catch(()=>{});return {status:"rejected",why};};
+  const drop=async(why,more)=>{await mmUpdate(id,x=>{x.watch=(x.watch||[]).filter(w=>w.txid!==txid);}).catch(()=>{});return {status:"rejected",why,...(more||{})};};
   if(v.ok===false)return drop("failed");
   if(v.self)return drop("self");
-  if(!v.toUs)return drop(v.viaContract?"contract":"notus");
+  if(!v.toUs){
+    if(!v.viaContract&&v.dest&&v.destRaw>0n){                                  // v26: the money goes somewhere else: say where, and tell the receiver and the owners
+      const more={dest:v.dest,destRaw:v.destRaw.toString(),from:v.from||null};
+      await mmElsewhere(e0,txid,more,by).catch(()=>{});
+      return drop("elsewhere",more);
+    }
+    return drop(v.viaContract?"contract":"notus");
+  }
   const amt=v.amountRaw.toString();
   for(const [,x] of await MMDB.list("e:")){                       // an amount that was asked of a DIFFERENT open deal is that deal's payment, whoever pastes it
     if(x.id===id||x.chain!==e0.chain||(x.contract||null)!==(e0.contract||null)||!mmSameAddr(e0.chain,x.address,e0.address))continue;
@@ -3222,12 +3610,13 @@ async function mmSecondOpinion(e,txid,amt){
   try{v=await mmVerifyTx(e.chain,mmAssetOf(e),e.address,txid,{start:1,one:true});}catch{return true;}
   return !!(v&&v.found&&v.ok===true&&v.toUs&&v.final&&v.amountRaw.toString()===amt);
 }
-function mmWhyText(e,why){
+function mmWhyText(e,why,r){
   const net=mmNetOf(e);
+  if(why==="elsewhere"&&r&&r.dest)return `That payment goes to \`${r.dest}\`, **not** to the middleman (\`${e.address}\`). The middleman does **not** have it and can't get it back: only the owner of that wallet can send it back. If someone gave you that address, they are scamming you. Don't pay or release anything. Type \`$mm help\` so an owner can help.`;
   return ({
     failed:"That transaction failed on the network, so nothing arrived and nothing was lost. Send it again; I spot the new transaction by myself.",
     self:"That transaction was sent by the middleman wallet itself, so it is not a deposit.",
-    notus:`That transaction doesn't send ${e.coin} on ${net} to the middleman address. Check the coin, the network and the address. Nothing was lost and your funds are safe.`,
+    notus:`That transaction doesn't send ${e.coin} on ${net} to the middleman address. Check the coin, the network and the address on the card. If the money went to another address, the middleman does not have it.`,
     contract:"That transaction went through a contract (some exchanges send this way), so I can't read it myself. Type `$mm help` and an owner will confirm it by hand.",
     other:"That payment belongs to a different deal.",used:"That transaction was already used for another deal.",refused:"An owner already refused that transaction for this deal.",
   })[why]||"That transaction can't be used for this deal.";
@@ -4038,7 +4427,7 @@ async function mmStrayAct(act,code,dealId,uid){
     const asset=mmAssetOf(deal),v=await mmVerifyTx(rec.chain,asset,deal.address,rec.txid);
     if(!v.found||!v.toUs)throw new MmError("state","I can't read that payment on the network right now. Nothing changed. Try again in a minute.");
     const r=await mmJudge(deal.id,rec.txid,v,null);
-    if(r.status==="rejected")throw new MmError("state",`It can't be attached: ${mmWhyText(deal,r.why)}`);
+    if(r.status==="rejected")throw new MmError("state",`It can't be attached: ${mmWhyText(deal,r.why,r)}`);
     await setState("attached",{deal:deal.id});
     await mmAfterJudge(await mmGet(deal.id),r,deal.depositorId);
     return `Attached to **${deal.id}**.`;
@@ -4083,6 +4472,22 @@ async function mmScanStray(open){
   const solWaiting=waiting.filter(e=>e.chain==="sol");
   if(solWaiting.length&&w.sol[0]){try{await mmScanStraySol(w.sol[0].address,solWaiting,open);}catch(err){if(!(err instanceof MmError))mmWarnOnce("stray:sol",`[mm] stray scan sol: ${err.message}`);}}
 }
+// v26: some public nodes refuse a log search that names no contract ("Please specify an address in your request"), so the scan below never ran on Ethereum, BNB Chain, Base or Polygon.
+// It then asks once per token the bot knows on that chain instead (same answer for every coin the bot trades).
+const MM_LOGS_NEED_ADDR_RE=/specify an address|dedicated full node|remove restrictions/i,_mmLogsNeedAddr=new Set();
+async function mmLogsInto(ck,fromB,toB,pad){
+  const q=extra=>mmRpc(ck,"eth_getLogs",[{...extra,fromBlock:mmHex(fromB),toBlock:mmHex(toB),topics:[MM_TRANSFER_TOPIC,null,pad]}]);
+  if(!_mmLogsNeedAddr.has(ck)){
+    try{return await q({});}
+    catch(err){if(!MM_LOGS_NEED_ADDR_RE.test(String(err&&err.message)))throw err;_mmLogsNeedAddr.add(ck);}
+  }
+  const out=[];
+  for(const a of MM_ASSETS.filter(x=>x.chain===ck&&x.contract)){
+    const part=await q({address:a.contract});
+    if(Array.isArray(part))out.push(...part);
+  }
+  return out;
+}
 async function mmScanStrayEvm(ck,addr,waiting,evmWaiting){
   _mmMeta.stray=_mmMeta.stray||{};
   const st=_mmMeta.stray[ck]||null,now=Date.now(),low=addr.toLowerCase();
@@ -4093,7 +4498,7 @@ async function mmScanStrayEvm(ck,addr,waiting,evmWaiting){
   const deals=here.length?here:evmWaiting;
   const pad="0x"+"0".repeat(24)+low.slice(2),sums=new Map(),range=_mmRange.get(ck)||MM_LOG_RANGE;
   for(let a=from;a<=head;a+=range){
-    const logs=await mmRpc(ck,"eth_getLogs",[{fromBlock:mmHex(a),toBlock:mmHex(Math.min(head,a+range-1)),topics:[MM_TRANSFER_TOPIC,null,pad]}]);
+    const logs=await mmLogsInto(ck,a,Math.min(head,a+range-1),pad);
     for(const l of Array.isArray(logs)?logs:[]){
       const t=(l&&l.topics)||[];
       if(!l||l.removed||!l.transactionHash||!l.address||t.length!==3||t[0]!==MM_TRANSFER_TOPIC)continue;
@@ -4206,7 +4611,7 @@ async function mmSweepOne(e){
         let did=false;
         const x=await mmUpdate(id,y=>{if(y.state==="await"&&!y.remindedAt&&!(y.txs||[]).length){y.remindedAt=now;did=true;}});
         const ch=did?await mmChannelOf(x):null;
-        if(ch)await mmSayTemp(ch,{tmp:MM_TMP_LONG_MS,content:x.flow?`<@${x.depositorId}>`:`<@${x.depositorId}> <@${x.recipientId}>`,embeds:[mmEmb(x,"warn","Still Waiting For The Deposit").setDescription(`Nothing has arrived yet, and nothing is held. <@${x.depositorId}>, send **${mmFmtUnits(x.needRaw,x.decimals,x.dp)} ${x.coin}** on **${mmNetOf(x)}** to the address on the card (a little off is fine). <@${x.recipientId}>, nothing is needed from you yet.\nIf the exchange is off, press **Help**, then **${x.flow?"Cancel Deal":"Cancel Middleman"}**. A deal nobody pays into is cancelled by itself after 24 hours.`).setFooter(kFoot(x.id))],allowedMentions:{users:x.flow?[x.depositorId]:[x.depositorId,x.recipientId]}}).catch(()=>{});
+        if(ch)await mmSayTemp(ch,{tmp:MM_TMP_LONG_MS,content:x.flow?`<@${x.depositorId}>`:`<@${x.depositorId}> <@${x.recipientId}>`,embeds:[mmEmb(x,"warn","Still Waiting For The Deposit").setDescription(`Nothing has arrived yet, and nothing is held. <@${x.depositorId}>, send **${mmFmtUnits(x.needRaw,x.decimals,x.dp)} ${x.coin}** on **${mmNetOf(x)}** to the address on the card (a little off is fine). Already sent it? Paste the transaction ID here and I check where it went. <@${x.recipientId}>, nothing is needed from you yet.\nIf the exchange is off, press **Help**, then **${x.flow?"Cancel Deal":"Cancel Middleman"}**. A deal nobody pays into is cancelled by itself after 24 hours.`).setFooter(kFoot(x.id))],allowedMentions:{users:x.flow?[x.depositorId]:[x.depositorId,x.recipientId]}}).catch(()=>{});
       }
     }
     if(e.state==="short"&&!e.shortRemindedAt&&e.shortAt&&now-e.shortAt>MM_IDLE_REMIND_MS){
@@ -4320,7 +4725,7 @@ async function mmSweepOne(e){
 async function mmAfterJudge(e,r,by){
   const ch=await mmChannelOf(e);
   if(r.status==="rejected"){
-    if(ch){await mmRefreshCard(ch,e);await mmSayTemp(ch,{tmp:MM_TMP_LONG_MS,content:`<@${by||e.depositorId}>`,embeds:[mmEmb(e,"warn","Transaction Not Accepted").setDescription(mmWhyText(e,r.why)).setFooter(kFoot(e.id))],allowedMentions:{users:[by||e.depositorId]}}).catch(()=>{});}
+    if(ch){await mmRefreshCard(ch,e);await mmSayTemp(ch,{tmp:MM_TMP_LONG_MS,content:`<@${by||e.depositorId}>`,embeds:[mmEmb(e,"warn","Transaction Not Accepted").setDescription(mmWhyText(e,r.why,r)).setFooter(kFoot(e.id))],allowedMentions:{users:[by||e.depositorId]}}).catch(()=>{});}
     return;
   }
   if(r.status==="funded"){await mmAnnounceFunded(e);return;}
@@ -4419,7 +4824,7 @@ async function mmDoSubmit(e,text,uid){
     const ch=await mmChannelOf(cur);if(ch)await mmRefreshCard(ch,cur);
     return "The network can't see that transaction yet, which is normal for the first minute. Your funds are safe. I'll keep checking for 30 minutes and update the card by myself.";
   }
-  if(r.status==="rejected"){const ch=await mmChannelOf(cur);if(ch)await mmRefreshCard(ch,cur);return mmWhyText(cur,r.why);}
+  if(r.status==="rejected"){const ch=await mmChannelOf(cur);if(ch)await mmRefreshCard(ch,cur);return mmWhyText(cur,r.why,r);}
   await mmAfterJudge(cur,r,uid);
   return r.status==="funded"?"Deposit confirmed. The funds are secured.":r.status==="short"?"Got it. Less than the asked amount arrived, so the card now lets the receiver continue or refund. Your funds are safe.":r.status==="review"?"Got it. An owner has to check this deposit before it counts, and they have been pinged. Your funds are safe.":"Got it. Deposit seen, waiting for the network to confirm it. The card updates by itself.";
 }
@@ -4576,6 +4981,17 @@ function mmFindAddress(e,text){
     if(a)return a;
   }
   return null;
+}
+// v26: while a deposit is awaited, the receiver pastes a wallet address (their own, or one that is passed off as the middleman's). The sender hears at once that it is not the middleman's.
+const _mmOtherAddr=new Map();
+async function mmWarnOtherAddress(ch,e,addr,uid){
+  if(!ch||!e||!e.address||!["await","short"].includes(e.state)||uid===e.depositorId)return;
+  if(mmSameAddr(e.chain,addr,e.address)||(e.contract&&String(addr).toLowerCase()===e.contract))return;
+  const k=`${e.id}|${String(addr).toLowerCase()}`;
+  if(_mmOtherAddr.has(k))return;
+  if(_mmOtherAddr.size>500)_mmOtherAddr.clear();
+  _mmOtherAddr.set(k,Date.now());
+  await mmSayTemp(ch,{tmp:MM_TMP_LONG_MS,content:`<@${e.depositorId}>`,embeds:[mmEmb(e,"warn","Not The Middleman Address").setDescription(`<@${uid}> just posted \`${mmShort(addr)}\`. **That is not the middleman's address.**\nSend only to the address on the card (\`${mmShort(e.address)}\`). Never to a wallet that somebody pastes in the chat, not even the receiver's.`).setFooter(kFoot(e.id))],allowedMentions:{users:[e.depositorId]}}).catch(()=>{});
 }
 // Records "release" or "refund" (the decision). opts.tag (from the confirmation the person saw) must still match the address on file.
 // An owner can decide in any holding state: the deposit then counts on their word and no approve step is needed.
@@ -5139,6 +5555,7 @@ function mmWantsMm(text){
 async function mmInteraction(interaction){
   const cid=String(interaction.customId||"");
   if(!cid.startsWith("mm_"))return false;
+  mmLgWatch(interaction);                                           // v26: the private replies are written down (see the ledger)
   try{await mmRoute(interaction,cid);}
   catch(err){
     const known=err instanceof MmError;
@@ -5502,7 +5919,7 @@ async function mmRoute(interaction,cid){
 // "$mm" asks (or brings the card back) · "$mm help" pings the owners · "we need mm" asks too · the receiving person pastes their address here · owners run the
 // whole deal with "$mm release", "$mm refund", "$mm funded 0.1", "$mm sent <tx>", "$mm approve", "$mm panel" ... and, anywhere, "$mm wallet", "$mm deals", ...
 const MM_HELP_PARTY="`$mm` shows the card  ·  `$mm help` pings the owners  ·  `$mm status`  ·  `$mm release`  ·  `$mm refund`  ·  `$mm continue` (accept a shortfall)  ·  `$mm cancel`  ·  `$mm dispute <what went wrong>`  ·  `$mm address <your address>`\nYou can also just say **we need mm** to start it, and paste your address in the chat when the funds are released.";
-const MM_HELP_OWNER="Owner commands: `$mm status`  ·  `$mm panel`  ·  `$mm release`  ·  `$mm refund`  ·  `$mm accept`  ·  `$mm funded <amount> [tx]`  ·  `$mm approve`  ·  `$mm reject`  ·  `$mm sent [tx]`  ·  `$mm retry`  ·  `$mm payout <address>`  ·  `$mm refundto <address>`  ·  `$mm cancel`  ·  `$mm undispute`  ·  `$mm wallet`  ·  `$mm deals`  ·  `$mm send <deal> <address>`  ·  `$mm sweep <chain> <address>`  ·  `$mm close <deal>`  ·  `$mm history <deal>`  ·  `$freeze`  ·  `$unfreeze`  ·  `$gas`  ·  `$mm help`";
+const MM_HELP_OWNER="Owner commands: `$mm status`  ·  `$mm panel`  ·  `$mm release`  ·  `$mm refund`  ·  `$mm accept`  ·  `$mm funded <amount> [tx]`  ·  `$mm approve`  ·  `$mm reject`  ·  `$mm sent [tx]`  ·  `$mm retry`  ·  `$mm payout <address>`  ·  `$mm refundto <address>`  ·  `$mm cancel`  ·  `$mm undispute`  ·  `$mm wallet`  ·  `$mm deals`  ·  `$mm send <deal> <address>`  ·  `$mm sweep <chain> <address>`  ·  `$mm close <deal>`  ·  `$mm history <deal>`  ·  `$mm log`  ·  `$mm log find <address>`  ·  `$freeze`  ·  `$unfreeze`  ·  `$gas`  ·  `$mm help`";
 const _mmIntentAt=new Map();
 async function mmMessage(message,ticket){
   if(!ticket||ticket.status!=="open")return false;
@@ -5525,6 +5942,7 @@ async function mmMessage(message,ticket){
       if(which){
         const addr=mmFindAddress(e,text),waiting=which==="payout"?e.rel:e.ref;
         if(addr){
+          if(which==="payout"&&!owner)mmWarnOtherAddress(ch,e,addr,uid).catch(()=>{});          // v26: the sender is told at once that this is not the middleman's address
           if(ticket.reported&&!owner){await say("This ticket is flagged. An owner has to review it first. Nothing changed and the funds are safe.");return false;}
           const r=await mmSaveAddress(e,which,addr,uid);
           if(!r.ok){if(waiting||!mmSameAddr(e.chain,addr,e.address))await say(r.text);return false;}
@@ -5665,7 +6083,7 @@ async function mmCommand(ticket,arg,x){
 
 // ── Owner tools that work anywhere ("$mm wallet", "$mm deals", "$mm send ...") ──────────────────────────────────
 // The answer goes to the owner's DMs (a ticket has clients in it, and the wallet is nobody else's business).
-const MM_GLOBAL_SUBS=new Set(["alert","wallet","deals","send","sweep","close","history","freeze","unfreeze","gas","ltc","btc"]);
+const MM_GLOBAL_SUBS=new Set(["alert","wallet","deals","send","sweep","close","history","log","freeze","unfreeze","gas","ltc","btc"]);
 const mmAge=ms=>{const s=Math.max(0,Math.round(ms/1000)),d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60);return d?`${d}d ${h}h`:h?`${h}h ${m}m`:m?`${m}m`:`${s}s`;};
 async function mmWalletReport(){
   const w=mmWallets(),rows=await mmWalletRows(),out=[];
@@ -5769,6 +6187,10 @@ async function mmGlobalCommand(message,ticket){
       const h=await mmHistoryPages(id);
       for(let i=0;i<h.pages.length&&i<8;i++)await dm({embeds:[mmKE().setTitle(`History  ·  ${h.id}${h.pages.length>1?`  (${i+1} of ${h.pages.length})`:""}`).setDescription(h.pages[i])]});
       return true;
+    }
+    if(sub==="log"){                                                  // v26: every message the bot sent in a ticket (edits and deletes too) as a text file, or a search for one address
+      const r=/^find$/i.test(sp[0]||"")?await mmLogFind(sp.slice(1).join(" ")):await mmLogReport(sp[0],message,ticket);
+      return await dm({content:r.summary,files:[new AttachmentBuilder(Buffer.from(r.text,"utf8"),{name:r.name})]}),true;
     }
     if(sub==="send"){
       const id=dealArg(),addr=sp[0]&&/^mm-\d+$/i.test(sp[0])?sp[1]:sp[0];
@@ -9743,6 +10165,8 @@ client.on(Events.GuildMemberAdd,async member=>{
   }catch(e){console.error("Welcome error:",e.message);}
 });
 
+client.on("raw",mmLgRaw);                                          // v26: the ledger of ticket messages (see mmLgRaw)
+
 client.on(Events.InteractionCreate,async interaction=>{
   try{
     if(typeof interaction.customId==="string"&&interaction.customId.startsWith("mm_")&&await mmInteraction(interaction))return;       // the built-in server middleman bot's buttons, menus and forms
@@ -11580,6 +12004,7 @@ client.once(Events.ClientReady,async()=>{
     setInterval(()=>mmReconcile().catch(e=>console.error("[mm] balance check:",e.message)),60*60*1000);
     setTimeout(()=>mmTick().catch(()=>{}),8*1000);
     setTimeout(()=>mmStartup().catch(e=>console.error("[mm] startup:",e.message)),20*1000);
+    setTimeout(()=>mmLgStart(),9*1000);
 
     // The new Konvert banner on posts that still show the old one (once per banner)
     setTimeout(()=>healBanners(guild).catch(e=>console.log("[banner] heal:",e.message)),22*1000);
