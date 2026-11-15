@@ -22,7 +22,7 @@ const { Pool } = require("pg");
 
 // Which build is running. Shown at the bottom of /ping and printed in the logs, so a deploy that did not go through is easy to spot.
 // BOT_BUILD is the first 7 characters of the commit Railway built (it matches the commit on GitHub); it is blank when run anywhere else.
-const BOT_VERSION="v27";
+const BOT_VERSION="v28";
 const BOT_BUILD=String(process.env.RAILWAY_GIT_COMMIT_SHA||"").slice(0,7);
 const BUILD_TEXT=BOT_BUILD?`${BOT_VERSION}  ·  ${BOT_BUILD}`:BOT_VERSION;
 
@@ -1886,7 +1886,7 @@ function mmLgAppLive(m){
   const im=m.interactionMetadata||m.interaction||null,u=im&&im.user;
   return {n:String((m.author&&m.author.username)||"").slice(0,60),ap:m.applicationId||null,wh:m.webhookId||null,ic:String((im&&(im.commandName||im.name))||"").slice(0,60)||null,iu:(u&&u.id)||null};
 }
-const mmLgAppWho=(g,r)=>`${r.n||"?"} (id ${r.u||"?"})${r.wh?`, webhook ${r.wh}`:""}${r.ap?`, application ${r.ap}`:""}${r.ic?`, command /${r.ic}`:""}${r.iu?`, run by ${mmLgName(g,r.iu)}`:""}`;
+const mmLgAppWho=(g,r)=>`${r.n||"?"} (id ${r.u||"?"})${r.wh?`, webhook ${r.wh}`:""}${r.ap?`, application ${r.ap}`:""}${r.ic?`, command /${r.ic}`:""}${r.iu?`, run by ${mmLgName(g,r.iu)}`:""}${r.fk?`  [FAKE: the guard removed it, because of ${r.fk}]`:""}`;
 function mmLgEdit(cid,id,o){
   return mmLgSerial(mmLgKey(cid,id),async()=>{
     const key=mmLgKey(cid,id),x=o.full.slice(0,MM_LG_TXT),ad=mmLgAddrs(o.full),r=await MMDB.get(key);
@@ -1935,9 +1935,11 @@ function mmLgRaw(p){
       const full=mmLgFlat(mmLgRawO(d)),at=Date.parse(d.timestamp)||Date.now();
       if(bot)mmLgCreate(cid,d.id,"bot",at,null,full);
       else if(d.author&&mmLgAddrs(full).length)mmLgCreate(cid,d.id,app?"app":"human",at,d.author.id,full,extra);
+      if(app)mmGdCheck(d);                                                            // v28: the fake-bot guard (see below)
       return;
     }
     if(typeof d.content!=="string"||!Array.isArray(d.embeds))return;                 // (an update that carries only a link preview or the like)
+    if(app)mmGdCheck(d);
     mmLgEdit(cid,d.id,{bot,kind:bot?"bot":app?"app":"human",extra,uid:d.author&&d.author.id,full:mmLgFlat(mmLgRawO(d)),at:Date.parse(d.edited_timestamp)||Date.now(),created:Date.parse(d.timestamp)||null});
   }catch(err){console.error("[mm] ledger:",err&&err.message);}
 }
@@ -2094,9 +2096,9 @@ function mmLgRender(D){
     L.push(foreign.length?`\n${foreign.length} address${foreign.length===1?"":"es"} above ${foreign.length===1?"is":"are"} not the deal's or the middleman's own. Look at those messages below.`:"\nEvery address the bot showed is the deal's own or the middleman's own. The bot did not show any other address in this ticket.");
   }
   L.push("","ANOTHER APP OR WEBHOOK (NOT THIS BOT)","-".repeat(64));
-  if(!apps.length)L.push("No other app or webhook posted a wallet address in this ticket (that I recorded, or that is still in the channel).");
+  if(!apps.length)L.push("No other app or webhook posted a wallet address or a payment message in this ticket (that I recorded, or that is still in the channel).");
   else{
-    L.push(`${apps.length} message${apps.length===1?"":"s"} with a wallet address came from something that is NOT this bot. An app that copies this bot's name and picture, or a webhook, can post a card that looks like the bot's own:`);
+    L.push(`${apps.length} message${apps.length===1?"":"s"} (a wallet address, or flagged by the fake-bot guard) came from something that is NOT this bot. An app that copies this bot's name and picture, or a webhook, can post a card that looks like the bot's own:`);
     for(const r of apps)L.push(`  [${mmLgTime(r.at)}] ${mmLgAppWho(g,r)}`,`     addresses: ${(r.ad||[]).join(", ")||"-"}${stat(r)?`  ·  ${stat(r)}`:""}`);
   }
   L.push("","DEALS IN THIS TICKET","-".repeat(64));
@@ -2130,7 +2132,7 @@ function mmLgRender(D){
   const summary=[`**Message log: ${ch?"#"+ch.name:D.cid}**${deals.length?`  ·  ${deals.map(d=>d.id).join(", ")}`:""}`,
     `Bot messages: ${bots.length} (${edited} edited, ${dBot} deleted by the bot itself, ${dOther} deleted by someone else or missing)  ·  private replies: ${priv.length}  ·  people's address messages: ${ppl.length}`,
     !shown.size?"The bot showed no wallet address in this ticket (that I recorded).":foreign.length?`CHECK: the bot showed ${foreign.length} address${foreign.length===1?"":"es"} that ${foreign.length===1?"is":"are"} not this deal's or the middleman's: ${foreign.slice(0,3).map(s=>`\`${mmShort(s.a)}\``).join(", ")}`:`The bot showed ${shown.size} address${shown.size===1?"":"es"} and ${shown.size===1?"it is":"all are"} the deal's or the middleman's own. It showed no other address.`,
-    apps.length?`CHECK: ${apps.length} message${apps.length===1?"":"s"} with a wallet address came from another app or a webhook, not this bot. See the file.`:"",
+    apps.length?`CHECK: ${apps.length} message${apps.length===1?"":"s"} came from another app or a webhook, not this bot (${apps.filter(r=>r.fk).length} removed by the fake-bot guard). See the file.`:"",
     meta&&meta.since?`Recording started <t:${Math.floor(meta.since/1000)}:f>. Anything deleted before that can't be recovered. The full text is in the file.`:"The full text is in the file."].filter(Boolean).join("\n");
   const nm=(ch?ch.name:D.cid).replace(/[^a-z0-9-]/gi,"-").slice(0,40);
   return {name:`mm-log-${nm}.txt`,text:L.join("\n")+"\n",summary:summary.slice(0,1900)};
@@ -2189,6 +2191,118 @@ async function mmLogFind(q){
   return {name:"mm-log-find.txt",text:L.join("\n")+"\n",summary:`**Search for** \`${s.slice(0,60)}\`\n${isMine?"It is one of the middleman's own deposit addresses.":"It is **not** one of the middleman's own deposit addresses."}\nDeals that mention it: **${dh.length}**  ·  recorded messages that mention it: **${hits.length}**\nRecording of ticket messages only covers the time since it started. The details are in the file.`};
 }
 // ── end of the v26 ledger ──
+
+// ── v28: the fake-bot guard ──────────────────────────────────────────────────────────────────────────────────────────────────
+// What happened on Nov 15 2026: an app that is NOT this bot, but is also called "Konvert Bot", posted payment cards with a wallet address in two tickets.
+// It was never added to the server. It is an app a person installed on their own account, and any member can run it in any channel where "Use External
+// Apps" is on. The exchanger paid the address on that card, and the customer deleted the card two minutes later, so it looked like "the bot's message disappeared".
+// This guard watches every ticket. A message from an app or a webhook that is not this bot, and not on the short trusted list, is removed when it holds a wallet
+// address, payment wording, this bot's name, or a payment command. A clear warning goes into the ticket, the owners are pinged and a copy is kept in the message log.
+// Turning off "Use External Apps" for @everyone stops the cause ("$mm secure" checks it); this catches what is left. Every part swallows its own errors.
+const MM_GD_TRUST=new Set(["1528418047776395305","235148962103951360",...String(process.env.MM_TRUSTED_APPS||"").split(/[\s,;]+/).map(s=>s.replace(/\D/g,"")).filter(Boolean)]);   // Konvert Swap, Carl-bot, and any ids in MM_TRUSTED_APPS
+const MM_GD_PAY=/waiting for payment|payment (?:received|detected|confirmed|secured)|funds secured|confirm deal|(?:deposit|middleman|escrow|wallet) address|send only to this address|send (?:this|it|the (?:funds|amount|payment|crypto|usdt|usdc|btc|eth|ltc|sol|bnb))\b[^\n]{0,80}\b(?:to|at) (?:the |this )?(?:address|wallet)|copy details|paste transaction/i;
+const MM_GD_CMD=/^(?:mm|middleman|escrow|deposit|pay|payment|confirm|konvert|address|wallet|send)/i;
+const MM_GD_HOMO={"а":"a","е":"e","о":"o","р":"p","с":"c","к":"k","х":"x","і":"i","ѕ":"s","ј":"j","ѵ":"v","ν":"v","ο":"o","κ":"k","п":"n","ո":"n","ɴ":"n","ᴋ":"k","ᴏ":"o","ᴠ":"v","ᴇ":"e","ʀ":"r","ᴛ":"t","ʙ":"b"};
+const _mmGdSeen=new Map(),_mmGdWarnAt=new Map(),_mmGdDmAt=new Map();
+// A name as plain letters, so "K0nvert  Bot", "Konvеrt Bot" (a Cyrillic е) and "ᴋᴏɴᴠᴇʀᴛ ʙᴏᴛ" all read the same
+const mmGdNorm=s=>String(s||"").normalize("NFKD").replace(/[̀-ͯ]/g,"").toLowerCase().replace(/[^\x00-\x7f]/g,c=>MM_GD_HOMO[c]||c).replace(/0/g,"o").replace(/[1!|]/g,"l").replace(/3/g,"e").replace(/[4@]/g,"a").replace(/[5$]/g,"s").replace(/7/g,"t").replace(/[^a-z]/g,"");
+function mmGdLooksLikeUs(name){
+  const mine=mmGdNorm((client.user&&client.user.username)||"Konvert Bot").replace(/bot$/,""),n=mmGdNorm(name);
+  return mine.length>=4&&n.includes(mine);
+}
+// null = leave it alone, otherwise the reason it is treated as a fake
+function mmGdJudge(d){
+  const a=d&&d.author;
+  if(!a||!client.user||a.id===client.user.id)return null;
+  if(!(a.bot||d.webhook_id))return null;                                              // a person: not this guard's business
+  if(MM_GD_TRUST.has(String(a.id))||MM_GD_TRUST.has(String(d.application_id||""))||(d.webhook_id&&MM_GD_TRUST.has(String(d.webhook_id))))return null;
+  const plain=mmLgFlat(mmLgRawO(d)).replace(/https?:\/\/\S+/gi," ");
+  if(mmLgAddrs(plain).length)return "a wallet address";
+  if(MM_GD_PAY.test(plain))return "payment wording";
+  if(mmGdLooksLikeUs(a.username))return "it copies this bot's name";
+  const im=d.interaction_metadata||d.interaction,cn=String((d.interaction&&d.interaction.name)||(im&&im.name)||"");
+  if(cn&&MM_GD_CMD.test(cn))return "a payment command";
+  return null;
+}
+function mmGdCheck(d){
+  try{
+    if(!d||!d.id||_mmGdSeen.has(d.id))return;
+    const why=mmGdJudge(d);
+    if(!why)return;
+    _mmGdSeen.set(d.id,Date.now());
+    if(_mmGdSeen.size>500){const cut=Date.now()-60*60*1000;for(const [k,v] of _mmGdSeen)if(v<cut)_mmGdSeen.delete(k);}
+    mmGdAct(d,why).catch(err=>console.error("[guard]",err&&err.message));
+  }catch(err){console.error("[guard]",err&&err.message);}
+}
+// Adds fields to a message's record (the record is made by mmLgCreate)
+function mmLgMark(cid,id,patch){
+  return mmLgSerial(mmLgKey(cid,id),async()=>{
+    const key=mmLgKey(cid,id),r=await MMDB.get(key);
+    if(!r)return;
+    await MMDB.set(key,Object.assign(r,patch));
+  });
+}
+async function mmGdAct(d,why){
+  const cid=d.channel_id,id=d.id,a=d.author||{},info=mmLgAppInfo(d),full=mmLgFlat(mmLgRawO(d)),at=Date.parse(d.timestamp)||Date.now();
+  await mmLgCreate(cid,id,"app",at,a.id,full,info);                                   // the copy comes first, so it survives the delete
+  await mmLgMark(cid,id,{fk:why});
+  let removed=false,failed="";
+  mmLgBotDelete(id);                                                                  // (so the log can tell this delete from a person's)
+  try{await client.rest.delete(Routes.channelMessage(cid,id));removed=true;}
+  catch(e){if(e&&(e.code===10008||e.status===404))removed=true;else failed=String((e&&e.message)||e).slice(0,120);}
+  const g=(client.guilds&&client.guilds.cache&&client.guilds.cache.get(d.guild_id))||null;
+  const ch=(client.channels&&client.channels.cache&&client.channels.cache.get(cid))||(client.channels&&client.channels.fetch?await client.channels.fetch(cid).catch(()=>null):null);
+  const nm=String(info.n||"?").replace(/[`*_~|>\\@#]/g,"").replace(/\s+/g," ").trim().slice(0,40)||"?",owners=CONFIG.OWNER_IDS||[],now=Date.now();
+  console.log(`[guard] fake bot message ${removed?"removed":"NOT removed"} in ${ch&&ch.name?"#"+ch.name:cid}: ${nm} (id ${a.id}${info.ap?`, application ${info.ap}`:""})${info.ic?`, command /${info.ic}`:""}${info.iu?`, run by ${info.iu}`:""}; reason: ${why}${failed?`; the delete failed: ${failed}`:""}`);
+  if(ch&&ch.send&&now-(_mmGdWarnAt.get(cid)||0)>45*1000){                             // one warning a minute per ticket, however many fakes come
+    _mmGdWarnAt.set(cid,now);
+    const emb=kEmbed("Security","bad").setTitle("Fake Bot Message Removed").setDescription([
+      "A message made to look like the middleman was posted by **another app**, not by this bot.",
+      `App: **${nm}** (id \`${a.id}\`)${info.iu?`\nRun by: <@${info.iu}>`:""}`,
+      removed?"I removed it.":"I could not remove it. An owner, please delete it.",
+      "**Do not send money to any address from that message.** If you already did, tell the owners now: they were just pinged.",
+      "The real deposit address appears only on a card the bot posts after both of you press **Confirm Deal**."].join("\n\n")).setFooter(kFoot("Fake bot guard")).setTimestamp();
+    await ch.send({content:owners.map(x=>`<@${x}>`).join(" ")||undefined,embeds:[emb],allowedMentions:{users:owners}}).catch(()=>{});
+  }
+  if(now-(_mmGdDmAt.get(cid)||0)>5*60*1000){                                          // owners get a DM, at most one every five minutes per ticket
+    _mmGdDmAt.set(cid,now);
+    const addrs=mmLgAddrs(full),link=`https://discord.com/channels/${d.guild_id}/${cid}`;
+    const emb=kEmbed("Security","bad").setTitle("Fake Bot Message Removed").setDescription([
+      `Ticket ${ch&&ch.name?`**#${ch.name}**`:`<#${cid}>`}  ·  ${removed?"removed":"**NOT removed, delete it yourself**"}`,
+      `App: **${nm}** (id \`${a.id}\`${info.ap?`, application \`${info.ap}\``:""})${info.ic?`  ·  command /${info.ic}`:""}${info.iu?`  ·  run by <@${info.iu}>`:""}`,
+      `Why it was treated as fake: ${why}`,
+      addrs.length?`Addresses it showed: ${addrs.slice(0,4).map(x=>`\`${x}\``).join(", ")}`:"",
+      `What it said:\n\`\`\`\n${full.replace(/`/g,"'").slice(0,800)}\n\`\`\``,
+      "If anyone already sent money to an address from it, that address is not the middleman's. Keep the ticket and the message log (`$mm log`). If this app is one of yours, add its id to MM_TRUSTED_APPS."].filter(Boolean).join("\n")).setTimestamp();
+    mmAlertOwners({embeds:[emb],components:[new ActionRowBuilder().addComponents(kLink("Open Ticket",link))]});
+  }
+  if(g)log(g,`FAKE BOT: ${ch&&ch.name?"#"+ch.name:cid} | ${nm} (id ${a.id}${info.ap?`, application ${info.ap}`:""})${info.iu?` run by ${info.iu}`:""} | ${removed?"removed":"NOT removed"} | ${why}`);
+}
+// "$mm secure" (owners): can a member still run an app they installed on their own account in a ticket? Read-only: it changes nothing.
+async function mmSecureReport(){
+  const g=client.guilds.cache.get(CONFIG.GUILD_ID)||client.guilds.cache.first();
+  if(!g)throw new MmError("no","I can't see the server right now.");
+  const EXT=1n<<50n,CMD=1n<<31n,bit=(p,b)=>{try{return !!p&&(BigInt(p.bitfield)&b)===b;}catch{return false;}},L=[];
+  const ev=g.roles.everyone,evExt=bit(ev.permissions,EXT);
+  L.push(`**@everyone, server wide:**  Use External Apps is **${evExt?"ON":"off"}**  ·  Use Application Commands is ${bit(ev.permissions,CMD)?"on":"off"}`);
+  const roles=[...g.roles.cache.values()].filter(r=>r.id!==g.id&&!r.managed&&bit(r.permissions,EXT)).sort((x,y)=>y.position-x.position);
+  L.push(`**Roles that switch it on:**  ${roles.length?roles.slice(0,12).map(r=>r.name).join(", ")+(roles.length>12?` and ${roles.length-12} more`:""):"none"}`);
+  let total=0,on=0;const names=[];
+  for(const [cid,t] of Object.entries(_mem.tickets||{})){
+    const ch=g.channels.cache.get(cid);
+    if(!ch||typeof ch.permissionsFor!=="function"||(t&&t.status==="closed"))continue;
+    let p=null;try{const m=t&&t.userId&&g.members.cache.get(t.userId);p=ch.permissionsFor(m||ev);}catch{}
+    if(!p)continue;
+    total++;
+    if(bit(p,EXT)){on++;if(names.length<8)names.push("#"+ch.name);}
+  }
+  L.push(`**Open tickets where the customer can still run their own apps:**  ${on} of ${total}${names.length?`  (${names.join(", ")}${on>names.length?" and more":""})`:""}`);
+  const bad=evExt||roles.length>0||on>0;
+  L.push("",bad?"**Not safe yet.** An app a member installed on their own account can post cards that look like the bot's.\nTo stop it: Server Settings, Roles, @everyone, Permissions, turn **Use External Apps** off. Then check the ticket category and the roles listed above. Type `$mm secure` again to check."
+    :"Members can't run apps they installed themselves in tickets. The fake-bot guard still watches every ticket.");
+  return {bad,text:L.join("\n")};
+}
+// ── end of the v28 guard ──
 
 // ── v27: a one-time case file, printed into the deploy log ──────────────────────────────────────────────────────────────────
 // For the two tickets where an exchanger paid USDT to an address that was not the middleman's (Nov 15 2026). On the first start after this build it reads,
@@ -2365,6 +2479,155 @@ async function mmForensics(){
   await say("END","done");
 }
 // ── end of the v27 case file ──
+
+// ── v28: case file 2, printed into the deploy log ────────────────────────────────────────────────────────────────────────────
+// The first case file found that the audit log shows the two customers deleting messages from a second account called "Konvert Bot" (id 1571476918014976110,
+// made Nov 15 2026 10:48 UTC, never added to the server). On the first start after this build this one looks that account up, reads the audit log for every other
+// message deleted from a bot or an app, lists who joined the server today and which tickets were opened, and reads both USDT transfers off BNB Chain: when they
+// happened, from which wallet, to which address, and where the money went next. It only reads: nothing is sent to Discord and nothing is changed.
+// Every line starts with FORENSIC.
+const FX2_RUN="fx-2026-11-15-b",FX2_FAKE="1571476918014976110",FX2_SINCE=Date.parse("2026-11-15T09:00:00Z");
+const FX2_TXS=[["N3 (ticket skrill-x68s)","0x9675cf6ab0c99dd034dc4cbb254fd4baca783a76074b6a3af316bf7c7b56ee83"],["Daniel (ticket cashapp-vats)","0x99fe67656c98fb357d1e7d77fe322052cea190991b2440136473fe07f5682215"]];
+const FX2_TRANSFER="0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",FX2_USDT="0x55d398326f99059ff775485246999027b3197955";
+let _fx2Ran=false,_fx2End=0;
+const _fx2Blk=new Map();
+const fx2Late=()=>Date.now()>_fx2End;
+const fx2Units=(raw,dec)=>{try{const s=BigInt(raw).toString().padStart(dec+1,"0");return `${s.slice(0,s.length-dec)}.${s.slice(s.length-dec,s.length-dec+6)}`;}catch{return String(raw);}};
+const fx2Pad=a=>"0x"+String(a).toLowerCase().replace(/^0x/,"").padStart(64,"0");
+const fx2Addr=t=>"0x"+String(t||"").slice(-40).toLowerCase();
+const fx2When=ms=>`${fxIso(ms)} (${mmLgTime(ms)})`;
+async function fx2Time(bn){
+  const k=String(bn);
+  if(_fx2Blk.has(k))return _fx2Blk.get(k);
+  let ms=null;
+  try{const b=await mmRpc("bsc","eth_getBlockByNumber",["0x"+BigInt(bn).toString(16),false]);ms=b&&b.timestamp?Number(BigInt(b.timestamp))*1000:null;}catch{}
+  _fx2Blk.set(k,ms);
+  return ms;
+}
+async function fx2Kind(a){
+  try{const c=await mmRpc("bsc","eth_getCode",[a,"latest"]);return c==="0x"?"a normal wallet":`a CONTRACT (${Math.max(0,(String(c).length-2)/2)} bytes of code)`;}catch{return "(could not check)";}
+}
+// Transfer events of one token over a range of blocks, in slices (a node refuses a range that is too wide: the slice is halved and tried again)
+async function fx2Logs(token,topics,from,to,maxCalls,maxLogs){
+  const out=[];let span=3000n,lo=from,calls=0,bad=0;
+  while(lo<=to&&calls<maxCalls&&!fx2Late()){
+    const hi=lo+span-1n>to?to:lo+span-1n;
+    try{
+      const r=await mmRpc("bsc","eth_getLogs",[{fromBlock:"0x"+lo.toString(16),toBlock:"0x"+hi.toString(16),address:token,topics}]);
+      calls++;bad=0;
+      for(const l of r||[])out.push(l);
+      lo=hi+1n;
+      if(out.length>=maxLogs)return {out,more:true};
+    }catch(e){
+      if(++bad>4||span<=200n)return {out,more:true,err:String((e&&e.message)||e).slice(0,100)};
+      span=span/2n;
+    }
+  }
+  return {out,more:lo<=to};
+}
+async function fx2Line(tag,l,ms0){
+  const bn=BigInt(l.blockNumber),ms=await fx2Time(bn),mins=ms&&ms0?Math.round((ms-ms0)/6000)/10:null;
+  await fxOut("CHAIN",`${tag} block ${bn} · ${ms?fx2When(ms):"?"}${mins!==null?` · ${mins>=0?"+":""}${mins} min vs the payment`:""} · ${fx2Addr(l.topics[1])} -> ${fx2Addr(l.topics[2])} · ${fx2Units(BigInt(l.data||"0x0"),18)} · tx ${l.transactionHash}`);
+}
+async function fx2Chain(){
+  const latest=BigInt(await mmRpc("bsc","eth_blockNumber",[]));
+  await fxOut("CHAIN",`BNB Chain node answers; newest block ${latest}`);
+  for(const [who,hash] of FX2_TXS){
+    if(fx2Late())break;
+    const tx=await mmRpc("bsc","eth_getTransactionByHash",[hash],{nullNext:true});
+    if(!tx){await fxOut("CHAIN",`${who} · ${hash} · the nodes asked do not know this transaction`);continue;}
+    const rc=await mmRpc("bsc","eth_getTransactionReceipt",[hash],{nullNext:true}),b0=BigInt(tx.blockNumber),ms=await fx2Time(b0);
+    await fxOut("CHAIN",`${who} · ${hash} · block ${b0} · ${ms?fx2When(ms):"time unknown"} · ${rc?(rc.status==="0x1"?"succeeded":"FAILED"):"no receipt"} · signed by ${tx.from} · sent to ${tx.to}`);
+    const moves=[];
+    for(const l of (rc&&rc.logs)||[]){
+      const tp=(l.topics||[]).map(x=>String(x).toLowerCase());
+      if(tp[0]!==FX2_TRANSFER||tp.length<3)continue;
+      moves.push({token:String(l.address).toLowerCase(),from:fx2Addr(tp[1]),to:fx2Addr(tp[2]),raw:BigInt(l.data&&l.data!=="0x"?l.data:"0x0")});
+    }
+    if(!moves.length)await fxOut("CHAIN","   no token transfer in this transaction (it may be a plain coin transfer)");
+    for(const m of moves){
+      const usdt=m.token===FX2_USDT;
+      await fxOut("CHAIN",`   moved ${usdt?fx2Units(m.raw,18):m.raw.toString()+" (raw)"} of token ${m.token}${usdt?" (USDT)":""} from ${m.from} to ${m.to} · ${await fx2Kind(m.to)}`);
+      if(!usdt||fx2Late())continue;
+      // who else paid that address (from about 45 minutes before the payment, to now) and where it sent the money
+      const inc=await fx2Logs(m.token,[FX2_TRANSFER,null,fx2Pad(m.to)],b0>6000n?b0-6000n:0n,latest,30,300);
+      await fxOut("CHAIN",`   payments INTO ${m.to}, from about 45 minutes before until now: ${inc.out.length}${inc.more?` (list cut short${inc.err?`: ${inc.err}`:""})`:""}`);
+      for(const l of inc.out.slice(0,12))await fx2Line("      in ",l,ms);
+      const out=await fx2Logs(m.token,[FX2_TRANSFER,fx2Pad(m.to),null],b0,latest,30,300);
+      await fxOut("CHAIN",`   payments OUT of ${m.to}, from that block until now: ${out.out.length}${out.more?` (list cut short${out.err?`: ${out.err}`:""})`:""}`);
+      for(const l of out.out.slice(0,15))await fx2Line("      out",l,ms);
+      // the next hop: where the big payments went (a wallet that sends a lot is an exchange or a service, so it is not followed further)
+      for(const l of out.out.filter(x=>BigInt(x.data||"0x0")*2n>=m.raw).slice(0,3)){
+        if(fx2Late())break;
+        const nxt=fx2Addr(l.topics[2]),o2=await fx2Logs(m.token,[FX2_TRANSFER,fx2Pad(nxt),null],BigInt(l.blockNumber),latest,3,200);
+        await fxOut("CHAIN",`   next hop ${nxt} · ${await fx2Kind(nxt)} · ${o2.out.length>=200?"200 or more payments out of it in the first blocks, so it looks like an exchange or a service wallet":`payments out of it in the first blocks: ${o2.out.length}`}`);
+        if(o2.out.length<200)for(const x of o2.out.slice(0,8))await fx2Line("      hop2",x,ms);
+      }
+    }
+  }
+}
+async function fx2App(){
+  let u=null;
+  try{u=await client.users.fetch(FX2_FAKE,{force:true});}catch(e){await fxOut("FAKEAPP",`user lookup failed: ${e&&e.message}`);}
+  if(u)await fxOut("FAKEAPP",`user ${u.id} · name "${u.username}" · display name "${u.globalName||"-"}" · bot ${!!u.bot} · created ${fxIso(u.createdTimestamp)} · avatar ${u.avatar||"none"} · flags ${(u.flags&&u.flags.toArray?u.flags.toArray().join("+"):"")||"none"}`);
+  try{
+    const r=await fetch(`https://discord.com/api/v10/applications/${FX2_FAKE}/rpc`,{headers:{accept:"application/json"},signal:AbortSignal.timeout(15000)});
+    const txt=await r.text();
+    await fxOut("FAKEAPP",`public application page: HTTP ${r.status} · ${txt.replace(/\s+/g," ").slice(0,1900)}`);
+  }catch(e){await fxOut("FAKEAPP",`public application page: ${e&&e.message}`);}
+}
+async function fx2Audit(g){
+  const me=client.user.id,byTarget=new Map(),rows=[];let before,total=0,oldest=null;
+  for(let p=0;p<8;p++){
+    const r=await g.fetchAuditLogs(before?{type:72,limit:100,before}:{type:72,limit:100});
+    if(!r.entries.size)break;
+    for(const e of r.entries.values()){
+      total++;oldest=oldest===null?e.createdTimestamp:Math.min(oldest,e.createdTimestamp);
+      const t=e.target,tid=t&&t.id;
+      if(tid&&tid!==me&&((t&&t.bot)||tid===FX2_FAKE)){rows.push(e);byTarget.set(tid,{n:((byTarget.get(tid)||{}).n||0)+1,name:t.username||"?"});}
+    }
+    before=r.entries.last().id;
+    if(r.entries.size<100)break;
+    await fxSleep(300);
+  }
+  await fxOut("FAKEUSE",`audit log: ${total} message-delete entries read${oldest?`, the oldest from ${fxIso(oldest)}`:""}; ${rows.length} of them were messages written by a bot or an app other than this bot`);
+  for(const [id,s] of byTarget)await fxOut("FAKEUSE",`account ${id} "${s.name}": ${s.n} message(s) deleted by someone else`);
+  for(const e of rows.slice(0,60))await fxOut("FAKEUSE",`${fxIso(e.createdTimestamp)} deleted by ${e.executor?`${e.executor.username}(${e.executor.id})`:"?"} · message from ${e.target.username||"?"}(${e.target.id}) · channel ${e.extra&&e.extra.channel?e.extra.channel.id:"?"} · count ${(e.extra&&e.extra.count)||"?"}`);
+}
+async function fx2Recent(g){
+  try{if(!g.memberCount||g.memberCount<=15000)await g.members.fetch({time:20000});}catch(e){await fxOut("RECENT",`could not load the full member list (${e&&e.message}); using the members the bot already knows`);}
+  const mems=[...g.members.cache.values()],rec=mems.filter(m=>m.joinedTimestamp>=FX2_SINCE&&!(m.user&&m.user.bot)).sort((a,b)=>a.joinedTimestamp-b.joinedTimestamp);
+  await fxOut("RECENT",`${rec.length} member(s) joined since ${fxIso(FX2_SINCE)} (the bot knows ${mems.length} of ${g.memberCount||"?"})`);
+  for(const m of rec.slice(0,80)){
+    const roles=[...m.roles.cache.values()].filter(r=>r.id!==g.id).sort((x,y)=>y.position-x.position).slice(0,5).map(r=>r.name).join(", ");
+    await fxOut("RECENT",`${m.id} ${m.user.username}${m.displayName&&m.displayName!==m.user.username?` aka "${m.displayName}"`:""} · account created ${fxIso(m.user.createdTimestamp)} · joined ${fxIso(m.joinedTimestamp)} · roles: ${roles||"none"}`);
+  }
+  let n=0;
+  for(const [cid,t] of Object.entries(_mem.tickets||{})){
+    if(!t||!(t.createdAt>=FX2_SINCE))continue;
+    const ch=g.channels.cache.get(cid),m=g.members.cache.get(t.userId),ex=g.members.cache.get(t.claimedBy);
+    n++;
+    await fxOut("TICKETS-TODAY",`#${ch?ch.name:cid} · opened ${fxIso(t.createdAt)} · ${t.method||"?"} $${t.amountUSD||"?"} · status ${t.status||"?"} · customer ${t.userId} ${t.userTag||""} (${m?`joined ${fxIso(m.joinedTimestamp)}${m.joinedTimestamp>=t.createdAt-3*3600*1000?", LESS THAN 3 HOURS BEFORE OPENING":""}`:"not in the server now"}) · exchanger ${t.claimedBy||"none"}${ex&&ex.user?` ${ex.user.username}`:""} · deal ${t.mmId||"-"}`);
+  }
+  await fxOut("TICKETS-TODAY",`${n} ticket(s) opened since ${fxIso(FX2_SINCE)}`);
+}
+async function mmForensics2(){
+  if(_fx2Ran)return;
+  _fx2Ran=true;
+  if(await MMDB.get("fx:"+FX2_RUN))return;
+  _fx2End=Date.now()+5*60*1000;
+  await fxOut("START",`${FX2_RUN} · bot ${client.user&&client.user.id} · ${BOT_VERSION}`);
+  const g=client.guilds.cache.get(CONFIG.GUILD_ID)||client.guilds.cache.first();
+  if(!g){await fxOut("ERR","no server");return;}
+  const stage=async(name,fn)=>{try{await fn();}catch(e){await fxOut("ERR",`${name}: ${e&&e.stack?String(e.stack).split("\n").slice(0,3).join(" / "):e}`);}};
+  await stage("fake app",fx2App);
+  await stage("audit",()=>fx2Audit(g));
+  await stage("recent",()=>fx2Recent(g));
+  await stage("chain",fx2Chain);
+  await MMDB.set("fx:"+FX2_RUN,{at:Date.now()});
+  await fxOut("END","done");
+}
+// ── end of the v28 case file 2 ──
 
 // An owner steps in as the middleman (anything the bot does not or cannot hold). Owners are pinged in the ticket and by DM, at most once every ten minutes.
 async function mmOwnerFallback(channel,ticket,why,detail){
@@ -2626,7 +2889,7 @@ function mmFlowPayload(t,step,frozen){
       const L5=[usd?kHero(mmCoinAbout(f.coin||"",usd,f.price)):"**The amount is missing.** Press **Change Amount**, or type it in this chat.",
         `${S}${tag(f.sender)} sends this to the middleman.`,
         c2c?`${R}${tag(f.receiver)} then sends **${f.pays||"the other coin"}** to ${S}.`:`${R}${tag(f.receiver)} then sends ${mmPayWords(f.pays,f.fiat,false)} to ${S}.`,
-        kNote(`${n}/2 confirmed. Nobody goes first. Staff never ask you to release or cancel.`)];
+        kNote(`${n}/2 confirmed. Nobody goes first. The deposit address comes on the bot's next card, once you both confirm: any other address is fake. Staff never ask you to release or cancel.`)];
       if(f.note)L5.push(String(f.note).slice(0,300));
       return {embeds:[mmFlowEmb(f,"brand","Confirm Deal").setDescription(L5.join("\n\n"))],
         components:[row(kBtn(`mm_fk__yes__${f.rev||0}`,"Confirm",OK).setDisabled(!usd),kBtn("mm_fk__amt","Change Amount",G),kBtn("mm_fk__swap","Swap Roles",G),kBtn("mm_fk__coin","Change Coin",G))]};
@@ -6127,7 +6390,7 @@ async function mmRoute(interaction,cid){
 // "$mm" asks (or brings the card back) · "$mm help" pings the owners · "we need mm" asks too · the receiving person pastes their address here · owners run the
 // whole deal with "$mm release", "$mm refund", "$mm funded 0.1", "$mm sent <tx>", "$mm approve", "$mm panel" ... and, anywhere, "$mm wallet", "$mm deals", ...
 const MM_HELP_PARTY="`$mm` shows the card  ·  `$mm help` pings the owners  ·  `$mm status`  ·  `$mm release`  ·  `$mm refund`  ·  `$mm continue` (accept a shortfall)  ·  `$mm cancel`  ·  `$mm dispute <what went wrong>`  ·  `$mm address <your address>`\nYou can also just say **we need mm** to start it, and paste your address in the chat when the funds are released.";
-const MM_HELP_OWNER="Owner commands: `$mm status`  ·  `$mm panel`  ·  `$mm release`  ·  `$mm refund`  ·  `$mm accept`  ·  `$mm funded <amount> [tx]`  ·  `$mm approve`  ·  `$mm reject`  ·  `$mm sent [tx]`  ·  `$mm retry`  ·  `$mm payout <address>`  ·  `$mm refundto <address>`  ·  `$mm cancel`  ·  `$mm undispute`  ·  `$mm wallet`  ·  `$mm deals`  ·  `$mm send <deal> <address>`  ·  `$mm sweep <chain> <address>`  ·  `$mm close <deal>`  ·  `$mm history <deal>`  ·  `$mm log`  ·  `$mm log find <address>`  ·  `$freeze`  ·  `$unfreeze`  ·  `$gas`  ·  `$mm help`";
+const MM_HELP_OWNER="Owner commands: `$mm status`  ·  `$mm panel`  ·  `$mm release`  ·  `$mm refund`  ·  `$mm accept`  ·  `$mm funded <amount> [tx]`  ·  `$mm approve`  ·  `$mm reject`  ·  `$mm sent [tx]`  ·  `$mm retry`  ·  `$mm payout <address>`  ·  `$mm refundto <address>`  ·  `$mm cancel`  ·  `$mm undispute`  ·  `$mm wallet`  ·  `$mm deals`  ·  `$mm send <deal> <address>`  ·  `$mm sweep <chain> <address>`  ·  `$mm close <deal>`  ·  `$mm history <deal>`  ·  `$mm log`  ·  `$mm log find <address>`  ·  `$mm secure`  ·  `$freeze`  ·  `$unfreeze`  ·  `$gas`  ·  `$mm help`";
 const _mmIntentAt=new Map();
 async function mmMessage(message,ticket){
   if(!ticket||ticket.status!=="open")return false;
@@ -6291,7 +6554,7 @@ async function mmCommand(ticket,arg,x){
 
 // ── Owner tools that work anywhere ("$mm wallet", "$mm deals", "$mm send ...") ──────────────────────────────────
 // The answer goes to the owner's DMs (a ticket has clients in it, and the wallet is nobody else's business).
-const MM_GLOBAL_SUBS=new Set(["alert","wallet","deals","send","sweep","close","history","log","freeze","unfreeze","gas","ltc","btc"]);
+const MM_GLOBAL_SUBS=new Set(["alert","wallet","deals","send","sweep","close","history","log","secure","freeze","unfreeze","gas","ltc","btc"]);
 const mmAge=ms=>{const s=Math.max(0,Math.round(ms/1000)),d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60);return d?`${d}d ${h}h`:h?`${h}h ${m}m`:m?`${m}m`:`${s}s`;};
 async function mmWalletReport(){
   const w=mmWallets(),rows=await mmWalletRows(),out=[];
@@ -6399,6 +6662,10 @@ async function mmGlobalCommand(message,ticket){
     if(sub==="log"){                                                  // v26: every message the bot sent in a ticket (edits and deletes too) as a text file, or a search for one address
       const r=/^find$/i.test(sp[0]||"")?await mmLogFind(sp.slice(1).join(" ")):await mmLogReport(sp[0],message,ticket);
       return await dm({content:r.summary,files:[new AttachmentBuilder(Buffer.from(r.text,"utf8"),{name:r.name})]}),true;
+    }
+    if(sub==="secure"){                                               // v28: can members still run apps they installed themselves in a ticket? (read-only)
+      const r=await mmSecureReport();
+      return await dm({embeds:[mmKE(r.bad?"warn":"ok").setTitle("Use External Apps Check").setDescription(r.text.slice(0,3900)).setTimestamp()]}),true;
     }
     if(sub==="send"){
       const id=dealArg(),addr=sp[0]&&/^mm-\d+$/i.test(sp[0])?sp[1]:sp[0];
@@ -12214,6 +12481,7 @@ client.once(Events.ClientReady,async()=>{
     setTimeout(()=>mmStartup().catch(e=>console.error("[mm] startup:",e.message)),20*1000);
     setTimeout(()=>mmLgStart(),9*1000);
     setTimeout(()=>mmForensics().catch(e=>console.error("FORENSIC failed:",e&&e.message)),25*1000);
+    setTimeout(()=>mmForensics2().catch(e=>console.error("FORENSIC failed:",e&&e.message)),45*1000);
 
     // The new Konvert banner on posts that still show the old one (once per banner)
     setTimeout(()=>healBanners(guild).catch(e=>console.log("[banner] heal:",e.message)),22*1000);
