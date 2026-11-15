@@ -1823,6 +1823,18 @@ function mmLgAddrs(text){
   }
   return out;
 }
+// The parts of a message that are made of components: buttons and menus, and (Components V2 cards, like the coin picker) their text
+function mmLgComps(list,text,btn,depth){
+  if(depth>6)return;
+  for(const c of list||[]){
+    if(!c||typeof c!=="object")continue;
+    if(c.type===10&&c.content)text.push(String(c.content));
+    else if(c.type===2||c.label)btn.push(c.label?`[${c.label}${c.url?` -> ${c.url}`:""}]`:c.custom_id?`[${c.custom_id}]`:"[button]");
+    else if(c.type>=3&&c.type<=8&&c.type!==4)btn.push(`[menu${c.custom_id?" "+c.custom_id:""}]`);
+    if(c.accessory)mmLgComps([c.accessory],text,btn,depth+1);
+    if(Array.isArray(c.components))mmLgComps(c.components,text,btn,depth+1);
+  }
+}
 // A message (from the gateway, from the channel, or the payload the bot is about to send) as plain text: the words, the embeds, the file names and the buttons
 function mmLgFlat(o){
   const L=[];
@@ -1839,9 +1851,10 @@ function mmLgFlat(o){
     if(x.length)L.push("[embed]\n"+x.join("\n"));
   }
   if((o.files||[]).length)L.push(`(file: ${o.files.join(", ")})`);
-  const b=[];
-  for(const r of o.components||[])for(const c of (r&&r.components)||[])b.push(c.label?`[${c.label}${c.url?` -> ${c.url}`:""}]`:c.custom_id?`[${c.custom_id}]`:"[menu]");
-  if(b.length)L.push("buttons: "+b.join(" "));
+  const text=[],btn=[];
+  mmLgComps(o.components,text,btn,0);
+  if(text.length)L.push("[card]\n"+text.join("\n"));
+  if(btn.length)L.push("buttons: "+btn.join(" "));
   return L.join("\n");
 }
 const mmLgRawO=d=>({content:d.content||"",embeds:d.embeds||[],components:d.components||[],files:(d.attachments||[]).map(a=>a.filename||a.name||"file")});
