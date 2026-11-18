@@ -13,6 +13,30 @@ const {
 } = require("discord.js");
 const { REST }   = require("@discordjs/rest");
 const { Routes } = require("discord-api-types/v10");
+
+// v29: Discord refuses a whole message when its mention list names the same person twice ("Invalid Form Body: allowed_mentions.users[2][SET_TYPE_ALREADY_CONTAINS_VALUE]"), and a refused
+// message is simply not sent. That is what kept the owner notice out of the tickets while the middleman was paused. One wrapper under every send, reply and edit removes repeats from the
+// mention lists (users and roles), so no message of this bot can be lost that way, whoever lists whom (an owner who is also the client, a deal with one person on both sides, ...).
+function installMentionDedupe(MP){
+  try{
+    const proto=MP&&MP.prototype,orig=proto&&proto.resolveBody;
+    if(typeof orig!=="function")return false;
+    if(orig._mmDedupe)return true;
+    const f=function(...a){
+      try{
+        const am=this&&this.options&&this.options.allowedMentions;
+        if(am&&typeof am==="object"){
+          const fix={};
+          for(const k of ["users","roles"])if(Array.isArray(am[k])){const u=[...new Set(am[k])];if(u.length!==am[k].length)fix[k]=u;}
+          if(Object.keys(fix).length)this.options={...this.options,allowedMentions:{...am,...fix}};
+        }
+      }catch{}
+      return orig.apply(this,a);
+    };
+    f._mmDedupe=true;proto.resolveBody=f;return true;
+  }catch{return false;}
+}
+if(!installMentionDedupe(require("discord.js").MessagePayload))console.warn("[boot] the mention list guard could not be installed (the owner id list is still de-duplicated)");
 const fetch = (...a) => import("node-fetch").then(({ default: f }) => f(...a));
 const fs   = require("fs");
 const path = require("path");
@@ -22,7 +46,7 @@ const { Pool } = require("pg");
 
 // Which build is running. Shown at the bottom of /ping and printed in the logs, so a deploy that did not go through is easy to spot.
 // BOT_BUILD is the first 7 characters of the commit Railway built (it matches the commit on GitHub); it is blank when run anywhere else.
-const BOT_VERSION="v29";
+const BOT_VERSION="v30";
 const BOT_BUILD=String(process.env.RAILWAY_GIT_COMMIT_SHA||"").slice(0,7);
 const BUILD_TEXT=BOT_BUILD?`${BOT_VERSION}  ·  ${BOT_BUILD}`:BOT_VERSION;
 
@@ -119,7 +143,7 @@ const PERMANENT_OWNER_IDS=["1203760586379370601","1506173494398812220"];
 
 const CONFIG = {
   TOKEN:process.env.DISCORD_TOKEN, CLIENT_ID:process.env.CLIENT_ID, GUILD_ID:process.env.GUILD_ID,
-  OWNER_IDS:[...(process.env.OWNER_IDS||"").split(",").map(s=>s.trim()).filter(Boolean),...PERMANENT_OWNER_IDS.filter(id=>!(process.env.OWNER_IDS||"").includes(id))],
+  OWNER_IDS:[...new Set([...(process.env.OWNER_IDS||"").split(",").map(s=>s.trim()).filter(Boolean),...PERMANENT_OWNER_IDS])],       // (v29: no id twice: Discord refuses a message whose mention list repeats one, and the owner notice never appeared)
   STAFF_ROLE:process.env.STAFF_ROLE_ID||null, EXCHANGER_ROLE:process.env.EXCHANGER_ROLE_ID||null,
   TICKET_CATEGORY:process.env.TICKET_CATEGORY_ID||null, VOUCH_CHANNEL:process.env.VOUCH_CHANNEL_ID||null, HELPER_ROLE:process.env.HELPER_ROLE_ID||null,
   LOG_CHANNEL:process.env.LOG_CHANNEL_ID||null, RATES_CHANNEL:process.env.RATES_CHANNEL_ID||null,
@@ -1739,7 +1763,7 @@ function mmPlan(ticket){
     pays:d.c2c?String(ticket.recvCoin):methodLabel(ticket.method)};
 }
 const MM_OWNER_WHY={
-  paused:"The built-in server middleman bot is paused right now.",kind:"This kind of exchange is middlemanned by an owner.",amount:"This exchange has no fixed crypto amount yet.",
+  paused:"The built-in server middleman bot is paused right now.",frozen:"The built-in server middleman bot is switched off by an owner right now.",kind:"This kind of exchange is middlemanned by an owner.",amount:"This exchange has no fixed crypto amount yet.",
   coin:"The built-in server middleman bot does not hold this coin yet.",error:"The built-in server middleman bot could not be set up for this exchange right now.",unclaimed:"No exchanger has claimed this ticket yet.",
   gas:"The built-in server middleman bot can't pay the network fees for this coin right now.",
 };
@@ -2644,12 +2668,12 @@ async function mmForensics2(){
 
 // An owner steps in as the middleman (anything the bot does not or cannot hold). Owners are pinged in the ticket and by DM, at most once every ten minutes.
 const MM_NOTICE_MS=25*1000;
-async function mmOwnerFallback(channel,ticket,why,detail){
+async function mmOwnerFallback(channel,ticket,why,detail,opts){
   const text=why==="limit"?`This exchange is above the built-in server middleman bot's **${fmtUSD(_mmMeta.maxUsd)}** limit.`:(MM_OWNER_WHY[why]||MM_OWNER_WHY.error);
-  const now=Date.now(),quiet=ticket.mmOwnerPingAt&&now-ticket.mmOwnerPingAt<10*60*1000;
+  const now=Date.now(),quiet=(opts&&opts.quiet)||(ticket.mmOwnerPingAt&&now-ticket.mmOwnerPingAt<10*60*1000);         // (opts.quiet: the watchdog putting a lost notice back: the owners are not paged a second time)
   const saved=mmSaveTicket(channel.id,t=>{t.mmOwner=why;t.mmStage="owner";if(!quiet)t.mmOwnerPingAt=now;});
   if(saved)refreshTicketCard(channel,saved).catch(()=>{});          // the ticket card's status row follows
-  const owners=CONFIG.OWNER_IDS;
+  const owners=[...new Set(CONFIG.OWNER_IDS)];                      // (v29: an id twice in a mention list gets the whole message refused by Discord, which is how this notice used to go missing)
   const embed=mmKE("warn").setTitle("Owner Middleman")
     .setDescription(`${kHero(dealOf(ticket).hero)}\n${text}\n\nA Konvert owner will act as the middleman for this exchange, right here in this ticket. **Don't send anything until an owner tells you to.**`)
     .setFooter(kFoot("Built-in server middleman bot")).setTimestamp();
@@ -2663,8 +2687,10 @@ async function mmOwnerFallback(channel,ticket,why,detail){
   const posted=await mmWithin(MM_NOTICE_MS,post(),false,`owner notice in #${channel.name}`);
   if(!quiet||!posted){
     const link=channel.guild?`https://discord.com/channels/${channel.guild.id}/${channel.id}`:null;
-    mmAlertOwners({embeds:[mmKE("warn").setTitle("Owner Middleman Needed").setDescription(`${kHero(dealOf(ticket).hero)}\n${text}\n<@${ticket.userId}> with <@${ticket.claimedBy}>${detail?`\n> ${String(detail).slice(0,200)}`:""}${posted?"":"\nThe notice could not be posted in the ticket, so nobody in it knows yet."}`).setTimestamp()],
-      components:link?[new ActionRowBuilder().addComponents(kLink("Open Ticket",link))]:[]});
+    const off=(why==="paused"||why==="frozen")?mmOffState():null;                 // (v30: when the cause is a switch, the owners are told which one, how to undo it, and get the button)
+    const row=new ActionRowBuilder();if(off)row.addComponents(mmOffButton(off));if(link)row.addComponents(kLink("Open Ticket",link));
+    mmAlertOwners({embeds:[mmKE("warn").setTitle("Owner Middleman Needed").setDescription(`${kHero(dealOf(ticket).hero)}\n${text}\n<@${ticket.userId}> with <@${ticket.claimedBy}>${detail?`\n> ${String(detail).slice(0,200)}`:""}${off?`\n\n${mmOffLines(off).join("\n")}`:""}${posted?"":"\nThe notice could not be posted in the ticket, so nobody in it knows yet."}`.slice(0,4000)).setTimestamp()],
+      components:row.components.length?[row]:[]});
   }
   console.log(`[mm] owner fallback #${channel.name}: ${why}${detail?` · ${String(detail).slice(0,120)}`:""}${posted?"":" · THE NOTICE COULD NOT BE POSTED"}`);
   log(channel.guild,`MM OWNER: #${channel.name} | ${why}${detail?" | "+String(detail).slice(0,120):""}`);
@@ -2712,7 +2738,8 @@ async function mmOpen(channel,ticket,opts){
   if(cur&&cur.state==="released")return {kind:"done",e:cur};          // already paid out: the exchange is finished
   const plan=mmPlan(ticket);
   let why=null,assets=[];
-  if(_mmMeta.paused)why="paused";
+  const off=mmOffState();                                            // (v30: a freeze keeps new deals away too, not only a pause)
+  if(off)why=off.why;
   else if(!plan.ok)why=plan.why;
   else if(plan.usd>_mmMeta.maxUsd)why="limit";
   else{
@@ -3099,7 +3126,8 @@ async function mmFlowStart(ch,ticket,by,tok){
     mmSaveTicket(ch.id,t=>{delete t.mmFlow;if(t.mmStage==="flow")t.mmStage=null;});
     ticket=mmTicketOf(ch.id)||ticket;delete ticket.mmFlow;
   }
-  if(_mmMeta.paused||_mmMeta.frozen)return mmOwnerFallback(ch,ticket,"paused");
+  const off=mmOffState();                                            // (v30: "frozen" and "paused" are told apart, because only one of them is undone by /mmadmin resume)
+  if(off)return mmOwnerFallback(ch,ticket,off.why);
   const plan=mmPlan(ticket);
   if(!plan.ok&&plan.why!=="amount")return mmOwnerFallback(ch,ticket,plan.why);       // an owner takes everything the bot does not hold (no claim yet, gifts, custom deals)
   const list=MM_V5()?await mmFundedList(ticket):mmPickList(ticket);
@@ -3423,7 +3451,14 @@ async function mmWatchNeed(ch,t,now){
   if(now-since>MM_WD_MAX_AGE_MS)return mmNo(ch,"claimed more than three days ago");
   if(t.mmStopped)return mmNo(ch,"the people ended the setup on purpose");
   if(t.reported)return mmNo(ch,"the ticket is flagged: an owner reviews it first");
-  if(t.mmOwner||t.mmStage==="owner")return mmNo(ch,`an owner has it (${t.mmOwner||"owner"})`);   // an owner notice is in the ticket (or the owners were told by DM)
+  if(t.mmOwner||t.mmStage==="owner"){                                              // an owner has it: the people must have been told. Only when the notice never reached the ticket is it put there again (older versions could lose it)
+    const why=t.mmOwner||"owner",label=`an owner has it (${why})`;
+    if(_mmStarting.has(ch.id)||t.mmFlow||t.mmId||mmActive(ch.id))return mmNo(ch,label);
+    if((why==="paused"||why==="frozen")&&!mmOffState())return mmNo(ch,`${label}: the bot's middleman was switched off when this was claimed and is on again, so an owner decides (type \`$mm\` here to start the bot's setup)`);
+    const posted=await mmPostedSinceClaim(ch,t);
+    if(posted===false)return {need:"owner-notice"};
+    return mmNo(ch,posted?label:`${label}: the message log could not be read`);
+  }
   if(_mmStarting.has(ch.id))return mmNo(ch,"a start attempt is running right now");
   const e=mmActive(ch.id);
   if(e){
@@ -3470,22 +3505,25 @@ async function mmWatchdog(force){
     let ok=false;
     try{
       if(need.need==="deal-card")ok=!!(await mmPostCard(ch,need.e,{fresh:true}));
+      else if(need.need==="owner-notice"){const r=await mmOwnerFallback(ch,t,t.mmOwner||"error","the owner notice never reached this ticket",{quiet:true});ok=!!(r&&r.posted);}      // (it DMs the owners itself when it still can't be posted)
       else{const r=await mmStartSafe(ch,t,t.claimedBy,"watchdog",{begin:true});ok=!!r&&["flow","shown","card","existing"].includes(r.kind);}
     }catch(err){console.error(`[mm] watchdog #${ch.name} failed: ${err&&err.message}`);}
     out.names.push(ch.name);
     if(ok){
       out.fixed++;
-      await mmSayTemp(ch,{tmp:MM_TMP_LONG_MS,content:`<@${t.userId}> <@${t.claimedBy}> ${need.need==="start"?"The middleman card did not show up when this ticket was claimed, so I started it now.":"The middleman card had gone missing from this ticket, so I put it back."} It is the card just above. Nothing was sent and nothing was lost.`,allowedMentions:{users:[t.userId,t.claimedBy]}}).catch(()=>{});
+      if(need.need!=="owner-notice")await mmSayTemp(ch,{tmp:MM_TMP_LONG_MS,content:`<@${t.userId}> <@${t.claimedBy}> ${need.need==="start"?"The middleman card did not show up when this ticket was claimed, so I started it now.":"The middleman card had gone missing from this ticket, so I put it back."} It is the card just above. Nothing was sent and nothing was lost.`,allowedMentions:{users:[t.userId,t.claimedBy]}}).catch(()=>{});
     }else out.failed++;
-    mmAlertOwners({content:`Middleman watchdog: #${ch.name} (${need.need}) ${ok?"was put right":"could NOT be put right"}. This should never be needed, so something went wrong earlier. The deploy log has the \`[mm] start\` lines.\nhttps://discord.com/channels/${g.id}/${ch.id}`});
+    if(need.need!=="owner-notice")mmAlertOwners({content:`Middleman watchdog: #${ch.name} (${need.need}) ${ok?"was put right":"could NOT be put right"}. This should never be needed, so something went wrong earlier. The deploy log has the \`[mm] start\` lines.\nhttps://discord.com/channels/${g.id}/${ch.id}`});
   }
   if(first)console.log(`[mm] watchdog running · looked at ${out.seen} ticket(s) the first time${out.names.length?` · acted on ${out.names.map(n=>"#"+n).join(", ")}`:""}`);
+  await mmOffReminder().catch(err=>console.error(`[mm] off reminder failed: ${err&&err.message}`));          // (v30: the owners hear it when the bot's middleman has been switched off for a while)
   return out;
 }
 // "$mm doctor": what the middleman knows about this ticket (or, outside a ticket, about the whole bot), for an owner
 async function mmDoctor(ch,t){
   const now=Date.now(),ago=ms=>ms?`${Math.max(0,Math.round((now-ms)/60000))} min ago`:"never",L=[];
-  L.push(`**Bot middleman:** ${_mmMeta.frozen?"FROZEN by an owner (new setups go to an owner)":_mmMeta.paused?"PAUSED (new setups go to an owner)":"on"}  ·  limit ${fmtUSD(_mmMeta.maxUsd)}  ·  version ${BOT_VERSION}`);
+  const off=mmOffState();
+  L.push(`**Bot middleman:** ${off?`OFF, every new setup goes to an owner: ${[off.frozen?`FROZEN by ${mmOffWho(off.frozen)}${mmOffSince(mmOffAt(off.frozen))} (\`/mmadmin resume\` does not lift it: \`$unfreeze\` or the button does)`:null,off.paused?`PAUSED${_mmMeta.pausedBy?` by <@${_mmMeta.pausedBy}>`:""}${mmOffSince(mmPausedAt())}`:null].filter(Boolean).join(" and ")}`:"on"}  ·  limit ${fmtUSD(_mmMeta.maxUsd)}  ·  version ${BOT_VERSION}`);
   let list=[];try{list=await mmFundedList(t||{});}catch(err){L.push(`The coin check failed: ${err&&err.message}`);}
   L.push(`**Coins on the picker right now:** ${list.length?list.map(mmPickName).join(", "):"NONE (every setup would go to an owner)"}`);
   if(t){
@@ -3506,6 +3544,7 @@ async function mmDoctor(ch,t){
   }else{
     const r=await mmWatchdog(true).catch(err=>({seen:0,fixed:0,failed:0,names:[],err:err&&err.message}));
     L.push("",`**Watchdog just ran:** looked at ${r.seen} ticket(s), put right ${r.fixed}${r.failed?`, could not put right ${r.failed}`:""}${r.names.length?` (${r.names.map(n=>"#"+n).join(", ")})`:""}${r.err?`. Error: ${r.err}`:""}`);
+    const wl=mmWaiting();if(wl.length)L.push("",mmWaitingText(wl));                      // (v30: the tickets that were sent to an owner while it was off)
   }
   return L.join("\n").slice(0,3900);
 }
@@ -3859,6 +3898,84 @@ async function mmFreezeRun(sub,arg,uid){
   }
   const d=await mmDealsReport();
   return {id,on:sub==="freeze",count:d.count,text:d.text};
+}
+// ── v30: why the bot's middleman is off, said exactly, and one tap to turn it back on ─────────────────────────────────────────────
+// Two different switches keep new exchanges away from the built-in middleman: "/mmadmin pause" (new exchanges only) and "$freeze" (new exchanges AND every release, refund and
+// cancel). "/mmadmin resume" only ever undid the pause, so a freeze that stayed on kept every new exchange with an owner while the owners believed it was on again, and every
+// notice just said "paused". Now the notices, the owner DMs, "/mmadmin status", "$unfreeze" and "$mm doctor" say which switch it is and how to undo it, an owner gets one button
+// for it (a freeze also holds back money, so it is never lifted by itself and an old button never lifts a newer freeze), and the owners are reminded every 12 hours while
+// something is still off. The tickets that were handed to an owner only because of it are listed, and are never started behind an owner's back.
+function mmOffState(){
+  const f=_mmMeta.frozen||null,p=!!_mmMeta.paused;
+  return (f||p)?{frozen:f,paused:p,why:f?"frozen":"paused"}:null;
+}
+const mmOffAt=x=>(x&&typeof x==="object"&&Number(x.at)>0)?Number(x.at):0;                // (a freeze is {by,at}; anything else is read as "an owner, some time ago")
+const mmOffWho=x=>(x&&typeof x==="object"&&x.by)?`<@${x.by}>`:"an owner";
+const mmOffSince=at=>at>0?` <t:${Math.floor(at/1000)}:R>`:"";
+const mmPausedAt=()=>Number(_mmMeta.pausedAt)>0?Number(_mmMeta.pausedAt):0;
+function mmOffLines(off){
+  const L=[];
+  if(off.frozen)L.push(`**FROZEN** by ${mmOffWho(off.frozen)}${mmOffSince(mmOffAt(off.frozen))}. New exchanges go to an owner, and releases, refunds and cancels are stopped too. \`/mmadmin resume\` does NOT lift a freeze: press **Turn it back on**, or type \`$unfreeze\`.`);
+  if(off.paused)L.push(`**PAUSED**${_mmMeta.pausedBy?` by <@${_mmMeta.pausedBy}>`:""}${mmOffSince(mmPausedAt())}. New exchanges go to an owner, deals already open carry on. Press **Turn it back on**, or use \`/mmadmin resume\`.`);
+  return L;
+}
+const mmOffStamp=off=>off.frozen?String(mmOffAt(off.frozen)||1):"0";           // (the button carries the freeze it was made for)
+function mmOffButton(off){return kBtn(`mm_thaw__${mmOffStamp(off)}`,"Turn it back on",ButtonStyle.Success);}
+const mmOffRows=off=>off?[new ActionRowBuilder().addComponents(mmOffButton(off))]:[];
+// The tickets whose exchange was handed to an owner only because the bot's middleman was off, and that nobody has started since
+function mmWaiting(){
+  const all=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets"),now=Date.now(),out=[];
+  for(const [id,t] of Object.entries(all||{})){
+    if(!t||t.status!=="open"||!t.claimedBy)continue;
+    if(t.mmOwner!=="paused"&&t.mmOwner!=="frozen")continue;
+    if(t.mmFlow||t.mmId||t.mmStopped||t.reported||mmActive(id)||_mmStarting.has(id))continue;
+    if(now-(t.claimedAt||0)>MM_WD_MAX_AGE_MS)continue;
+    out.push({id,t});
+  }
+  return out.sort((a,b)=>(a.t.claimedAt||0)-(b.t.claimedAt||0));
+}
+function mmWaitingText(list){
+  if(!list.length)return "No ticket is waiting for the bot's middleman.";
+  const rows=list.slice(0,12).map(({id,t})=>`<#${id}> · claimed${mmOffSince(t.claimedAt||Date.now())} · <@${t.userId}> with <@${t.claimedBy}>`);
+  return `**Waiting for the bot's middleman (${list.length})**\n${rows.join("\n")}${list.length>12?`\n…and ${list.length-12} more`:""}\nType \`$mm\` in one of them to start the bot's middleman there. Nothing is started by itself: an owner may already be handling some of these by hand.`;
+}
+// What is off, how to undo it, and who is waiting (the DM, the status and the doctor use this)
+function mmOffPanel(off,note){
+  return {embeds:[mmKE("warn").setTitle("The Bot's Middleman Is Off").setDescription([...(note?[note,""]:[]),...mmOffLines(off),"",mmWaitingText(mmWaiting())].join("\n").slice(0,4000)).setTimestamp()],components:mmOffRows(off)};
+}
+// Turns it back on: the freeze (through the same code as "$unfreeze") and the pause. It returns what it lifted.
+async function mmThawRun(uid){
+  const lifted=[];
+  if(_mmMeta.frozen){await mmFreezeRun("unfreeze",null,uid);lifted.push("freeze");}
+  if(_mmMeta.paused){_mmMeta.paused=false;delete _mmMeta.pausedAt;delete _mmMeta.pausedBy;await mmSaveMeta();lifted.push("pause");}
+  console.log(`[mm] turn it back on by ${uid}: ${lifted.length?`lifted the ${lifted.join(" and the ")}`:"nothing was off"}`);
+  log(client.guilds.cache.get(CONFIG.GUILD_ID),`MM TURNED BACK ON by ${uid} | ${lifted.length?"lifted: "+lifted.join(", "):"nothing was off"}`);
+  return lifted;
+}
+// The "Turn it back on" button (owners only, a DM or a server): it only acts when it was made for the state that is on now
+async function mmThawButton(interaction,stamp){
+  const uid=interaction.user.id;
+  await interaction.deferUpdate().catch(()=>{});
+  const off=mmOffState(),edit=p=>interaction.editReply(p).catch(()=>interaction.followUp({...p,flags:64}).catch(()=>{}));
+  if(!off)return edit({embeds:[mmKE("ok").setTitle("Middleman Is On").setDescription(`It was already on again, so nothing was changed.\n\n${mmWaitingText(mmWaiting())}`).setTimestamp()],components:[]});
+  if(String(stamp)!==mmOffStamp(off))return edit(mmOffPanel(off,"That button was made for an earlier state, so **nothing was changed**. This is what is on now:"));
+  const lifted=await mmThawRun(uid);
+  const what=lifted.map(x=>x==="freeze"?"the **freeze** (releases, refunds and cancels work again)":"the **pause**").join(" and ");
+  return edit({embeds:[mmKE("ok").setTitle("Middleman Is On").setDescription(`<@${uid}> lifted ${what}. New exchanges go to the bot's middleman again.\n\n${mmWaitingText(mmWaiting())}`.slice(0,4000)).setTimestamp()],components:[]});
+}
+// Every 12 hours while something is off (and it has been off for half an hour), the owners are told, with the button. Nothing else would tell them: the people in the tickets are told by the notice, the owners only by this.
+const MM_OFF_NAG_MS=12*60*60*1000,MM_OFF_MIN_MS=30*60*1000;
+async function mmOffReminder(){
+  const off=mmOffState();
+  if(!off){if(_mmMeta.offNagAt){delete _mmMeta.offNagAt;await mmSaveMeta();}return null;}      // (back on: the next time it goes off, the first reminder is not held back)
+  const now=Date.now(),ats=[mmOffAt(off.frozen),off.paused?mmPausedAt():0].filter(Boolean),since=ats.length?Math.min(...ats):0;
+  if(since&&now-since<MM_OFF_MIN_MS)return null;
+  if(now-(_mmMeta.offNagAt||0)<MM_OFF_NAG_MS)return null;
+  _mmMeta.offNagAt=now;await mmSaveMeta();
+  const waiting=mmWaiting();
+  console.log(`[mm] reminder to the owners: the bot's middleman is ${[off.frozen?"FROZEN":null,off.paused?"PAUSED":null].filter(Boolean).join(" and ")}${since?` since ${new Date(since).toISOString()}`:""} · ${waiting.length} ticket(s) waiting`);
+  mmAlertOwners(mmOffPanel(off,"**The built-in middleman is switched off, so every new exchange is going to an owner.** This is a reminder, sent every 12 hours while it stays off."));
+  return {off,waiting:waiting.length};
 }
 // ── $gas (owners): one private channel that lists every middleman wallet that needs gas, and closes itself when they are all funded ──
 const MM_GAS_PLAN=[{chain:"sol",coin:"SOL",dec:9,low:0.02,send:0.05,name:"Solana"},{chain:"eth",coin:"ETH",dec:18,low:0.003,send:0.01,name:"Ethereum"},{chain:"bsc",coin:"BNB",dec:18,low:0.005,send:0.01,name:"BNB Chain"}];
@@ -6293,6 +6410,10 @@ async function mmRoute(interaction,cid){
     need(isOwner(interaction.user.id,interaction.member),"Only an owner can do that.");
     return mmGasButton(interaction,parts);
   }       // v19: the steps of the setup in the ticket
+  if(head==="mm_thaw"){                                             // v30: "Turn it back on" (owners only, a DM or a server): lifts what keeps new exchanges away from the bot's middleman
+    need(isOwner(interaction.user.id,interaction.member),"Only an owner can do that.");
+    return mmThawButton(interaction,parts[1]);
+  }
   // ── v25: the owner check: Continue (after three seconds) or Cancel ──
   if(head==="mm_ow"){
     const what=parts[1],nonce=parts[2],uid=interaction.user.id,ask=_mmOwnerAsk.get(nonce);
@@ -6875,7 +6996,9 @@ async function mmGlobalCommand(message,ticket){
   try{
     if(sub==="freeze"||sub==="unfreeze"){
       const r=await mmFreezeRun(sub,sp[0],uid);
-      return await dm({embeds:[mmKE(r.on?"warn":"ok").setTitle(`${r.id||"Middleman"} ${r.on?"Frozen":"Unfrozen"}`).setDescription((r.on?`Releases, refunds, cancels and new deals are stopped${r.id?` for ${r.id}`:""}. Deposits are still seen. A payout that was already sent can't be recalled.\n\nOpen deals (${r.count}):\n${r.text}\n\nTo release or refund one deal while frozen, type \`$mm release\` or \`$mm refund\` in its ticket. \`$unfreeze\` turns everything back on.`:"Everything works again.").slice(0,4000)).setTimestamp()]}),true;
+      const whole=!r.id,offNow=mmOffState();                                // (v30: the answer says what is still off, and who is waiting, so "it is on again" is never said while a pause is still on)
+      const back=r.id?`${r.id} works again.`:(offNow?`The freeze is off, **but the middleman is still off**, so every new exchange still goes to an owner:\n${mmOffLines(offNow).join("\n")}`:"Everything works again. New exchanges go to the bot's middleman again.");
+      return await dm({embeds:[mmKE(r.on?"warn":offNow&&whole?"warn":"ok").setTitle(`${r.id||"Middleman"} ${r.on?"Frozen":"Unfrozen"}`).setDescription((r.on?`Releases, refunds, cancels and new deals are stopped${r.id?` for ${r.id}`:""}. Deposits are still seen. A payout that was already sent can't be recalled.${whole?" New exchanges go to an owner while it is frozen, and the people in them are told it is switched off. `/mmadmin resume` does not lift a freeze: `$unfreeze` does.":""}\n\nOpen deals (${r.count}):\n${r.text}\n\nTo release or refund one deal while frozen, type \`$mm release\` or \`$mm refund\` in its ticket. \`$unfreeze\` turns everything back on.`:`${back}${whole?`\n\n${mmWaitingText(mmWaiting())}`:""}`).slice(0,4000)).setTimestamp()],components:(!r.on&&whole)?mmOffRows(offNow):[]}),true;
     }
     if(sub==="gas"){
       const ch=await mmGasRun(message);
@@ -6901,7 +7024,7 @@ async function mmGlobalCommand(message,ticket){
     }
     if(sub==="doctor"){                                               // v29: what the middleman knows about this ticket (or the whole bot), and the last start attempts; outside a ticket it also runs the watchdog now
       const text=await mmDoctor(ticket?message.channel:null,ticket||null);
-      return await dm({embeds:[mmKE("brand").setTitle("Middleman Check").setDescription(text)]}),true;
+      return await dm({embeds:[mmKE("brand").setTitle("Middleman Check").setDescription(text)],components:mmOffRows(mmOffState())}),true;
     }
     if(sub==="secure"){                                               // v28: can members still run apps they installed themselves in a ticket? (read-only)
       const r=await mmSecureReport();
@@ -6976,7 +7099,7 @@ async function mmSelfCheck(opts){
   }
   return lines;
 }
-const MM_ADMIN_ACTIONS=[["status","Status and open deals"],["wallet","Wallet balances, reserved and free (value: btc <address> to set one)"],["deals","Every open deal with its state, amount and age"],["history","Full event log of a deal (value: its ID, like MM-0003)"],["send","Force a deal's payout (value: deal address)"],["sweep","Send the unreserved balance out (value: chain address)"],["close","Close a stale deal that holds nothing (value: deal, then confirm)"],["reconcile","Check the wallet against the deals now"],["limit","Largest deal the bot holds (value: dollars)"],["pause","Pause: every deal goes to an owner"],["resume","Resume"],["deal","Controls for one deal (value: its ID, like MM-0001)"],["check","Read a transaction (value: network coin txid)"],["test","Test the networks and the wallet"],["backup","Show the keys of the bot's own wallet"]];
+const MM_ADMIN_ACTIONS=[["status","Status and open deals"],["wallet","Wallet balances, reserved and free (value: btc <address> to set one)"],["deals","Every open deal with its state, amount and age"],["history","Full event log of a deal (value: its ID, like MM-0003)"],["send","Force a deal's payout (value: deal address)"],["sweep","Send the unreserved balance out (value: chain address)"],["close","Close a stale deal that holds nothing (value: deal, then confirm)"],["reconcile","Check the wallet against the deals now"],["limit","Largest deal the bot holds (value: dollars)"],["pause","Pause: every new deal goes to an owner"],["resume","Resume (says so if a $freeze is still on, with a button for it)"],["deal","Controls for one deal (value: its ID, like MM-0001)"],["check","Read a transaction (value: network coin txid)"],["test","Test the networks and the wallet"],["backup","Show the keys of the bot's own wallet"]];
 async function mmAdmin(interaction){
   const action=interaction.options.getString("action")||"status",value=String(interaction.options.getString("value")||"").trim(),uid=interaction.user.id;
   await interaction.deferReply({flags:64});
@@ -6985,8 +7108,10 @@ async function mmAdmin(interaction){
   if(action==="status"){
     const open=(await MMDB.list("e:")).map(([,e])=>e),w=mmWallets();
     const rows=open.slice(0,20).map(e=>`**${e.id}**  ·  ${MM_TITLE[e.state]||e.state}${e.dispute?" (dispute)":""}  ·  ${e.gotRaw?mmAmt(e,e.gotRaw):fmtUSD(e.usd)+" "+e.coin}  ·  ${e.channelId?`<#${e.channelId}>`:(e.kind||"owner action")}`);
+    const off=mmOffState(),waiting=mmWaiting();                          // (v30: a freeze is shown as what it is, with the button, and the tickets waiting behind it)
     return done("Middleman Status",[
-      `**Built-in server middleman bot**  ${_mmMeta.paused?"paused (every deal goes to an owner)":"on"}`,
+      `**Built-in server middleman bot**  ${off?"OFF (every new exchange goes to an owner)":"on"}`,
+      ...(off?mmOffLines(off):[]),
       `**Largest deal held by the bot**  ${fmtUSD(_mmMeta.maxUsd)}`,
       `**Ethereum-family wallet**  ${w.evm[0]?`\`${w.evm[0].address}\` (${srcText(w.evm[0])})`:"none"}`,
       `**Solana wallet**  ${w.sol[0]?`\`${w.sol[0].address}\` (${srcText(w.sol[0])})`:"none"}`,
@@ -6994,7 +7119,8 @@ async function mmAdmin(interaction){
       `**Litecoin address**  ${_mmMeta.watch.ltc?`\`${_mmMeta.watch.ltc}\` (you release by hand)`:"not set"}`,
       ...(w.problems.length?[`**Problems**  ${w.problems.join("; ")}`]:[]),
       "",`**Open deals (${open.length})**`,rows.length?rows.join("\n"):"None.",
-    ].join("\n"));
+      ...(waiting.length?["",mmWaitingText(waiting)]:[]),
+    ].join("\n"),off?{components:mmOffRows(off)}:undefined);
   }
   if(action==="wallet"){
     if(value){
@@ -7049,8 +7175,14 @@ async function mmAdmin(interaction){
     return done("Limit",`The built-in server middleman bot now holds deals up to **${fmtUSD(_mmMeta.maxUsd)}**. Bigger ones go to an owner.`);
   }
   if(action==="pause"||action==="resume"){
-    _mmMeta.paused=action==="pause";await mmSaveMeta();
-    return done("Middleman",_mmMeta.paused?"Paused. New middleman deals go to an owner. Deals already open carry on.":"Resumed. The bot holds new middleman deals again.");
+    _mmMeta.paused=action==="pause";
+    if(_mmMeta.paused){_mmMeta.pausedAt=Date.now();_mmMeta.pausedBy=uid;}else{delete _mmMeta.pausedAt;delete _mmMeta.pausedBy;}
+    await mmSaveMeta();
+    const off=mmOffState(),waiting=mmWaiting();
+    if(_mmMeta.paused)return done("Middleman Paused",`Paused. New middleman deals go to an owner. Deals already open carry on.${off.frozen?`\n\nIt is also frozen:\n${mmOffLines({...off,paused:false}).join("\n")}`:""}`,off.frozen?{components:mmOffRows(off)}:undefined);
+    // v30: "resume" only ever lifted the pause. A freeze that is still on keeps every new exchange with an owner, so the answer says so and gives the button (a freeze is never lifted from here by itself)
+    if(off)return done("Middleman Still Off",["The pause is lifted, **but the middleman is still off**, so every new exchange still goes to an owner:","",...mmOffLines(off),...(waiting.length?["",mmWaitingText(waiting)]:[])].join("\n"),{components:mmOffRows(off)});
+    return done("Middleman",`Resumed. The bot holds new middleman deals again.${waiting.length?`\n\n${mmWaitingText(waiting)}`:""}`);
   }
   if(action==="deal"){
     const e=await mmFresh(value.toUpperCase());
@@ -7296,6 +7428,9 @@ function buildClaimEmbed(ticket,mode){
   if(mode==="mmAuto")return kEmbed("Ticket","warn").setTitle("Middleman Required")
     .setDescription(`${hero}\n<@${cl}>, your ticket was claimed by <@${ex}>.\n\n${methodNote(ticket)}${why}\n\n**Do not go first.** The built-in server middleman bot holds the crypto. Send nothing to <@${ex}> until its card says **Funds Secured**.\n\nIt starts now \u2014 follow its card below.`)
     .setFooter(kFoot("Required  \u00b7  starts automatically")).setTimestamp();
+  if(mode==="mmPaused")return kEmbed("Ticket","warn").setTitle("Middleman Required")                        // (v29: the bot's middleman is paused by an owner: the card says so instead of promising a card that will not come)
+    .setDescription(`${hero}\n<@${cl}>, your ticket was claimed by <@${ex}>.\n\n${methodNote(ticket)}${why}\n\n**Do not go first.** The built-in server middleman bot is switched off for the moment, so a Konvert owner will act as the middleman here. Send nothing to <@${ex}> until the owner says so.`)
+    .setFooter(kFoot("Required  \u00b7  an owner takes this one")).setTimestamp();
   return kEmbed("Ticket","warn").setTitle("Middleman Required")
     .setDescription(`${hero}\n<@${cl}>, your ticket was claimed by <@${ex}>.\n\n${methodNote(ticket)}${why}\n\n**Do not go first.** The built-in server middleman bot will hold the crypto. Send nothing to <@${ex}> until its card says **Funds Secured**.\n\n<@${cl}>, press **Confirm Middleman** to start it.`)
     .setFooter(kFoot("Exchanger confirmed  \u00b7  waiting for the client")).setTimestamp();
@@ -7460,8 +7595,8 @@ async function claimTicket(interaction,opts={}){
 
   const payload={
     content:`<@${interaction.user.id}> <@${ticket.userId}>`,
-    embeds:[buildClaimEmbed(ticket,needsMm?(MM_AUTO?"mmAuto":"mmPending"):(owner?"owner":"normal"))],
-    allowedMentions:{users:[interaction.user.id,ticket.userId]}
+    embeds:[buildClaimEmbed(ticket,needsMm?(MM_AUTO?(mmOffState()?"mmPaused":"mmAuto"):"mmPending"):(owner?"owner":"normal"))],
+    allowedMentions:{users:[...new Set([interaction.user.id,ticket.userId])]}
   };
   if(needsMm)payload.components=MM_AUTO?[]:[mmConfirmRow()];
   else payload.components=[new ActionRowBuilder().addComponents(kBtn("mm_start","Use Middleman",ButtonStyle.Secondary))];     // the client or the exchanger (an owner too) can ask for the built-in middleman any time
@@ -7476,7 +7611,7 @@ async function claimTicket(interaction,opts={}){
     if(!needsMm)await mmBegin(ch,ticket,ticket.userId,"claim (we need mm)");
   }
   const via=chosen?` through ${methodLabel(chosen)}`:"";
-  const autoNote=(needsMm&&MM_AUTO)?`You claimed this ticket${via}. ${warnText} The middleman starts now \u2014 follow its card in the ticket.`:null;     // only the exchanger sees this
+  const autoNote=(needsMm&&MM_AUTO)?`You claimed this ticket${via}. ${warnText} ${mmOffState()?"The built-in middleman is switched off for the moment, so an owner will act as the middleman here. Wait for the owner's message in the ticket.":"The middleman starts now \u2014 follow its card in the ticket."}`:null;     // only the exchanger sees this
   if(fromEphemeral)await interaction.editReply({content:autoNote||(needsMm?`You claimed this ticket${via}. Waiting for the client to confirm the middleman.`:`You claimed this ticket${via}.`),embeds:[],components:[]}).catch(()=>{});
   else if(autoNote)await interaction.followUp({content:autoNote,flags:64}).catch(()=>{});
   log(interaction.guild,`CLAIM: #${ch.name} | ${interaction.user.tag} | client <@${ticket.userId}> | ${needsMm?"MIDDLEMAN":owner?"OWNER":"limit "+describeLimit(ticket.claimLimit).limitText}${chosen?" | "+methodLabel(chosen):""}`);
