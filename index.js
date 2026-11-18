@@ -22,7 +22,7 @@ const { Pool } = require("pg");
 
 // Which build is running. Shown at the bottom of /ping and printed in the logs, so a deploy that did not go through is easy to spot.
 // BOT_BUILD is the first 7 characters of the commit Railway built (it matches the commit on GitHub); it is blank when run anywhere else.
-const BOT_VERSION="v28";
+const BOT_VERSION="v29";
 const BOT_BUILD=String(process.env.RAILWAY_GIT_COMMIT_SHA||"").slice(0,7);
 const BUILD_TEXT=BOT_BUILD?`${BOT_VERSION}  ·  ${BOT_BUILD}`:BOT_VERSION;
 
@@ -889,7 +889,18 @@ const MM_ASSETS=[
 
 const mmAssetKey=a=>`${a.chain}:${a.contract||"native"}`;
 const mmAsset=(coin,chain)=>MM_ASSETS.find(a=>a.coin===coin&&a.chain===chain)||null;
-const mmCoinOf=c=>{const s=String(c||"").trim().toUpperCase();return CANON[s]||s;};
+// The coins a ticket was opened for. People type that field any way they like ("SOL LTC", "sol/ltc", "usdt (bsc)"): every coin the bot knows is picked out, in the order written.
+// (v29: "SOL LTC" used to be read as one coin called "SOL LTC", which matched nothing.)
+const MM_COIN_WORDS=new Set(["BTC","LTC","ETH","SOL","BNB","POL","AVAX","USDT","USDC"]);
+function mmCoinsOf(c){
+  const s=String(c||"").trim().toUpperCase();
+  if(!s)return [];
+  if(CANON[s])return [CANON[s]];
+  const out=[];
+  for(const w of s.split(/[^A-Z0-9]+/).filter(Boolean)){const k=CANON[w]||w;if((MM_COIN_WORDS.has(k)||MM_ASSETS.some(a=>a.coin===k))&&!out.includes(k))out.push(k);}
+  return out.length?out:[s];
+}
+const mmCoinOf=c=>mmCoinsOf(c)[0]||"";
 const mmNetLabel=a=>a.contract?`${MM_CHAINS[a.chain].name} (${MM_CHAINS[a.chain].short})`:MM_CHAINS[a.chain].name;
 const MM_TRANSFER_TOPIC="0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
@@ -1692,7 +1703,7 @@ async function mmBeforeClose(channel,ownerLike){
   mmSaveTicket(channel.id,t=>{if(t.mmId===e.id)t.mmStage=null;});
   return null;
 }
-const mmResetTicket=t=>{delete t.mmId;delete t.mmStage;delete t.mmFlow;delete t.mmOwner;delete t.mmOwnerPingAt;};
+const mmResetTicket=t=>{delete t.mmId;delete t.mmStage;delete t.mmFlow;delete t.mmOwner;delete t.mmOwnerPingAt;delete t.mmStopped;};
 // Why a ticket can't be marked complete right now, or null. It answers at once (no waiting), so a caller can use it before its first await.
 // Funds still held always stop it; a card that is waiting for a deposit stops it for everyone except an owner; a refunded deal can't be "completed".
 function mmCompleteBlock(channelId,ownerLike){
@@ -1978,14 +1989,16 @@ function mmLgWatch(i){
   }catch{}
 }
 async function mmLgPrune(){
-  const cutoff=Date.now()-MM_LG_KEEP_MS;
+  const cutoff=Date.now()-MM_LG_KEEP_MS,stCut=Date.now()-14*24*60*60*1000;                  // (v29: the start-attempt notes of "$mm doctor" ("st:") are kept two weeks)
   if(pgPool){
-    const like=(MM_PREFIX+"lg:").replace(/[\\%_]/g,"\\$&")+"%";
+    const like=(MM_PREFIX+"lg:").replace(/[\\%_]/g,"\\$&")+"%",likeSt=(MM_PREFIX+"st:").replace(/[\\%_]/g,"\\$&")+"%";
     const r=await pgPool.query("DELETE FROM kv_store WHERE key LIKE $1 AND updated_at<$2",[like,new Date(cutoff)]);
+    await pgPool.query("DELETE FROM kv_store WHERE key LIKE $1 AND updated_at<$2",[likeSt,new Date(stCut)]).catch(()=>{});
     return r.rowCount;
   }
   let n=0;
   for(const [k,v] of await MMDB.list("lg:"))if(v&&v.at<cutoff){await MMDB.del(k);n++;}
+  for(const [k,v] of await MMDB.list("st:"))if(Array.isArray(v)&&v.length&&v[v.length-1].at<stCut)await MMDB.del(k);
   return n;
 }
 function mmLgStart(){
@@ -2630,6 +2643,7 @@ async function mmForensics2(){
 // ── end of the v28 case file 2 ──
 
 // An owner steps in as the middleman (anything the bot does not or cannot hold). Owners are pinged in the ticket and by DM, at most once every ten minutes.
+const MM_NOTICE_MS=25*1000;
 async function mmOwnerFallback(channel,ticket,why,detail){
   const text=why==="limit"?`This exchange is above the built-in server middleman bot's **${fmtUSD(_mmMeta.maxUsd)}** limit.`:(MM_OWNER_WHY[why]||MM_OWNER_WHY.error);
   const now=Date.now(),quiet=ticket.mmOwnerPingAt&&now-ticket.mmOwnerPingAt<10*60*1000;
@@ -2639,14 +2653,22 @@ async function mmOwnerFallback(channel,ticket,why,detail){
   const embed=mmKE("warn").setTitle("Owner Middleman")
     .setDescription(`${kHero(dealOf(ticket).hero)}\n${text}\n\nA Konvert owner will act as the middleman for this exchange, right here in this ticket. **Don't send anything until an owner tells you to.**`)
     .setFooter(kFoot("Built-in server middleman bot")).setTimestamp();
-  await channel.send({content:quiet?undefined:owners.map(id=>`<@${id}>`).join(" "),embeds:[embed],allowedMentions:{users:quiet?[]:owners}}).catch(()=>{});
-  if(!quiet){
+  // v29: the notice is the one thing that must reach the ticket, so a failed post is logged and tried again as plain text, the whole of it is cut off after MM_NOTICE_MS (a channel
+  // that never answers can't hold the owners' DM back), and the owners are told by DM whatever the ten-minute limit says when it did not get through
+  const post=async()=>{
+    let ok=!!(await channel.send({content:quiet?undefined:owners.map(id=>`<@${id}>`).join(" "),embeds:[embed],allowedMentions:{users:quiet?[]:owners}}).catch(err=>{console.error(`[mm] owner notice in #${channel.name} could not be posted: ${err&&err.message}`);return null;}));
+    if(!ok)ok=!!(await channel.send({content:`Owner middleman. ${String(text).replace(/\*\*/g,"")} A Konvert owner will act as the middleman for this exchange, right here in this ticket. Don't send anything until an owner tells you to.`,allowedMentions:{parse:[]}}).catch(err=>{console.error(`[mm] owner notice (plain text) in #${channel.name} could not be posted: ${err&&err.message}`);return null;}));
+    return ok;
+  };
+  const posted=await mmWithin(MM_NOTICE_MS,post(),false,`owner notice in #${channel.name}`);
+  if(!quiet||!posted){
     const link=channel.guild?`https://discord.com/channels/${channel.guild.id}/${channel.id}`:null;
-    mmAlertOwners({embeds:[mmKE("warn").setTitle("Owner Middleman Needed").setDescription(`${kHero(dealOf(ticket).hero)}\n${text}\n<@${ticket.userId}> with <@${ticket.claimedBy}>${detail?`\n> ${String(detail).slice(0,200)}`:""}`).setTimestamp()],
+    mmAlertOwners({embeds:[mmKE("warn").setTitle("Owner Middleman Needed").setDescription(`${kHero(dealOf(ticket).hero)}\n${text}\n<@${ticket.userId}> with <@${ticket.claimedBy}>${detail?`\n> ${String(detail).slice(0,200)}`:""}${posted?"":"\nThe notice could not be posted in the ticket, so nobody in it knows yet."}`).setTimestamp()],
       components:link?[new ActionRowBuilder().addComponents(kLink("Open Ticket",link))]:[]});
   }
+  console.log(`[mm] owner fallback #${channel.name}: ${why}${detail?` · ${String(detail).slice(0,120)}`:""}${posted?"":" · THE NOTICE COULD NOT BE POSTED"}`);
   log(channel.guild,`MM OWNER: #${channel.name} | ${why}${detail?" | "+String(detail).slice(0,120):""}`);
-  return {kind:"owner",why};
+  return {kind:"owner",why,detail:detail?String(detail).slice(0,200):null,posted};
 }
 
 // Starts (or shows again) the middleman on a ticket
@@ -2686,7 +2708,7 @@ function mmShortError(job,have,need,owed){
 async function mmOpen(channel,ticket,opts){
   opts=opts||{};
   const cur=ticket.mmId?await mmGet(ticket.mmId):null;
-  if(cur&&!MM_TERMINAL.has(cur.state)){await mmPostCard(channel,cur,{fresh:true});return {kind:"existing",e:cur};}
+  if(cur&&!MM_TERMINAL.has(cur.state)){const c=await mmPostCard(channel,cur,{fresh:true});return c?{kind:"existing",e:cur}:{kind:"failed",e:cur,why:"the middleman card could not be posted"};}
   if(cur&&cur.state==="released")return {kind:"done",e:cur};          // already paid out: the exchange is finished
   const plan=mmPlan(ticket);
   let why=null,assets=[];
@@ -2715,9 +2737,10 @@ async function mmOpen(channel,ticket,opts){
   mmSaveTicket(channel.id,t=>{t.mmId=e.id;t.mmStage="net";delete t.mmOwner;delete t.mmAsk;});
   let note=null;
   if(assets.length===1){try{e=await mmArm(e.id,assets[0].chain);}catch(err){note=err instanceof MmError?err.message:"That network could not be prepared right now. Nothing was sent and nothing is lost.";if(!(err instanceof MmError))console.error("[mm] arm failed:",err.message);}}
-  await mmPostCard(channel,e,{fresh:true,note});
+  const card=await mmPostCard(channel,e,{fresh:true,note});
   mmStage(e);
   log(channel.guild,`MM OPEN: #${channel.name} | ${e.id} | ${fmtUSD(e.usd)} ${e.coin} | depositor ${e.depositorId} | recipient ${e.recipientId}`);
+  if(!card)return {kind:"failed",e,why:"the middleman card could not be posted"};      // (v29: the deal exists, so the next try, or the watchdog, only has to put its card back)
   return {kind:"card",e};
 }
 // Fixes the network, the address and the amount to send (again, from a fresh price, for "Refresh Amount"). Not possible once a deposit has been seen.
@@ -2808,10 +2831,10 @@ const MM_PICK_CARD=["SOL:sol","ETH:eth","BNB:bsc","BTC:btc","LTC:ltc","USDT:bsc"
 // The list for one ticket: the coin the ticket was opened for first (marked "This ticket"), then the rest
 function mmPickList(ticket){
   const have=new Map(MM_ASSETS.filter(a=>!!mmDepositAddress(a.chain)).map(a=>[a.coin+":"+a.chain,a]));
-  const mine=ticket&&ticket.coin?mmCoinOf(ticket.coin):null;
+  const mine=new Set(ticket&&ticket.coin?mmCoinsOf(ticket.coin):[]);      // v29: every coin the ticket names ("SOL LTC" = both)
   const keys=MM_PICK_FULL.filter(k=>have.has(k));
-  const fl=k=>({...have.get(k),key:k,mine:have.get(k).coin===mine});
-  return [...keys.filter(k=>have.get(k).coin===mine),...keys.filter(k=>have.get(k).coin!==mine)].map(fl);
+  const fl=k=>({...have.get(k),key:k,mine:mine.has(have.get(k).coin)});
+  return [...keys.filter(k=>mine.has(have.get(k).coin)),...keys.filter(k=>!mine.has(have.get(k).coin))].map(fl);
 }
 function mmPickSelect(list){
   const opts=list.slice(0,25).map(a=>new StringSelectMenuOptionBuilder().setLabel(mmPickName(a)).setValue(a.coin+":"+a.chain)
@@ -2836,7 +2859,7 @@ function mmPickV2(ticket,given){
 function mmPickMenu(ticket,given){
   const emb=mmKE("brand").setTitle("Konvert Middleman  ·  Secure Escrow")
     .setDescription("Free automated middleman for your exchange.\nPick the coin and the network you both agreed on. Double check the network.").setFooter(kFoot("Built-in server middleman bot"));
-  return {embeds:[emb],components:[new ActionRowBuilder().addComponents(mmPickSelect(mmPickList(ticket)))]};
+  return {embeds:[emb],components:[new ActionRowBuilder().addComponents(mmPickSelect(given||mmPickList(ticket)))]};      // v29: the menu offers the same coins as the card (it used to offer every coin, funded or not)
 }
 // What the picker turns into once a coin is chosen (no buttons left on it)
 function mmPickDone(t,v2){
@@ -2844,15 +2867,30 @@ function mmPickDone(t,v2){
   if(v2)return {flags:32768,components:[{type:17,accent_color:UI.brand,components:[{type:10,content:MM_V5()?`## Coin Selected\n${line}\n-# Konvert`:`## Konvert Middleman  ·  Secure Escrow\n${line}`}]}]};
   return {content:null,embeds:[mmKE("brand").setTitle("Konvert Middleman  ·  Secure Escrow").setDescription(line).setFooter(kFoot("Built-in server middleman bot"))],components:[]};
 }
-async function mmPickPost(ch,t){
+async function mmPickPost(ch,t,given){
   let msg=null,v2=false;
-  const list=MM_V5()?await mmFundedList(t):mmPickList(t);
+  const list=given||(MM_V5()?await mmFundedList(t):mmPickList(t));
   if(MM_PICK_V2){
     try{msg=await ch.send({...mmPickV2(t,list),allowedMentions:{parse:[]}});v2=!!msg;}
     catch(err){console.warn("[mm] the coin card was refused, using the menu:",err.message);msg=null;}
   }
-  if(!msg)msg=await ch.send({...mmPickMenu(t,list),allowedMentions:{parse:[]}}).catch(err=>{console.error("[mm] coin picker failed:",err.message);return null;});
+  if(!msg)msg=await mmSend(ch,{...mmPickMenu(t,list),allowedMentions:{parse:[]}},"coin picker");
   return {msg,v2};
+}
+// v29: posts a message, and tries once more a moment later (Discord answers an odd 5xx or a rate limit now and then). null = it really could not be posted; every failure is logged.
+let MM_SEND_RETRY_MS=1200;
+async function mmSend(ch,payload,tag){
+  for(let k=0;k<2;k++){
+    try{return await ch.send(payload);}
+    catch(err){console.error(`[mm] ${tag} could not be posted${k?" (again)":""}: ${err&&err.message}`);if(!k&&MM_SEND_RETRY_MS>0)await new Promise(r=>setTimeout(r,MM_SEND_RETRY_MS));}
+  }
+  return null;
+}
+// v29: is this card still in the ticket? the message, null (it is gone) or undefined (Discord could not be asked just now: nothing is assumed)
+async function mmCardOf(ch,msgId){
+  if(!msgId)return null;
+  try{return await ch.messages.fetch(msgId);}
+  catch(err){return (err&&(err.code===10008||/unknown message/i.test(String(err.message||""))))?null:undefined;}
 }
 
 // ── the cards of the steps ──
@@ -2967,12 +3005,13 @@ async function mmFlowPost(ch,step,opts){
   opts=opts||{};
   const t=mmTicketOf(ch.id);if(!t||!t.mmFlow)return null;
   let sent=null;
-  if(step==="pick"){const r=await mmPickPost(ch,t);sent=r.msg;mmSaveTicket(ch.id,x=>{if(x.mmFlow)x.mmFlow.pickV2=r.v2;});}
+  const gone=()=>!!opts.tok&&mmStartAbandoned(opts.tok);                  // (an attempt that was given up writes nothing to the ticket: its caller removes the message)
+  if(step==="pick"){const r=await mmPickPost(ch,t,opts.list);sent=r.msg;if(sent&&!gone())mmSaveTicket(ch.id,x=>{if(x.mmFlow)x.mmFlow.pickV2=r.v2;});}
   else{
     const ping=opts.ping&&opts.ping.length?[...new Set(opts.ping)]:null;
-    sent=await ch.send({...mmFlowPayload(t,step,false),...(ping?{content:ping.map(u=>`<@${u}>`).join(" "),allowedMentions:{users:ping}}:{allowedMentions:{parse:[]}})}).catch(err=>{console.error("[mm] flow card failed:",err.message);return null;});
+    sent=await mmSend(ch,{...mmFlowPayload(t,step,false),...(ping?{content:ping.map(u=>`<@${u}>`).join(" "),allowedMentions:{users:ping}}:{allowedMentions:{parse:[]}})},"flow card");
   }
-  if(sent)mmSaveTicket(ch.id,x=>{if(x.mmFlow){x.mmFlow.msgId=sent.id;x.mmFlow.step=step;}});
+  if(sent&&!gone())mmSaveTicket(ch.id,x=>{if(x.mmFlow){x.mmFlow.msgId=sent.id;x.mmFlow.step=step;}});
   return sent;
 }
 // Forward: the step that is done is frozen, the next one is posted below it
@@ -2995,23 +3034,25 @@ async function mmFlowEdit(ch,step){
   return mmFlowPost(ch,step);
 }
 // The card of the current step again (fresh = it comes back down to the bottom of the ticket; otherwise it is rebuilt where it is)
+// v29: it answers {kind:"shown"} only when a card really is in the ticket afterwards; a card that could not be posted is {kind:"failed"} (it used to say "shown" anyway, and nothing appeared)
 async function mmFlowShow(ch,t,opts){
   opts=opts||{};
   const f=t.mmFlow;if(!f)return {kind:"none"};
-  const old=f.msgId?await ch.messages.fetch(f.msgId).catch(()=>null):null;
+  const old=f.msgId?await mmCardOf(ch,f.msgId):null;
+  if(old===undefined&&!opts.fresh)return {kind:"shown",card:null,unknown:true};        // (v29: Discord could not be asked whether the card is there, e.g. right after a restart: no second card is posted next to one that may be there; the watchdog puts it back if it really is gone)
   if(old&&!opts.fresh){
-    if(f.step==="pick")return {kind:"shown"};
-    if(await old.edit({content:null,...mmFlowPayload(t,f.step,false)}).then(()=>true).catch(()=>false))return {kind:"shown"};
+    if(f.step==="pick")return {kind:"shown",card:old};
+    if(await old.edit({content:null,...mmFlowPayload(t,f.step,false)}).then(()=>true).catch(()=>false))return {kind:"shown",card:old};
   }
-  if(old)await old.delete().catch(()=>{});
-  await mmFlowPost(ch,f.step);
-  return {kind:"shown"};
+  const sent=await mmFlowPost(ch,f.step);                     // the new card first: the old one is removed only once the new one is there
+  if(sent){if(old)await old.delete().catch(()=>{});return {kind:"shown",card:sent};}
+  return old?{kind:"shown",card:old,stale:true}:{kind:"failed",why:"the middleman card could not be posted"};
 }
 // The setup stops: its live card says so, and the ticket forgets it
 async function mmFlowEnd(ch,title,text,tone){
   const t=mmTicketOf(ch.id),f=t&&t.mmFlow;if(!f)return;
   const msg=f.msgId?await ch.messages.fetch(f.msgId).catch(()=>null):null;
-  mmSaveTicket(ch.id,x=>{delete x.mmFlow;if(x.mmStage==="flow")x.mmStage=null;});
+  mmSaveTicket(ch.id,x=>{delete x.mmFlow;x.mmStopped={at:Date.now()};if(x.mmStage==="flow")x.mmStage=null;});          // (mmStopped: the people ended it on purpose, so the watchdog must not start it again)
   const p={content:null,embeds:[mmKE(tone||"mute").setTitle(title).setDescription(text).setFooter(kFoot("Built-in server middleman bot"))],components:[]};
   let done=false;
   if(msg){
@@ -3040,22 +3081,43 @@ async function mmAssetReady(a){
   if(!(price>0))return {ok:false,text:`I can't get a live price for ${a.coin} right now. Nothing changed. Try again in a moment.`};
   return {ok:true,price};
 }
-// Both sides said yes to the server middleman: the coin picker comes first
-async function mmFlowStart(ch,ticket,by){
+// Both sides said yes to the server middleman: the coin picker comes first.
+// v29: a setup that is already open is shown again only while it is still the same two people's AND its card can be put back; otherwise it is started over.
+// Every way out ends with a card in the ticket or an owner notice, never with nothing. tok = this attempt's number: an attempt that timed out stands down when it wakes up late.
+async function mmFlowStart(ch,ticket,by,tok){
   if(mmActive(ch.id))return mmOpen(ch,ticket,{by});
-  if(ticket.mmFlow)return mmFlowShow(ch,ticket,{fresh:true});
+  if(ticket.mmFlow){
+    const f=ticket.mmFlow,same=(!f.cl||f.cl===ticket.userId)&&(!f.ex||f.ex===ticket.claimedBy);
+    if(same){
+      const r=await mmFlowShow(ch,ticket,{fresh:true});
+      if(r.kind==="shown")return r;
+      console.error(`[mm] start #${ch.name}: the open setup could not be shown again, starting it over`);
+    }else{
+      console.log(`[mm] start #${ch.name}: the open setup belonged to other people, starting it over`);
+      const oc=f.msgId?await mmCardOf(ch,f.msgId):null;if(oc)await oc.delete().catch(()=>{});          // (its card goes: those buttons are not for these two)
+    }
+    mmSaveTicket(ch.id,t=>{delete t.mmFlow;if(t.mmStage==="flow")t.mmStage=null;});
+    ticket=mmTicketOf(ch.id)||ticket;delete ticket.mmFlow;
+  }
   if(_mmMeta.paused||_mmMeta.frozen)return mmOwnerFallback(ch,ticket,"paused");
   const plan=mmPlan(ticket);
   if(!plan.ok&&plan.why!=="amount")return mmOwnerFallback(ch,ticket,plan.why);       // an owner takes everything the bot does not hold (no claim yet, gifts, custom deals)
-  if(!(MM_V5()?await mmFundedList(ticket):mmPickList(ticket)).length)return mmOwnerFallback(ch,ticket,"coin");              // the bot holds no coin at all right now: nothing to pick from
-  mmSaveTicket(ch.id,t=>{t.mmFlow={v:1,step:"pick",at:Date.now(),by:by||null,picks:{},rok:{},aok:{},wok:{}};t.mmStage="flow";delete t.mmOwner;delete t.mmAsk;});
-  const sent=await mmFlowPost(ch,"pick");
-  if(!sent){mmSaveTicket(ch.id,t=>{delete t.mmFlow;});return mmOwnerFallback(ch,ticket,"error","the coin picker could not be posted");}
+  const list=MM_V5()?await mmFundedList(ticket):mmPickList(ticket);
+  if(tok&&mmStartAbandoned(tok))return {kind:"abandoned"};
+  if(!list.length)return mmOwnerFallback(ch,ticket,"coin");                           // the bot holds no coin at all right now: nothing to pick from
+  mmSaveTicket(ch.id,t=>{t.mmFlow={v:1,step:"pick",at:Date.now(),by:by||null,cl:t.userId,ex:t.claimedBy,picks:{},rok:{},aok:{},wok:{}};t.mmStage="flow";delete t.mmOwner;delete t.mmAsk;delete t.mmStopped;});
+  const sent=await mmFlowPost(ch,"pick",{list,tok});
+  if(tok&&mmStartAbandoned(tok)){                                                     // this attempt was given up while it was posting (the owners were told and have the ticket): it leaves nothing behind
+    if(sent)await sent.delete().catch(()=>{});
+    mmSaveTicket(ch.id,t=>{if(t.mmFlow&&!t.mmFlow.msgId)delete t.mmFlow;});            // (the setup it saved has no card, so nobody could use it; a setup with a card belongs to a newer attempt and stays)
+    return {kind:"abandoned"};
+  }
+  if(!sent){mmSaveTicket(ch.id,t=>{delete t.mmFlow;if(t.mmStage==="flow")t.mmStage=null;});return mmOwnerFallback(ch,ticket,"error","the coin picker could not be posted");}
   const t=mmTicketOf(ch.id);if(t)refreshTicketCard(ch,t).catch(()=>{});
   log(ch.guild,`MM FLOW: #${ch.name} | started | client <@${ticket.userId}> | exchanger <@${ticket.claimedBy}>`);
-  return {kind:"flow"};
+  return {kind:"flow",card:sent};
 }
-const mmStartDeal=(ch,ticket,by)=>MM_FLOW_ON?mmFlowStart(ch,ticket,by):mmOpen(ch,ticket,{by});
+const mmStartDeal=(ch,ticket,by,tok)=>MM_FLOW_ON?mmFlowStart(ch,ticket,by,tok):mmOpen(ch,ticket,{by});
 
 const MM_FLOW_STEP_TEXT={pick:"choosing the coin",roles:"choosing roles",rolesok:"confirming roles",amount:"entering the amount",amtok:"confirming the amount",warn:"reading the safety notes",confirm:"confirming the deal"};
 const mmFlowStatusText=t=>t&&t.mmFlow?`The middleman setup is open (${MM_FLOW_STEP_TEXT[t.mmFlow.step]||"in progress"}). Nothing is held yet. Type \`$mm\` to bring its card down, or \`$mm cancel\` to stop it.`:null;
@@ -3316,7 +3378,10 @@ async function mmFlowRebuild(){
   for(const [id,t] of Object.entries(all)){
     if(!t||!t.mmFlow||t.status!=="open")continue;
     const ch=g.channels.cache.get(id);
-    if(ch)await mmFlowShow(ch,t,{fresh:false}).catch(err=>console.error("[mm] flow rebuild:",err.message));
+    if(ch){
+      const r=await mmFlowShow(ch,t,{fresh:false}).catch(err=>{console.error("[mm] flow rebuild:",err.message);return null;});
+      if(r&&r.kind==="failed")console.error(`[mm] flow rebuild #${ch.name}: the card could not be posted (the watchdog tries again)`);
+    }
   }
 }
 // A setup nobody finished within a day is dropped (nothing was held)
@@ -3327,8 +3392,102 @@ async function mmFlowSweep(){
     if(!t||!t.mmFlow||now-(t.mmFlow.at||0)<MM_FLOW_IDLE_MS)continue;
     const ch=g.channels.cache.get(id);
     if(ch)await mmFlowEnd(ch,"Middleman Setup Closed","Nobody finished the setup within a day, so it was closed. Nothing was held and nothing was lost. Type `$mm` to start again.").catch(()=>{});
-    else mmSaveTicket(id,x=>{delete x.mmFlow;if(x.mmStage==="flow")x.mmStage=null;});
+    else mmSaveTicket(id,x=>{delete x.mmFlow;x.mmStopped={at:Date.now()};if(x.mmStage==="flow")x.mmStage=null;});
   }
+}
+
+// ── v29: the watchdog ───────────────────────────────────────────────────────────────────────────────────────────────────────
+// Every minute it looks at the claimed tickets (claimed in the last three days) and puts right what the normal start missed:
+//   · the claim REQUIRED the middleman and nothing is running: no setup, no deal, no owner notice, and nobody ended it on purpose  ->  it starts it,
+//   · a setup or a deal that is waiting for its deposit has lost its card (deleted)  ->  the card comes back down.
+// A ticket is tried at most MM_WD_TRIES times, further apart each time. After a failed start the owners were already told and an owner has the ticket, so it is left alone.
+// A ticket that was claimed before this version ran is started only when the message log shows the bot never posted anything about the middleman after the claim (so a
+// setup that people cancelled yesterday, whose "Middleman Cancelled" card is in the log, is never started again behind their backs).
+const MM_WD_EVERY_MS=60*1000,MM_WD_GRACE_MS=40*1000,MM_WD_MAX_AGE_MS=72*60*60*1000,MM_WD_TRIES=4;
+let _mmWdAt=0;const _mmWdTry=new Map();
+const MM_WD_TEXT=/middleman|choose the coin|coin selected|select your role|confirm roles|enter deal amount|confirm deal|protect yourself|funds secured|\bmm_/i;       // what a middleman card says (or the id of one of its buttons)
+// Has the bot posted anything about the middleman in this ticket since the claim (other than the claim card itself)? true / false / null (the message log could not be read)
+async function mmPostedSinceClaim(ch,t){
+  try{
+    const recs=(await MMDB.list(`lg:${ch.id}:`)).map(([,r])=>r).filter(Boolean),from=t.claimedAt||0;
+    return recs.some(r=>r.k==="bot"&&String(r.m)!==String(t.claimMessageId)&&(r.at||0)>=from&&(r.v||[]).some(v=>MM_WD_TEXT.test(String((v&&v.x)||""))));
+  }catch{return null;}
+}
+async function mmWatchNeed(ch,t,now){
+  const since=t.claimedAt||0;
+  if(!since||now-since<MM_WD_GRACE_MS||now-since>MM_WD_MAX_AGE_MS)return null;
+  if(t.mmOwner||t.mmStage==="owner"||t.mmStopped||t.reported)return null;         // an owner has it · the people ended it · flagged: an owner reviews it first
+  if(_mmStarting.has(ch.id))return null;                                           // an attempt is running right now
+  const e=mmActive(ch.id);
+  if(e){
+    if(e.state!=="net"&&e.state!=="await")return null;                             // a deposit is in or past: the deal's own cards take over
+    return (await mmCardOf(ch,e.cardId))===null?{need:"deal-card",e}:null;        // (undefined = Discord could not be asked: next time)
+  }
+  if(t.mmId&&await mmGet(t.mmId).catch(()=>null))return null;                      // a deal that is over (released, refunded, cancelled): nothing to put back
+  if(t.mmFlow)return (await mmCardOf(ch,t.mmFlow.msgId))===null?{need:"flow-card"}:null;
+  if(!t.mmRequired)return null;
+  const tried=(await mmStartEvents(ch.id)).length>0;
+  if(!tried&&(await mmPostedSinceClaim(ch,t))!==false)return null;                 // claimed before v29: only when the log is sure the bot posted nothing
+  return {need:"start"};
+}
+async function mmWatchdog(force){
+  const now=Date.now(),out={seen:0,fixed:0,failed:0,names:[]};
+  if(!force&&now-_mmWdAt<MM_WD_EVERY_MS)return out;
+  _mmWdAt=now;
+  const g=client.guilds.cache.get(CONFIG.GUILD_ID)||client.guilds.cache.first();
+  if(!g)return out;
+  const all=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets");
+  for(const [id,t] of Object.entries(all)){
+    if(!t||t.status!=="open"||!t.claimedBy)continue;
+    if(!(t.mmRequired||t.mmFlow||t.mmId))continue;
+    const ch=g.channels.cache.get(id);if(!ch)continue;
+    out.seen++;
+    let need=null;
+    try{need=await mmWatchNeed(ch,t,now);}catch(err){console.error(`[mm] watchdog #${ch.name}: ${err&&err.message}`);continue;}
+    if(!need)continue;
+    const w=_mmWdTry.get(id)||{n:0,at:0};
+    if(w.n>=MM_WD_TRIES||(w.n&&now-w.at<Math.min(MM_WD_EVERY_MS*2**w.n,15*60*1000)))continue;
+    _mmWdTry.set(id,{n:w.n+1,at:now});
+    console.log(`[mm] watchdog #${ch.name}: ${need.need} (try ${w.n+1} of ${MM_WD_TRIES}) · claimed ${Math.round((now-(t.claimedAt||now))/60000)} min ago`);
+    let ok=false;
+    try{
+      if(need.need==="deal-card")ok=!!(await mmPostCard(ch,need.e,{fresh:true}));
+      else{const r=await mmStartSafe(ch,t,t.claimedBy,"watchdog",{begin:true});ok=!!r&&["flow","shown","card","existing"].includes(r.kind);}
+    }catch(err){console.error(`[mm] watchdog #${ch.name} failed: ${err&&err.message}`);}
+    out.names.push(ch.name);
+    if(ok){
+      out.fixed++;
+      await mmSayTemp(ch,{tmp:MM_TMP_LONG_MS,content:`<@${t.userId}> <@${t.claimedBy}> ${need.need==="start"?"The middleman card did not show up when this ticket was claimed, so I started it now.":"The middleman card had gone missing from this ticket, so I put it back."} It is the card just above. Nothing was sent and nothing was lost.`,allowedMentions:{users:[t.userId,t.claimedBy]}}).catch(()=>{});
+    }else out.failed++;
+    mmAlertOwners({content:`Middleman watchdog: #${ch.name} (${need.need}) ${ok?"was put right":"could NOT be put right"}. This should never be needed, so something went wrong earlier. The deploy log has the \`[mm] start\` lines.\nhttps://discord.com/channels/${g.id}/${ch.id}`});
+  }
+  return out;
+}
+// "$mm doctor": what the middleman knows about this ticket (or, outside a ticket, about the whole bot), for an owner
+async function mmDoctor(ch,t){
+  const now=Date.now(),ago=ms=>ms?`${Math.max(0,Math.round((now-ms)/60000))} min ago`:"never",L=[];
+  L.push(`**Bot middleman:** ${_mmMeta.frozen?"FROZEN by an owner (new setups go to an owner)":_mmMeta.paused?"PAUSED (new setups go to an owner)":"on"}  ·  limit ${fmtUSD(_mmMeta.maxUsd)}  ·  version ${BOT_VERSION}`);
+  let list=[];try{list=await mmFundedList(t||{});}catch(err){L.push(`The coin check failed: ${err&&err.message}`);}
+  L.push(`**Coins on the picker right now:** ${list.length?list.map(mmPickName).join(", "):"NONE (every setup would go to an owner)"}`);
+  if(t){
+    L.push("",`**This ticket:** ${t.claimedBy?`claimed by <@${t.claimedBy}> ${ago(t.claimedAt)}`:"not claimed yet"}  ·  client <@${t.userId}>  ·  coin text "${String(t.coin||"").slice(0,40)}"`);
+    L.push(`middleman required: ${t.mmRequired?"yes":"no"}  ·  waiting for the client: ${t.mmPending?"yes":"no"}  ·  flagged: ${t.reported?"yes":"no"}  ·  ended on purpose: ${t.mmStopped?ago(t.mmStopped.at):"no"}`);
+    const p=mmPlan(t);L.push(`plan: ${p.ok?`ok (${fmtUSD(p.usd)})`:`${p.why} (${MM_OWNER_WHY[p.why]||""})`}`);
+    if(t.mmFlow){const m=await mmCardOf(ch,t.mmFlow.msgId);L.push(`setup: step "${t.mmFlow.step}", started ${ago(t.mmFlow.at)}  ·  its card is ${m?"in the ticket":m===null?"MISSING":"unknown (Discord could not be asked)"}`);}
+    else L.push("setup: none");
+    const e=t.mmId?await mmGet(t.mmId).catch(()=>null):null;
+    if(e){const m=e.cardId?await mmCardOf(ch,e.cardId):null;L.push(`deal: ${e.id}  ·  ${e.state}  ·  ${e.coin}${e.chain?` on ${e.chain}`:""}  ·  its card is ${m?"in the ticket":m===null?"MISSING":"unknown"}`);}
+    else L.push("deal: none");
+    L.push(`owner notice: ${t.mmOwner?`${t.mmOwner} (${ago(t.mmOwnerPingAt)})`:"none"}`);
+    const ev=await mmStartEvents(ch.id);
+    L.push("",`**Start attempts (newest last):**`,...(ev.length?ev.map(x=>`<t:${Math.floor(x.at/1000)}:T>  ${x.ev}`):["none recorded"]));
+    const need=await mmWatchNeed(ch,t,now).catch(()=>null);
+    L.push("",`**Watchdog:** ${need?`would act now (${need.need})`:"nothing to do"}`);
+  }else{
+    const r=await mmWatchdog(true).catch(err=>({seen:0,fixed:0,failed:0,names:[],err:err&&err.message}));
+    L.push("",`**Watchdog just ran:** looked at ${r.seen} ticket(s), put right ${r.fixed}${r.failed?`, could not put right ${r.failed}`:""}${r.names.length?` (${r.names.map(n=>"#"+n).join(", ")})`:""}${r.err?`. Error: ${r.err}`:""}`);
+  }
+  return L.join("\n").slice(0,3900);
 }
 
 // ── v20: one Confirm Deal card, Funds Secured / Check Your Payment, auto-complete, $freeze, $gas ─────────────────────
@@ -3566,18 +3725,29 @@ function mmPauseAsk(e){
 }
 
 // ── the coin picker shows only coins the bot can pay out right now (the wallet has the gas, the token contract checks out, an address is set) ──
+// v29: the checks run side by side and each one is cut off after MM_FUND_CHECK_MS, so a slow or dead network node can't hold the coin picker back (they used to run one after
+// the other with no overall limit). A token whose check did not finish in time is left out, exactly as one whose check failed always was; the coins and the other tokens still show.
+const MM_FUND_CHECK_MS=9000;
+const mmWithin=(ms,p,fb,label)=>new Promise(res=>{      // the answer of p, or fb when it takes longer than ms or fails (with a label, that is logged once)
+  let done=false;
+  const end=(v,why)=>{if(done)return;done=true;clearTimeout(tm);if(why&&label)console.warn(`[mm] ${label}: ${why}`);res(v);};
+  const tm=setTimeout(()=>end(fb,`no answer in ${Math.round(ms/100)/10}s`),ms);if(tm.unref)tm.unref();
+  Promise.resolve(p).then(v=>end(v),err=>end(fb,(err&&err.message)||String(err)));
+});
 async function mmFundedList(ticket){
-  const out=[],low=new Set();
-  for(const a of mmPickList(ticket)){
-    if(a.contract){
+  const list=mmPickList(ticket),low=new Set();
+  const ok=await Promise.all(list.map(async a=>{
+    if(!a.contract)return true;
+    try{
       const addr=mmDepositAddress(a.chain);
-      if(addr&&mmSigner(a.chain,addr)&&(await mmGasReady(a.chain,addr).catch(()=>null))===false){low.add(a.chain);continue;}
-      if(!(await mmTokenCheck(a).catch(()=>false)))continue;
-    }
-    out.push(a);
-  }
+      if(addr&&mmSigner(a.chain,addr)&&(await mmWithin(MM_FUND_CHECK_MS,mmGasReady(a.chain,addr),null,`coin check ${a.coin} on ${a.chain} (gas)`))===false){low.add(a.chain);console.warn(`[mm] coin check ${a.coin} on ${a.chain}: left out, the wallet has no gas there`);return false;}
+      const good=!!(await mmWithin(MM_FUND_CHECK_MS,mmTokenCheck(a),false,`coin check ${a.coin} on ${a.chain} (token)`));
+      if(!good)console.warn(`[mm] coin check ${a.coin} on ${a.chain}: left out, the token could not be verified`);
+      return good;
+    }catch(err){console.error(`[mm] coin check ${a.coin} on ${a.chain}: ${err&&err.message}`);return false;}
+  }));
   for(const c of low){const addr=mmDepositAddress(c);if(addr)mmGasLow(c,addr);}
-  return out;
+  return list.filter((a,i)=>ok[i]);
 }
 // The picker was refused one coin (it went low a moment ago): the card is drawn again without it
 async function mmPickRefresh(ch){
@@ -3974,18 +4144,73 @@ async function mmPrompt(ch,ticket,by){
   const old=a&&a.msgId?await ch.messages.fetch(a.msgId).catch(()=>null):null,ok=(a&&a.ok)||{};
   const t=mmSaveTicket(ch.id,x=>{x.mmAsk={ok,by:(a&&a.by)||by||null,at:(a&&a.at)||Date.now(),shownAt:Date.now()};})||ticket;
   const need=[t.userId,t.claimedBy].filter(u=>u&&!ok[u]);
-  const sent=await ch.send({content:need.map(u=>`<@${u}>`).join(" ")||undefined,...mmPromptPayload(t),allowedMentions:{users:need}}).catch(()=>null);
+  const sent=await mmSend(ch,{content:need.map(u=>`<@${u}>`).join(" ")||undefined,...mmPromptPayload(t),allowedMentions:{users:need}},"middleman question");
   if(sent)mmSaveTicket(ch.id,x=>{if(x.mmAsk)x.mmAsk.msgId=sent.id;});
-  if(old)await old.edit({components:[]}).catch(()=>{});             // only the newest question can be answered
-  return {kind:"asked"};
+  if(old&&sent)await old.edit({components:[]}).catch(()=>{});       // only the newest question can be answered
+  return sent?{kind:"asked"}:{kind:"failed",why:"the question could not be posted"};      // (v29: it used to say "asked" even when nothing was posted)
 }
 // Starts the deal now (a required middleman) or asks first. Returns what happened.
-async function mmBegin(ch,ticket,by){
+async function mmBeginRaw(ch,ticket,by,tok){
   const cur=ticket.mmId?await mmGet(ticket.mmId):null;
   if(cur&&(!MM_TERMINAL.has(cur.state)||cur.state==="released"))return mmOpen(ch,ticket,{by});      // a deal is running (its card comes back down) or finished (reported)
-  if(ticket.mmFlow)return mmFlowShow(ch,ticket,{fresh:true});                                      // the setup is running: its card comes back down
+  if(ticket.mmFlow&&MM_FLOW_ON)return mmFlowStart(ch,ticket,by,tok);                               // the setup is running: its card comes back down (v29: or it is started over when it is stale or its card can't be put back)
   if(mmNeedsPrompt(ticket))return mmPrompt(ch,ticket,by);                                          // none, or a cancelled / refunded one: a new deal needs both sides to say yes again
-  return mmStartDeal(ch,ticket,by);                                                                // (a required middleman was confirmed by both sides at the claim)
+  return mmStartDeal(ch,ticket,by,tok);                                                            // (a required middleman was confirmed by both sides at the claim)
+}
+const mmBegin=(ch,ticket,by,src)=>mmStartSafe(ch,ticket,by,src||"begin",{begin:true});
+
+// ── v29: the middleman start can't fail silently ─────────────────────────────────────────────────────────────────────────────
+// Every way of starting it (the claim, "$mm", "we need mm", the buttons, the confirmations, the watchdog below) goes through mmStartSafe:
+//   · one attempt at a time per ticket (a second caller gets the answer of the one that is running),
+//   · a time limit (MM_START_MAX_MS): an attempt that is stuck is given up, and if it wakes up later it stands down,
+//   · when it ends there is a card (or the question, or an owner notice) in the ticket; if nothing at all could be posted the owners are told by DM,
+//   · every step is a "[mm] start" line in the deploy log, and the last twelve are kept per ticket for "$mm doctor".
+const MM_START_MAX_MS=50*1000;
+const _mmStarting=new Map(),_mmAbandoned=new Set(),_mmStartEv=new Map();
+let _mmStartSeq=0;
+const mmStartAbandoned=tok=>_mmAbandoned.has(tok);
+function mmStartLog(ch,ev,detail){
+  const line=`${ev}${detail?` · ${String(detail).slice(0,160)}`:""}`;
+  console.log(`[mm] start #${(ch&&ch.name)||"?"}: ${line}`);
+  try{
+    if(!ch||!ch.id)return;
+    const l=(_mmStartEv.get(ch.id)||[]).concat([{at:Date.now(),ev:line}]).slice(-12);
+    _mmStartEv.set(ch.id,l);
+    if(_mmStartEv.size>600)_mmStartEv.delete(_mmStartEv.keys().next().value);
+    MMDB.set("st:"+ch.id,l).catch(()=>{});
+  }catch{}
+}
+const mmStartEvents=async cid=>(_mmStartEv.get(cid)||await MMDB.get("st:"+cid).catch(()=>null)||[]);
+const MM_START_OK=new Set(["flow","shown","card","existing","asked","waiting","done"]);
+async function mmStartSafe(ch,ticket,by,src,opts){
+  opts=opts||{};
+  const busy=_mmStarting.get(ch.id);
+  if(busy&&Date.now()-busy.at<MM_START_MAX_MS+3000)return busy.p;
+  const tok=++_mmStartSeq,rec={at:Date.now(),tok};
+  rec.p=(async()=>{
+    mmStartLog(ch,"begin",src);
+    let r=null,why=null,timer=null;
+    try{
+      r=await Promise.race([
+        (opts.begin?mmBeginRaw:mmStartDeal)(ch,ticket,by,tok),
+        new Promise(res=>{timer=setTimeout(()=>res({kind:"failed",why:`no answer after ${Math.round(MM_START_MAX_MS/1000)}s`,late:true}),MM_START_MAX_MS);if(timer.unref)timer.unref();}),
+      ]);
+    }catch(err){why=(err&&err.message)||String(err);console.error(`[mm] start #${ch.name} threw (${src}):`,(err&&err.stack)||err);}
+    finally{if(timer)clearTimeout(timer);}
+    if(r&&r.late){_mmAbandoned.add(tok);if(_mmAbandoned.size>400)_mmAbandoned.delete(_mmAbandoned.values().next().value);}
+    let good=!!r&&(MM_START_OK.has(r.kind)||(r.kind==="owner"&&r.posted!==false));
+    if(!good&&r&&r.late){                                                  // it timed out, but it may have put the card in the ticket in the meantime
+      const t3=mmTicketOf(ch.id),m=t3&&t3.mmFlow&&t3.mmFlow.msgId?await mmCardOf(ch,t3.mmFlow.msgId):null;
+      if(m){good=true;r={kind:"flow",card:m};}
+    }
+    if(good){mmStartLog(ch,r.kind,r.why||"");return r;}
+    why=why||(r&&(r.detail||r.why))||"it ended without a card";
+    mmStartLog(ch,"FAILED",why);
+    const fb=(r&&r.kind==="owner")?r:await mmOwnerFallback(ch,mmTicketOf(ch.id)||ticket,"error",why).catch(err=>{console.error("[mm] owner notice failed:",err&&err.message);return null;});
+    return {kind:"owner",why:"error",failed:true,detail:why,posted:!!(fb&&fb.posted)};
+  })().finally(()=>{if(_mmStarting.get(ch.id)===rec)_mmStarting.delete(ch.id);});
+  _mmStarting.set(ch.id,rec);
+  return rec.p;
 }
 
 // A submitted transaction. Returns {status:"watch"|"rejected"|"confirming"|"funded"|"short"|"review", why?, e?}
@@ -6106,16 +6331,16 @@ async function mmRoute(interaction,cid){
     need(!t.reported||owner,"This ticket is flagged. An owner has to review it first.");
     if(head==="mm_start"){
       const running=mmActive(ch.id);
-      if(running&&running.cardId){
+      if(running&&running.cardId&&await mmCardOf(ch,running.cardId)!==null){           // (v29: only while its card is really there; a card that was deleted is put back below)
         const url=interaction.guild?`https://discord.com/channels/${interaction.guild.id}/${ch.id}/${running.cardId}`:null;
         return interaction.reply({content:`The middleman is already running in this ticket.${url?` ${url}`:""} Type \`$mm\` to bring the card back down.`,flags:64});
       }
-      if(t.mmFlow&&t.mmFlow.msgId){
+      if(t.mmFlow&&t.mmFlow.msgId&&await mmCardOf(ch,t.mmFlow.msgId)!==null){
         const url=interaction.guild?`https://discord.com/channels/${interaction.guild.id}/${ch.id}/${t.mmFlow.msgId}`:null;
         return interaction.reply({content:`The middleman setup is already open in this ticket.${url?` ${url}`:""} Type \`$mm\` to bring its card back down.`,flags:64});
       }
       await interaction.deferReply({flags:64});
-      const r=await mmBegin(ch,t,uid);
+      const r=await mmBegin(ch,t,uid,"Use Middleman button");
       return mmReply(interaction,r.kind==="owner"?"An owner will middleman this one. They have been pinged.":r.kind==="done"?"The middleman already released the funds for this exchange.":r.kind==="asked"||r.kind==="waiting"?"I asked you both in the ticket. The middleman starts as soon as you both press **Confirm**.":r.kind==="flow"||r.kind==="shown"?"The middleman setup is in the ticket. Choose the coin there.":"The middleman card is in the ticket.");
     }
     const a=t.mmAsk;
@@ -6138,8 +6363,7 @@ async function mmRoute(interaction,cid){
     if(!both)return interaction.update({...mmPromptPayload(t2)}).catch(()=>{});
     await interaction.update({content:null,...mmPromptPayload(t2,"start")}).catch(()=>{});
     if(interaction.message)await mmTrackMsg(ch.id,interaction.message.id,MM_TMP_MS).catch(()=>{});
-    try{await mmStartDeal(ch,t2,uid);}
-    catch(err){console.error("[mm] could not open after both confirmed:",err.message);await mmOwnerFallback(ch,t2,"error",err.message).catch(()=>{});}
+    await mmStartSafe(ch,t2,uid,"both confirmed");                    // (v29: it ends with a card or an owner notice, and says what went wrong in the log)
     log(interaction.guild,`MM CONFIRMED BY BOTH: #${ch.name} | client <@${t2.userId}> | exchanger <@${t2.claimedBy}>`);
     return;
   }
@@ -6390,7 +6614,7 @@ async function mmRoute(interaction,cid){
 // "$mm" asks (or brings the card back) · "$mm help" pings the owners · "we need mm" asks too · the receiving person pastes their address here · owners run the
 // whole deal with "$mm release", "$mm refund", "$mm funded 0.1", "$mm sent <tx>", "$mm approve", "$mm panel" ... and, anywhere, "$mm wallet", "$mm deals", ...
 const MM_HELP_PARTY="`$mm` shows the card  ·  `$mm help` pings the owners  ·  `$mm status`  ·  `$mm release`  ·  `$mm refund`  ·  `$mm continue` (accept a shortfall)  ·  `$mm cancel`  ·  `$mm dispute <what went wrong>`  ·  `$mm address <your address>`\nYou can also just say **we need mm** to start it, and paste your address in the chat when the funds are released.";
-const MM_HELP_OWNER="Owner commands: `$mm status`  ·  `$mm panel`  ·  `$mm release`  ·  `$mm refund`  ·  `$mm accept`  ·  `$mm funded <amount> [tx]`  ·  `$mm approve`  ·  `$mm reject`  ·  `$mm sent [tx]`  ·  `$mm retry`  ·  `$mm payout <address>`  ·  `$mm refundto <address>`  ·  `$mm cancel`  ·  `$mm undispute`  ·  `$mm wallet`  ·  `$mm deals`  ·  `$mm send <deal> <address>`  ·  `$mm sweep <chain> <address>`  ·  `$mm close <deal>`  ·  `$mm history <deal>`  ·  `$mm log`  ·  `$mm log find <address>`  ·  `$mm secure`  ·  `$freeze`  ·  `$unfreeze`  ·  `$gas`  ·  `$mm help`";
+const MM_HELP_OWNER="Owner commands: `$mm status`  ·  `$mm panel`  ·  `$mm release`  ·  `$mm refund`  ·  `$mm accept`  ·  `$mm funded <amount> [tx]`  ·  `$mm approve`  ·  `$mm reject`  ·  `$mm sent [tx]`  ·  `$mm retry`  ·  `$mm payout <address>`  ·  `$mm refundto <address>`  ·  `$mm cancel`  ·  `$mm undispute`  ·  `$mm wallet`  ·  `$mm deals`  ·  `$mm send <deal> <address>`  ·  `$mm sweep <chain> <address>`  ·  `$mm close <deal>`  ·  `$mm history <deal>`  ·  `$mm log`  ·  `$mm log find <address>`  ·  `$mm secure`  ·  `$mm doctor`  ·  `$freeze`  ·  `$unfreeze`  ·  `$gas`  ·  `$mm help`";
 const _mmIntentAt=new Map();
 async function mmMessage(message,ticket){
   if(!ticket||ticket.status!=="open")return false;
@@ -6447,20 +6671,11 @@ async function mmIntent(ticket,x){
   }
   if(ticket.mmPending){if(uid!==ticket.userId)await say("The client presses **Confirm Middleman** first.");return;}
   if(ticket.reported&&!x.owner)return;
-  const e=mmActive(ch.id);
-  if(e){                                                                  // already running: the card comes back down, at most once a minute
+  if(mmActive(ch.id)||ticket.mmFlow){                                     // already running (a deal or its setup): the card comes back down, at most once a minute
     if(Date.now()-(_mmIntentAt.get(ch.id)||0)<60*1000)return;
     _mmIntentAt.set(ch.id,Date.now());
-    await mmPostCard(ch,e,{fresh:true});
-    return;
   }
-  if(ticket.mmFlow){                                                      // the setup is running: its card comes back down, at most once a minute
-    if(Date.now()-(_mmIntentAt.get(ch.id)||0)<60*1000)return;
-    _mmIntentAt.set(ch.id,Date.now());
-    await mmFlowShow(ch,ticket,{fresh:true});
-    return;
-  }
-  const r=await mmBegin(ch,ticket,uid);
+  const r=await mmBegin(ch,ticket,uid,"we need mm");                      // (v29: a card that can't be put back starts the setup over, and a start that fails ends in an owner notice)
   if(r.kind==="done")await say("The middleman already released the funds for this exchange.");
 }
 async function mmCommand(ticket,arg,x){
@@ -6475,8 +6690,9 @@ async function mmCommand(ticket,arg,x){
     if(!ticket.claimedBy){await say("An exchanger has to claim this ticket before the middleman can start.");return true;}
     if(ticket.mmPending){await say("The client presses **Confirm Middleman** first.");return true;}
     if(ticket.reported&&!owner){await say("This ticket is flagged. An owner has to review it first.");return true;}
-    const r=await mmBegin(ch,ticket,uid);
+    const r=await mmBegin(ch,ticket,uid,"$mm");                          // (v29: "$mm" always ends in a card, the question, or an owner notice: it can't be silent any more)
     if(r.kind==="done")await say("The middleman already released the funds for this exchange.");
+    else if(r.failed&&r.posted===false)await say("I couldn't post the middleman card just now. The owners were told. Nothing was sent and nothing was lost.");
     return true;
   }
   if(sub==="help"){
@@ -6554,7 +6770,7 @@ async function mmCommand(ticket,arg,x){
 
 // ── Owner tools that work anywhere ("$mm wallet", "$mm deals", "$mm send ...") ──────────────────────────────────
 // The answer goes to the owner's DMs (a ticket has clients in it, and the wallet is nobody else's business).
-const MM_GLOBAL_SUBS=new Set(["alert","wallet","deals","send","sweep","close","history","log","secure","freeze","unfreeze","gas","ltc","btc"]);
+const MM_GLOBAL_SUBS=new Set(["alert","wallet","deals","send","sweep","close","history","log","secure","doctor","freeze","unfreeze","gas","ltc","btc"]);
 const mmAge=ms=>{const s=Math.max(0,Math.round(ms/1000)),d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60);return d?`${d}d ${h}h`:h?`${h}h ${m}m`:m?`${m}m`:`${s}s`;};
 async function mmWalletReport(){
   const w=mmWallets(),rows=await mmWalletRows(),out=[];
@@ -6662,6 +6878,10 @@ async function mmGlobalCommand(message,ticket){
     if(sub==="log"){                                                  // v26: every message the bot sent in a ticket (edits and deletes too) as a text file, or a search for one address
       const r=/^find$/i.test(sp[0]||"")?await mmLogFind(sp.slice(1).join(" ")):await mmLogReport(sp[0],message,ticket);
       return await dm({content:r.summary,files:[new AttachmentBuilder(Buffer.from(r.text,"utf8"),{name:r.name})]}),true;
+    }
+    if(sub==="doctor"){                                               // v29: what the middleman knows about this ticket (or the whole bot), and the last start attempts; outside a ticket it also runs the watchdog now
+      const text=await mmDoctor(ticket?message.channel:null,ticket||null);
+      return await dm({embeds:[mmKE("brand").setTitle("Middleman Check").setDescription(text)]}),true;
     }
     if(sub==="secure"){                                               // v28: can members still run apps they installed themselves in a ticket? (read-only)
       const r=await mmSecureReport();
@@ -7229,11 +7449,11 @@ async function claimTicket(interaction,opts={}){
   if(sent){ticket.claimMessageId=sent.id;_mem.tickets=tickets;save("tickets",tickets);}
   if(needsMm&&MM_AUTO){                                             // a required middleman starts by itself: nobody confirms or chooses anything
     delete ticket.mmWanted;_mem.tickets=tickets;save("tickets",tickets);
-    try{await mmStartDeal(ch,ticket,interaction.user.id);}catch(err){console.error("[mm] could not open at claim:",err.message);await mmOwnerFallback(ch,ticket,"error",err.message).catch(()=>{});}
+    await mmStartSafe(ch,ticket,interaction.user.id,"claim");         // (v29: it ends with a card or an owner notice, and says what went wrong in the log)
   }
   if(ticket.mmWanted){                                              // the client already said "we need mm": it starts right away (when the exchanger is limited, the client confirms it first)
     delete ticket.mmWanted;_mem.tickets=tickets;save("tickets",tickets);
-    if(!needsMm)try{await mmBegin(ch,ticket,ticket.userId);}catch(err){console.error("[mm] could not open at claim:",err.message);await mmOwnerFallback(ch,ticket,"error",err.message).catch(()=>{});}
+    if(!needsMm)await mmBegin(ch,ticket,ticket.userId,"claim (we need mm)");
   }
   const via=chosen?` through ${methodLabel(chosen)}`:"";
   const autoNote=(needsMm&&MM_AUTO)?`You claimed this ticket${via}. ${warnText} The middleman starts now \u2014 follow its card in the ticket.`:null;     // only the exchanger sees this
@@ -7265,8 +7485,7 @@ async function confirmMiddleman(interaction){
   await interaction.editReply({embeds:[buildClaimEmbed(ticket,"mmConfirmed")],components:[]}).catch(()=>{});
   await refreshPanel(ch,ticket);
   await ch.send({content:`<@${ticket.claimedBy}> The client confirmed the middleman — you can chat now.`,allowedMentions:{users:[ticket.claimedBy]}}).catch(()=>{});
-  try{await mmStartDeal(ch,ticket,interaction.user.id);}              // the built-in server middleman bot starts the setup (an owner steps in for anything it does not hold)
-  catch(err){console.error("[mm] could not open after confirm:",err.message);await mmOwnerFallback(ch,ticket,"error",err.message).catch(()=>{});}
+  await mmStartSafe(ch,ticket,interaction.user.id,"client confirmed");      // the built-in server middleman bot starts the setup (an owner steps in for anything it does not hold)
   log(interaction.guild,`MM CONFIRMED: #${ch.name} | client <@${ticket.userId}> | exchanger <@${ticket.claimedBy}>`);
 }
 
@@ -7300,8 +7519,7 @@ async function forceMiddleman(ch,owner,guild){
   if(cm)await cm.edit({embeds:[buildClaimEmbed(t,"mmAuto")],components:[]}).catch(()=>{});     // the claim card says required, and its Use Middleman / Confirm button is gone
   await refreshPanel(ch,t).catch(()=>{});
   await ch.send({content:`<@${t.userId}> <@${t.claimedBy}> A middleman is now required on this ticket. It starts now — don't send anything to each other directly.`,allowedMentions:{users:[t.userId,t.claimedBy]}}).catch(()=>{});
-  try{await mmBegin(ch,t,owner.id);}
-  catch(err){console.error("[mm] could not open after force:",err.message);await mmOwnerFallback(ch,t,"error",err.message).catch(()=>{});}
+  await mmBegin(ch,t,owner.id,"owner forced it");
   log(guild,`MM FORCED: #${ch.name} | ${owner.tag||owner.id} | client <@${t.userId}> | exchanger <@${t.claimedBy}>`);
   return dm(`Done. #${ch.name} now uses the middleman.`);
 }
@@ -12476,6 +12694,8 @@ client.once(Events.ClientReady,async()=>{
     // The built-in middleman bot: every 5 seconds while a deal waits for a deposit, every 20 seconds otherwise (survives restarts: the deals live in Postgres);
     // the wallet is checked against the deals every hour, and once at start-up together with payout recovery and the backup reminder
     setInterval(()=>mmTick().catch(e=>console.error("[mm] sweep:",e.message)),MM_FAST_MS);
+    setInterval(()=>mmWatchdog().catch(e=>console.error("[mm] watchdog:",e.message)),30*1000);          // v29: its own timer, so a stuck sweep can't stop it
+    setTimeout(()=>mmWatchdog().catch(e=>console.error("[mm] watchdog:",e.message)),45*1000);
     setInterval(()=>mmReconcile().catch(e=>console.error("[mm] balance check:",e.message)),60*60*1000);
     setTimeout(()=>mmTick().catch(()=>{}),8*1000);
     setTimeout(()=>mmStartup().catch(e=>console.error("[mm] startup:",e.message)),20*1000);
