@@ -3413,26 +3413,41 @@ async function mmPostedSinceClaim(ch,t){
     return recs.some(r=>r.k==="bot"&&String(r.m)!==String(t.claimMessageId)&&(r.at||0)>=from&&(r.v||[]).some(v=>MM_WD_TEXT.test(String((v&&v.x)||""))));
   }catch{return null;}
 }
+// null = leave it alone. The reason is kept per ticket (mmNo) so "$mm doctor" and the deploy log can say why nothing was done.
+const _mmWdWhy=new Map(),_mmWdLogged=new Set();
+const mmNo=(ch,why)=>{_mmWdWhy.set(ch.id,why);return null;};
 async function mmWatchNeed(ch,t,now){
   const since=t.claimedAt||0;
-  if(!since||now-since<MM_WD_GRACE_MS||now-since>MM_WD_MAX_AGE_MS)return null;
-  if(t.mmOwner||t.mmStage==="owner"||t.mmStopped||t.reported)return null;         // an owner has it · the people ended it · flagged: an owner reviews it first
-  if(_mmStarting.has(ch.id))return null;                                           // an attempt is running right now
+  if(!since)return mmNo(ch,"not claimed");
+  if(now-since<MM_WD_GRACE_MS)return mmNo(ch,"claimed less than a minute ago (the normal start gets its time first)");
+  if(now-since>MM_WD_MAX_AGE_MS)return mmNo(ch,"claimed more than three days ago");
+  if(t.mmStopped)return mmNo(ch,"the people ended the setup on purpose");
+  if(t.reported)return mmNo(ch,"the ticket is flagged: an owner reviews it first");
+  if(t.mmOwner||t.mmStage==="owner")return mmNo(ch,`an owner has it (${t.mmOwner||"owner"})`);   // an owner notice is in the ticket (or the owners were told by DM)
+  if(_mmStarting.has(ch.id))return mmNo(ch,"a start attempt is running right now");
   const e=mmActive(ch.id);
   if(e){
-    if(e.state!=="net"&&e.state!=="await")return null;                             // a deposit is in or past: the deal's own cards take over
-    return (await mmCardOf(ch,e.cardId))===null?{need:"deal-card",e}:null;        // (undefined = Discord could not be asked: next time)
+    if(e.state!=="net"&&e.state!=="await")return mmNo(ch,`the deal ${e.id} is past the deposit step (${e.state}): its own cards take over`);
+    const c=await mmCardOf(ch,e.cardId);                                           // (undefined = Discord could not be asked: next time)
+    return c===null?{need:"deal-card",e}:mmNo(ch,c?`the card of deal ${e.id} is in the ticket`:`the card of deal ${e.id} could not be looked up (Discord did not answer)`);
   }
-  if(t.mmId&&await mmGet(t.mmId).catch(()=>null))return null;                      // a deal that is over (released, refunded, cancelled): nothing to put back
-  if(t.mmFlow)return (await mmCardOf(ch,t.mmFlow.msgId))===null?{need:"flow-card"}:null;
-  if(!t.mmRequired)return null;
+  if(t.mmId&&await mmGet(t.mmId).catch(()=>null))return mmNo(ch,`the deal ${t.mmId} is over (released, refunded or cancelled)`);
+  if(t.mmFlow){
+    const c=await mmCardOf(ch,t.mmFlow.msgId);
+    return c===null?{need:"flow-card"}:mmNo(ch,c?"the setup's card is in the ticket":"the setup's card could not be looked up (Discord did not answer)");
+  }
+  if(!t.mmRequired)return mmNo(ch,"the middleman is not required for this ticket");
   const tried=(await mmStartEvents(ch.id)).length>0;
-  if(!tried&&(await mmPostedSinceClaim(ch,t))!==false)return null;                 // claimed before v29: only when the log is sure the bot posted nothing
+  if(!tried){                                                                      // claimed before v29: only when the log is sure the bot posted nothing
+    const posted=await mmPostedSinceClaim(ch,t);
+    if(posted!==false)return mmNo(ch,posted?"the message log shows the bot posted something about the middleman after the claim":"the message log could not be read");
+  }
   return {need:"start"};
 }
 async function mmWatchdog(force){
   const now=Date.now(),out={seen:0,fixed:0,failed:0,names:[]};
   if(!force&&now-_mmWdAt<MM_WD_EVERY_MS)return out;
+  const first=_mmWdAt===0;
   _mmWdAt=now;
   const g=client.guilds.cache.get(CONFIG.GUILD_ID)||client.guilds.cache.first();
   if(!g)return out;
@@ -3444,7 +3459,10 @@ async function mmWatchdog(force){
     out.seen++;
     let need=null;
     try{need=await mmWatchNeed(ch,t,now);}catch(err){console.error(`[mm] watchdog #${ch.name}: ${err&&err.message}`);continue;}
-    if(!need)continue;
+    if(!need){                                                                     // (a ticket that is still inside the three days is written to the deploy log once per start, with the reason)
+      if(now-(t.claimedAt||0)<=MM_WD_MAX_AGE_MS&&!_mmWdLogged.has(id)){_mmWdLogged.add(id);console.log(`[mm] watchdog #${ch.name}: left alone · ${_mmWdWhy.get(id)||"nothing to do"}`);}
+      continue;
+    }
     const w=_mmWdTry.get(id)||{n:0,at:0};
     if(w.n>=MM_WD_TRIES||(w.n&&now-w.at<Math.min(MM_WD_EVERY_MS*2**w.n,15*60*1000)))continue;
     _mmWdTry.set(id,{n:w.n+1,at:now});
@@ -3461,6 +3479,7 @@ async function mmWatchdog(force){
     }else out.failed++;
     mmAlertOwners({content:`Middleman watchdog: #${ch.name} (${need.need}) ${ok?"was put right":"could NOT be put right"}. This should never be needed, so something went wrong earlier. The deploy log has the \`[mm] start\` lines.\nhttps://discord.com/channels/${g.id}/${ch.id}`});
   }
+  if(first)console.log(`[mm] watchdog running · looked at ${out.seen} ticket(s) the first time${out.names.length?` · acted on ${out.names.map(n=>"#"+n).join(", ")}`:""}`);
   return out;
 }
 // "$mm doctor": what the middleman knows about this ticket (or, outside a ticket, about the whole bot), for an owner
@@ -3481,8 +3500,9 @@ async function mmDoctor(ch,t){
     L.push(`owner notice: ${t.mmOwner?`${t.mmOwner} (${ago(t.mmOwnerPingAt)})`:"none"}`);
     const ev=await mmStartEvents(ch.id);
     L.push("",`**Start attempts (newest last):**`,...(ev.length?ev.map(x=>`<t:${Math.floor(x.at/1000)}:T>  ${x.ev}`):["none recorded"]));
+    _mmWdWhy.delete(ch.id);
     const need=await mmWatchNeed(ch,t,now).catch(()=>null);
-    L.push("",`**Watchdog:** ${need?`would act now (${need.need})`:"nothing to do"}`);
+    L.push("",`**Watchdog:** ${need?`would act now (${need.need})`:`nothing to do (${_mmWdWhy.get(ch.id)||"nothing is wrong"})`}`);
   }else{
     const r=await mmWatchdog(true).catch(err=>({seen:0,fixed:0,failed:0,names:[],err:err&&err.message}));
     L.push("",`**Watchdog just ran:** looked at ${r.seen} ticket(s), put right ${r.fixed}${r.failed?`, could not put right ${r.failed}`:""}${r.names.length?` (${r.names.map(n=>"#"+n).join(", ")})`:""}${r.err?`. Error: ${r.err}`:""}`);
