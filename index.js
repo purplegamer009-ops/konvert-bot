@@ -46,7 +46,7 @@ const { Pool } = require("pg");
 
 // Which build is running. Shown at the bottom of /ping and printed in the logs, so a deploy that did not go through is easy to spot.
 // BOT_BUILD is the first 7 characters of the commit Railway built (it matches the commit on GitHub); it is blank when run anywhere else.
-const BOT_VERSION="v30";
+const BOT_VERSION="v31";
 const BOT_BUILD=String(process.env.RAILWAY_GIT_COMMIT_SHA||"").slice(0,7);
 const BUILD_TEXT=BOT_BUILD?`${BOT_VERSION}  ·  ${BOT_BUILD}`:BOT_VERSION;
 
@@ -925,7 +925,26 @@ function mmCoinsOf(c){
   return out.length?out:[s];
 }
 const mmCoinOf=c=>mmCoinsOf(c)[0]||"";
-const mmNetLabel=a=>a.contract?`${MM_CHAINS[a.chain].name} (${MM_CHAINS[a.chain].short})`:MM_CHAINS[a.chain].name;
+// v31: what a ticket's coin text names, down to the network. People type "USDC SOL" for USDC on Solana, "USDT BEP20" for USDT on BNB Chain, "ETH BASE" for ETH on Base.
+// v29 read "USDC SOL" as two coins (USDC and SOL), so when the bot's Solana wallet had no SOL for fees the USDC row was left out, SOL stayed the only row marked "This ticket",
+// and the deal became a SOL deal for a USDC exchange. A stablecoin beside a network is ONE asset now, and a coin the ticket names is never swapped for another one.
+const MM_NET_WORD={SOLANA:"sol",SPL:"sol",ERC:"eth",ERC20:"eth",ETHEREUM:"eth",BEP:"bsc",BEP20:"bsc",BSC:"bsc",BINANCE:"bsc",BNBCHAIN:"bsc",BASE:"base",ARBITRUM:"arb",ARB:"arb",OPTIMISM:"op",OP:"op",POLYGON:"pol",AVALANCHE:"avax",AVAXC:"avax"};
+const MM_NET_LONG=["SOLANA","ETHEREUM","ARBITRUM","OPTIMISM","POLYGON","AVALANCHE","BINANCE","BNBCHAIN"];      // (the coin box holds 14 characters, so "USDT on Ethere" is a real thing to be typed)
+const MM_NET_COIN={SOL:"sol",ETH:"eth",BNB:"bsc",POL:"pol",AVAX:"avax"};                                     // words that are also coins: a network only when a stablecoin stands beside them
+const MM_NET_NONE={TRC:"Tron",TRC20:"Tron",TRON:"Tron",TRX:"Tron"};                                           // networks the bot will never hold
+function mmTicketNamed(text){
+  const words=String(text==null?"":text).normalize("NFKC").toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean).map(w=>CANON[w]||w);
+  const stables=[];for(const w of words)if((w==="USDC"||w==="USDT")&&!stables.includes(w))stables.push(w);
+  const netOf=w=>{if(MM_NET_WORD[w])return MM_NET_WORD[w];const k=w.length>=5?MM_NET_LONG.find(x=>x.startsWith(w)):null;return k?MM_NET_WORD[k]:null;};
+  const nets=[];for(const w of words){const c=netOf(w)||(stables.length?MM_NET_COIN[w]:null);if(c&&!nets.includes(c))nets.push(c);}
+  const none=words.map(w=>MM_NET_NONE[w]).find(Boolean)||null,exact=[];
+  if(!words.some(w=>w==="BTC"||w==="LTC")){
+    if(stables.length&&nets.length){for(const s of stables)for(const c of nets)if(mmAsset(s,c))exact.push(`${s}:${c}`);}
+    else if(!stables.length&&words.includes("ETH")){for(const c of nets)if(c!=="eth"&&mmAsset("ETH",c))exact.push(`ETH:${c}`);}
+  }
+  return {exact,none};
+}
+const mmNetLabel=a=>a.contract&&MM_CHAINS[a.chain].short!==MM_CHAINS[a.chain].name?`${MM_CHAINS[a.chain].name} (${MM_CHAINS[a.chain].short})`:MM_CHAINS[a.chain].name;
 const MM_TRANSFER_TOPIC="0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
 
 // ── Signing library (only ethers; Solana is signed with Node's own ed25519) ───────────────────────────────
@@ -1758,14 +1777,15 @@ function mmPlan(ticket){
   let base={};
   try{const fr=clientDeposits?d.net:d.amount;base={depositorId:clientDeposits?ticket.userId:ticket.claimedBy,recipientId:clientDeposits?ticket.claimedBy:ticket.userId,pays:d.c2c?String(ticket.recvCoin):methodLabel(ticket.method),fiat:!d.c2c&&fr>0?Math.round(fr*100)/100:null};}catch{}
   if(!(usd>=MM_MIN_USD))return {ok:false,why:"amount",...base};
-  return {ok:true,coin:mmCoinOf(ticket.coin),usd:Math.round(usd*100)/100,fiat:base.fiat||null,
+  const named=mmTicketNamed(ticket.coin);          // (v31: "USDC SOL" is USDC, whichever order it was typed in)
+  return {ok:true,coin:named.exact.length?named.exact[0].split(":")[0]:mmCoinOf(ticket.coin),usd:Math.round(usd*100)/100,fiat:base.fiat||null,
     depositorId:clientDeposits?ticket.userId:ticket.claimedBy,recipientId:clientDeposits?ticket.claimedBy:ticket.userId,
     pays:d.c2c?String(ticket.recvCoin):methodLabel(ticket.method)};
 }
 const MM_OWNER_WHY={
   paused:"The built-in server middleman bot is paused right now.",frozen:"The built-in server middleman bot is switched off by an owner right now.",kind:"This kind of exchange is middlemanned by an owner.",amount:"This exchange has no fixed crypto amount yet.",
   coin:"The built-in server middleman bot does not hold this coin yet.",error:"The built-in server middleman bot could not be set up for this exchange right now.",unclaimed:"No exchanger has claimed this ticket yet.",
-  gas:"The built-in server middleman bot can't pay the network fees for this coin right now.",
+  gas:"The built-in server middleman bot can't pay the network fees for this coin right now.",named:"The built-in server middleman bot can't take the coin this ticket is for right now.",
 };
 function mmSaveTicket(channelId,fn){
   const tickets=Object.keys(_mem.tickets||{}).length>0?_mem.tickets:load("tickets"),t=tickets[channelId];
@@ -2669,7 +2689,9 @@ async function mmForensics2(){
 // An owner steps in as the middleman (anything the bot does not or cannot hold). Owners are pinged in the ticket and by DM, at most once every ten minutes.
 const MM_NOTICE_MS=25*1000;
 async function mmOwnerFallback(channel,ticket,why,detail,opts){
-  const text=why==="limit"?`This exchange is above the built-in server middleman bot's **${fmtUSD(_mmMeta.maxUsd)}** limit.`:(MM_OWNER_WHY[why]||MM_OWNER_WHY.error);
+  const text=why==="limit"?`This exchange is above the built-in server middleman bot's **${fmtUSD(_mmMeta.maxUsd)}** limit.`
+    :why==="named"?`The built-in server middleman bot can't take **${(opts&&opts.named)||"the coin this ticket is for"}** right now${opts&&opts.because?`: ${opts.because}`:""}. Nothing was started, and no other coin was put in its place.`
+    :(MM_OWNER_WHY[why]||MM_OWNER_WHY.error);
   const now=Date.now(),quiet=(opts&&opts.quiet)||(ticket.mmOwnerPingAt&&now-ticket.mmOwnerPingAt<10*60*1000);         // (opts.quiet: the watchdog putting a lost notice back: the owners are not paged a second time)
   const saved=mmSaveTicket(channel.id,t=>{t.mmOwner=why;t.mmStage="owner";if(!quiet)t.mmOwnerPingAt=now;});
   if(saved)refreshTicketCard(channel,saved).catch(()=>{});          // the ticket card's status row follows
@@ -2858,14 +2880,32 @@ const MM_PICK_CARD=["SOL:sol","ETH:eth","BNB:bsc","BTC:btc","LTC:ltc","USDT:bsc"
 // The list for one ticket: the coin the ticket was opened for first (marked "This ticket"), then the rest
 function mmPickList(ticket){
   const have=new Map(MM_ASSETS.filter(a=>!!mmDepositAddress(a.chain)).map(a=>[a.coin+":"+a.chain,a]));
-  const mine=new Set(ticket&&ticket.coin?mmCoinsOf(ticket.coin):[]);      // v29: every coin the ticket names ("SOL LTC" = both)
+  const mine=new Set(ticket&&ticket.coin?mmCoinsOf(ticket.coin):[]),named=mmTicketNamed(ticket&&ticket.coin);      // v29: every coin the ticket names ("SOL LTC" = both)
+  const isMine=k=>named.none?false:named.exact.length?named.exact.includes(k):mine.has(have.get(k).coin);          // v31: a ticket that names the network too marks exactly that asset ("USDC SOL" = USDC on Solana, not SOL), and a network the bot will never hold marks nothing
   const keys=MM_PICK_FULL.filter(k=>have.has(k));
-  const fl=k=>({...have.get(k),key:k,mine:mine.has(have.get(k).coin)});
-  return [...keys.filter(k=>mine.has(have.get(k).coin)),...keys.filter(k=>!mine.has(have.get(k).coin))].map(fl);
+  const fl=k=>({...have.get(k),key:k,mine:isMine(k)});
+  return [...keys.filter(isMine),...keys.filter(k=>!isMine(k))].map(fl);
 }
-function mmPickSelect(list){
-  const opts=list.slice(0,25).map(a=>new StringSelectMenuOptionBuilder().setLabel(mmPickName(a)).setValue(a.coin+":"+a.chain)
+// v31: what the ticket asks for that the picker can't offer, and why. Nothing else is marked as the ticket's coin in its place.
+// missing[] = {label, why: "gas" (the wallet can't pay the network fee) | "check" (the token could not be checked) | "unsupported" (the bot never offers it)}; alive = the ticket's coin is still on the list somewhere; paused = the bot would offer it but can't right now
+function mmNamedGone(ticket,list){
+  const named=mmTicketNamed(ticket&&ticket.coin),missing=[],skipped=(list&&list.skipped)||[];
+  const want=named.exact.length?(a=>named.exact.includes(a.coin+":"+a.chain)):(a=>mmCoinsOf(ticket&&ticket.coin).includes(a.coin));
+  if(named.none)missing.push({label:`${mmCoinOf(ticket&&ticket.coin)||"This coin"} on ${named.none}`,why:"unsupported"});
+  for(const s of skipped)if(!named.none&&want(s.asset))missing.push({label:mmPickName(s.asset),why:s.why==="gas"?"gas":"check",key:s.key});
+  for(const k of named.exact){
+    if((list||[]).some(a=>a.key===k)||skipped.some(s=>s.key===k))continue;
+    const [c,ch]=k.split(":"),a=mmAsset(c,ch);
+    missing.push({label:a?mmPickName(a):`${c} on ${MM_CHAINS[ch]?MM_CHAINS[ch].name:ch}`,why:"unsupported"});
+  }
+  if(!missing.length)return null;
+  return {missing,alive:(list||[]).some(a=>a.mine),paused:missing.some(m=>m.why==="gas"||m.why==="check")};
+}
+const mmPickNote=g=>g?`${g.missing.map(m=>`**${m.label}** ${m.why==="gas"?"is paused right now: the bot's wallet needs a top-up for network fees, and the owners were told.":m.why==="check"?"can't be checked right now, and the owners were told.":"isn't offered by the bot."}`).join("\n")}\nNothing else is marked as this ticket's coin. Pick what you both agreed on, or choose **An owner takes this exchange** in the dropdown.`:"";
+function mmPickSelect(list,owner){
+  const opts=list.slice(0,owner?24:25).map(a=>new StringSelectMenuOptionBuilder().setLabel(mmPickName(a)).setValue(a.coin+":"+a.chain)
     .setDescription((a.mine?"This ticket":!mmAutoOf(a)?"Manual payout by an owner":a.contract?"Double check the network":"Paid out by the bot").slice(0,100)));
+  if(owner)opts.push(new StringSelectMenuOptionBuilder().setLabel("An owner takes this exchange").setValue("owner:owner").setDescription("A Konvert owner is the middleman, by hand"));
   return new StringSelectMenuBuilder().setCustomId("mm_pickm").setPlaceholder("Start from dropdown").addOptions(opts);
 }
 // The coin picker as one card: a Start button on every row (Components V2: raw JSON, so it works with any discord.js that can pass it on)
@@ -2877,16 +2917,18 @@ function mmPickV2(ticket,given){
   const coins=rows.filter(a=>!a.contract),stables=rows.filter(a=>!!a.contract);
   const secCoins=coins.length?[{type:14,divider:true,spacing:1},{type:10,content:"**Coins**"},...coins.map(sect)]:[];
   const secStable=stables.length?[{type:14,divider:true,spacing:1},{type:10,content:"**Stablecoins**\nDouble check the network you pick"},...stables.map(sect)]:[];
-  const comps=[{type:10,content:MM_V5()?"## Choose The Coin\nPick the coin and network you both agreed on. Double check the network.":"## Konvert Middleman  ·  Secure Escrow\nFree automated middleman for your exchange."},
+  const gone=mmNamedGone(ticket,list),note=mmPickNote(gone);
+  const comps=[{type:10,content:(MM_V5()?"## Choose The Coin\nPick the coin and network you both agreed on. Double check the network.":"## Konvert Middleman  ·  Secure Escrow\nFree automated middleman for your exchange.")+(note?`\n${note}`:"")},
     ...(rows.some(a=>a.mine&&a.contract)?[...secStable,...secCoins]:[...secCoins,...secStable])];          // (the part that holds the ticket's coin comes first)
-  comps.push({type:14,divider:true,spacing:1},{type:1,components:[mmPickSelect(list).toJSON()]});if(MM_V5())comps.push({type:10,content:"-# Konvert"});
+  comps.push({type:14,divider:true,spacing:1},{type:1,components:[mmPickSelect(list,!!gone).toJSON()]});if(MM_V5())comps.push({type:10,content:"-# Konvert"});
   return {flags:32768,components:[{type:17,accent_color:UI.brand,components:comps}]};
 }
 // The same choice as a plain card with the dropdown (for a Discord that refuses the card above)
 function mmPickMenu(ticket,given){
+  const list=given||mmPickList(ticket),gone=mmNamedGone(ticket,list),note=mmPickNote(gone);
   const emb=mmKE("brand").setTitle("Konvert Middleman  ·  Secure Escrow")
-    .setDescription("Free automated middleman for your exchange.\nPick the coin and the network you both agreed on. Double check the network.").setFooter(kFoot("Built-in server middleman bot"));
-  return {embeds:[emb],components:[new ActionRowBuilder().addComponents(mmPickSelect(given||mmPickList(ticket)))]};      // v29: the menu offers the same coins as the card (it used to offer every coin, funded or not)
+    .setDescription(`Free automated middleman for your exchange.\nPick the coin and the network you both agreed on. Double check the network.${note?`\n${note}`:""}`).setFooter(kFoot("Built-in server middleman bot"));
+  return {embeds:[emb],components:[new ActionRowBuilder().addComponents(mmPickSelect(list,!!gone))]};      // v29: the menu offers the same coins as the card (it used to offer every coin, funded or not)
 }
 // What the picker turns into once a coin is chosen (no buttons left on it)
 function mmPickDone(t,v2){
@@ -3133,6 +3175,7 @@ async function mmFlowStart(ch,ticket,by,tok){
   const list=MM_V5()?await mmFundedList(ticket):mmPickList(ticket);
   if(tok&&mmStartAbandoned(tok))return {kind:"abandoned"};
   if(!list.length)return mmOwnerFallback(ch,ticket,"coin");                           // the bot holds no coin at all right now: nothing to pick from
+  {const gone=MM_V5()?mmNamedGone(ticket,list):null;if(gone&&gone.paused&&!gone.alive)return mmNamedHandoff(ch,ticket,gone);}          // v31: the coin this ticket is for can't be offered right now: an owner takes it (never another coin in its place)
   mmSaveTicket(ch.id,t=>{t.mmFlow={v:1,step:"pick",at:Date.now(),by:by||null,cl:t.userId,ex:t.claimedBy,picks:{},rok:{},aok:{},wok:{}};t.mmStage="flow";delete t.mmOwner;delete t.mmAsk;delete t.mmStopped;});
   const sent=await mmFlowPost(ch,"pick",{list,tok});
   if(tok&&mmStartAbandoned(tok)){                                                     // this attempt was given up while it was posting (the owners were told and have the ticket): it leaves nothing behind
@@ -3214,6 +3257,17 @@ async function mmFlowRoute(interaction,cid,parts){
   const both=g=>!!(g[t.userId]&&g[t.claimedBy]);
   const ping=[t.userId,t.claimedBy];
   // ── the coin ──
+  if(head==="mm_pickm"&&String((interaction.values||[])[0]||"")==="owner:owner"){            // v31: the people ask for an owner (the coin they agreed on isn't one the bot can take)
+    await interaction.deferReply({flags:64});
+    const gone=mmNamedGone(t,await mmFundedList(t)),names=gone?gone.missing.map(m=>m.label.replace(/ - /," on ")).join(" or "):"";
+    await mmFlowLock(ch.id,async()=>{
+      const t1=mmTicketOf(ch.id),f1=t1&&t1.mmFlow;need(!!f1&&f1.step==="pick",stale);
+      await mmFlowEnd(ch,"An Owner Takes This One",`<@${uid}> asked for an owner to be the middleman.`,"warn");
+      await mmOwnerFallback(ch,mmTicketOf(ch.id)||t1,"named",null,{named:names||"the coin this ticket is for",because:gone&&gone.missing.some(m=>m.why==="unsupported")?"the bot doesn't hold it":"the bot can't take it right now"});
+    });
+    await interaction.deleteReply().catch(()=>{});
+    return;
+  }
   if(head==="mm_pick"||head==="mm_pickm"){
     const [coin,chain]=head==="mm_pick"?[parts[1],parts[2]]:String((interaction.values||[])[0]||"").split(":");
     const a=mmAsset(coin,chain);
@@ -3630,6 +3684,13 @@ function mmCoinAbout(coin,usd,price){
 }
 const mmNetName=e=>e&&e.chain?MM_CHAINS[e.chain].name:"";
 const mmOnNet=e=>e&&e.chain&&(e.contract||MM_CHAINS[e.chain].native!==e.coin)?` on **${MM_CHAINS[e.chain].name}**`:"";
+// v31: exactly what to send: the coin (a token says what it is and what it is not) and the network. "Send: USDC (the USDC token, not SOL)  ·  Network: Solana"
+function mmSendLine(e){
+  const chain=MM_CHAINS[e.chain],net=MM_NET_NAME[e.chain]||chain.name;
+  return `**Send:** **${e.coin}**${e.contract?` (the ${e.coin} token, not ${chain.native})`:""}  ·  **Network:** **${net}**`;
+}
+// v31: a stablecoin has no price to move, so its amount stands until the deal ends; any other coin follows the live price, and the card updates itself (in place) only when the price moved a lot
+const mmHoldLine=e=>STABLE.has(e.coin)?"This amount stays the same until the deal ends.":"The amount follows the live price. If it moves a lot, this card updates by itself, and any amount shown earlier on it still counts.";
 const mmP=(e,uid)=>`<@${uid}>${uid&&uid===e.exchangerId?" (Exchanger)":""}`;                        // a name, with "(Exchanger)" after the exchanger's
 const mmPayLine=e=>mmPayWords(e.pays,e.fiat,e.c2c);
 const mmCheckWhere=e=>e.c2c||!e.pays?"wallet":`**${e.pays}**`;
@@ -3671,9 +3732,10 @@ function mmCardV21(e,note,qr){
   if(e.state==="await"){
     emb=mmEmb(e,"brand","Waiting For Payment");
     if(qr)emb.setThumbnail("attachment://qr.png");
-    B.push(kHero(mmMoney(e,e.needRaw)),`${D}, send this to the address below${net}.`,"```"+e.address+"```");
+    B.push(`${D}, send exactly this to the address below.`,kHero(mmMoney(e,e.needRaw)),mmSendLine(e),"```"+e.address+"```");
     const ex=mmExactLine(e);if(ex)B.push(ex);
-    B.push(kNote(`Send only to this address. Anyone who gives you a different one, even ${R}, is scamming you.`),kNote(`Detected automatically. Sent it? Paste the transaction ID here and I check where it went. This amount holds until <t:${Math.floor(e.quoteExp/1000)}:t>.`));
+    B.push(kNote(`Send only to this address. Anyone who gives you a different one, even ${R}, is scamming you.`),kNote(`Only **${e.coin}${e.contract?` on ${MM_NET_NAME[e.chain]||MM_CHAINS[e.chain].name}`:""}** counts. Any other coin or network can't be matched by the bot and has to be sorted out by an owner, so check it before you send.`),
+      kNote(`Detected automatically. Sent it? Paste the transaction ID here and I check where it went. ${mmHoldLine(e)}`));
     if((e.watch||[]).length)B.push(`Looking for ${e.watch.map(w=>`\`${mmShort(w.txid)}\``).join("  ")}. The network can't see it yet, so I keep checking for 30 minutes.`);
   }else if(e.state==="confirming"){
     const v=mmVerdict(e),N=MM_CHAINS[e.chain].confs,tx=(e.txs||[]).find(t=>!t.final)||(e.txs||[])[0]||{};
@@ -3794,19 +3856,29 @@ const mmWithin=(ms,p,fb,label)=>new Promise(res=>{      // the answer of p, or f
   Promise.resolve(p).then(v=>end(v),err=>end(fb,(err&&err.message)||String(err)));
 });
 async function mmFundedList(ticket){
-  const list=mmPickList(ticket),low=new Set();
+  const list=mmPickList(ticket),low=new Set(),skipped=[];
   const ok=await Promise.all(list.map(async a=>{
     if(!a.contract)return true;
     try{
       const addr=mmDepositAddress(a.chain);
-      if(addr&&mmSigner(a.chain,addr)&&(await mmWithin(MM_FUND_CHECK_MS,mmGasReady(a.chain,addr),null,`coin check ${a.coin} on ${a.chain} (gas)`))===false){low.add(a.chain);console.warn(`[mm] coin check ${a.coin} on ${a.chain}: left out, the wallet has no gas there`);return false;}
+      if(addr&&mmSigner(a.chain,addr)&&(await mmWithin(MM_FUND_CHECK_MS,mmGasReady(a.chain,addr),null,`coin check ${a.coin} on ${a.chain} (gas)`))===false){low.add(a.chain);skipped.push({key:a.key,asset:a,why:"gas"});console.warn(`[mm] coin check ${a.coin} on ${a.chain}: left out, the wallet has no gas there`);return false;}
       const good=!!(await mmWithin(MM_FUND_CHECK_MS,mmTokenCheck(a),false,`coin check ${a.coin} on ${a.chain} (token)`));
-      if(!good)console.warn(`[mm] coin check ${a.coin} on ${a.chain}: left out, the token could not be verified`);
+      if(!good){skipped.push({key:a.key,asset:a,why:"check"});console.warn(`[mm] coin check ${a.coin} on ${a.chain}: left out, the token could not be verified`);}
       return good;
-    }catch(err){console.error(`[mm] coin check ${a.coin} on ${a.chain}: ${err&&err.message}`);return false;}
+    }catch(err){skipped.push({key:a.key,asset:a,why:"check"});console.error(`[mm] coin check ${a.coin} on ${a.chain}: ${err&&err.message}`);return false;}
   }));
   for(const c of low){const addr=mmDepositAddress(c);if(addr)mmGasLow(c,addr);}
-  return list.filter((a,i)=>ok[i]);
+  const out=list.filter((a,i)=>ok[i]);
+  out.skipped=skipped;                                               // (v31: the picker says which coin of the ticket was left out and why, and an exchange whose coin can't be offered goes to an owner instead of to another coin)
+  return out;
+}
+// v31: the ticket's own coin can't be offered right now (the wallet has no gas for its payout, or the token could not be checked) and nothing else on the list is it:
+// an owner takes the exchange, and is told exactly what to fix. A different coin is never put in its place.
+async function mmNamedHandoff(ch,ticket,gone){
+  const real=gone.missing.filter(m=>m.why!=="unsupported"),names=real.map(m=>m.label.replace(/ - /," on ")),gas=real.filter(m=>m.why==="gas");
+  const fix=[...new Set(gas.map(m=>{const a=(m.key||"").split(":")[1],c=MM_CHAINS[a],gp=MM_GAS_PLAN.find(p=>p.chain===a);return c&&mmDepositAddress(a)?`send about ${gp?gp.send:"a few dollars of"} ${c.native} to ${mmDepositAddress(a)} (${c.name})`:null;}).filter(Boolean))];
+  const because=gas.length?"its wallet has no coin left to pay the network fee":"it could not be checked just now";
+  return mmOwnerFallback(ch,ticket,"named",fix.length?`To fix it: ${fix.join("; ")}. \`$gas\` lists every wallet.`:null,{named:names.join(" or ")||"this coin",because});
 }
 // The picker was refused one coin (it went low a moment ago): the card is drawn again without it
 async function mmPickRefresh(ch){
@@ -3814,6 +3886,8 @@ async function mmPickRefresh(ch){
   const msg=await ch.messages.fetch(f.msgId).catch(()=>null);if(!msg)return;
   const list=await mmFundedList(t);
   if(!list.length){await mmFlowEnd(ch,"An Owner Takes This One","The bot can't pay out any coin right now, so an owner will middleman this exchange.","warn");await mmOwnerFallback(ch,mmTicketOf(ch.id)||t,"coin").catch(()=>{});return;}
+  const gone=mmNamedGone(t,list);
+  if(gone&&gone.paused&&!gone.alive){await mmFlowEnd(ch,"An Owner Takes This One","The coin this ticket is for can't be taken by the bot right now, so an owner will middleman this exchange.","warn");await mmNamedHandoff(ch,mmTicketOf(ch.id)||t,gone).catch(()=>{});return;}
   await msg.edit(f.pickV2?mmPickV2(t,list):{content:null,...mmPickMenu(t,list)}).catch(()=>{});
 }
 
@@ -4142,14 +4216,26 @@ function mmCardRows(e){
 }
 // Draws the card. fresh = a new message (the old one loses its buttons, so only one live card exists); otherwise the existing one is edited in place.
 // opts.ping = people to mention (only a new message can ping) · opts.freeze = [title, text] for the card that this one replaces
+const MM_CARD_RETRY_MS=800,MM_CARD_REPOST_MS=10*60*1000,_mmCardRepost=new Map();
 async function mmPostCard(channel,e,opts){
   opts=opts||{};
   const qr=e.flow&&e.state==="await"&&e.address?await mmQr(e.address):null;
   const payload={embeds:[mmCardEmbed(e,opts.note,!!qr)],components:mmCardRows(e)};
   if(qr)payload.files=[new AttachmentBuilder(qr,{name:"qr.png"})];
   if(opts.ping&&opts.ping.length){payload.content=opts.ping.map(u=>`<@${u}>`).join(" ");payload.allowedMentions={users:opts.ping};}
-  const old=e.cardId?await channel.messages.fetch(e.cardId).catch(()=>null):null;
-  if(old&&!opts.fresh){const ok=await old.edit(e.flow?{...payload,attachments:[]}:payload).then(()=>true).catch(()=>false);if(ok)return old;}      // (a card from the flow carries its QR only while it waits for the payment)
+  const found=e.cardId?await mmCardOf(channel,e.cardId):null,old=found||null;       // (v31: null = the card is gone · undefined = Discord could not be asked just now)
+  if(found===undefined&&!opts.fresh)return null;                                    // v31: no second card is posted next to one that may be there. The next update tries again.
+  if(opts.edit&&!old)return null;                                                   // v31: an update that must never become a new message (the amount worked out again)
+  if(old&&!opts.fresh){
+    const ed=()=>old.edit(e.flow?{...payload,attachments:[]}:payload).then(()=>true).catch(()=>false);      // (a card from the flow carries its QR only while it waits for the payment)
+    if(await ed())return old;
+    if(opts.edit)return null;
+    await new Promise(r=>setTimeout(r,MM_CARD_RETRY_MS));
+    if(await ed())return old;
+    const last=_mmCardRepost.get(e.id)||0;                                          // v31: the card exists but can't be edited: a new one is posted at most every ten minutes, never in a loop
+    if(Date.now()-last<MM_CARD_REPOST_MS){console.warn(`[mm] card of ${e.id} could not be edited, not posting another one yet`);return null;}
+    _mmCardRepost.set(e.id,Date.now());
+  }
   if(old&&opts.drop&&e.flow>=4)await old.delete().catch(()=>{});      // v20: the old card goes away (fewer cards in the chat)
   else if(old){                                                         // the old card loses its buttons; opts.freeze = [title, text] also turns it into a short line of what it was (an address and a QR must not stay behind as if the card were open)
     const gone=opts.freeze?{content:null,embeds:[mmEmb(e,"mute",opts.freeze[0]).setDescription(opts.freeze[1]).setFooter(kFoot(`${e.id}`))],components:[],attachments:[]}:{components:[]};
@@ -5365,7 +5451,10 @@ async function mmScanStrayEvm(ck,addr,waiting,evmWaiting){
   }
   _mmMeta.stray[ck]=newSt;
 }
-// Solana: any SPL token the wallet holds that is not a coin the bot trades (the bot only sends SOL, so it tells the owners and nothing else)
+// Solana: any SPL token the wallet holds that no open deal is waiting for. A coin the bot trades (USDC, USDT) is read payment by payment, with the wallet it came from, so "Return To Sender" works
+// (v31: before, the payment had no sender and no way back, so a client who paid USDC into a SOL deal could only be helped by moving the money by hand with the wallet key).
+// What can't be told apart (a token the bot doesn't know, or a balance no payment explains) is still reported once, as before.
+const _mmStraySolSeen=new Map();
 async function mmScanStraySol(addr,solWaiting,open){
   const mine=new Set((open||[]).filter(d=>d.chain==="sol"&&d.contract&&!MM_TERMINAL.has(d.state)&&mmSameAddr("sol",d.address,addr)).map(d=>d.contract));      // tokens that open deals use are no strangers
   for(const pid of [MM_SPL_PROGRAM,"TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"]){
@@ -5373,8 +5462,29 @@ async function mmScanStraySol(addr,solWaiting,open){
     for(const a of (r&&r.value)||[]){
       const info=a.account&&a.account.data&&a.account.data.parsed&&a.account.data.parsed.info,ta=info&&info.tokenAmount;
       if(!ta||!ta.amount||ta.amount==="0"||mine.has(info.mint))continue;
-      const known=MM_ASSETS.find(x=>x.chain==="sol"&&x.contract===info.mint);
-      await mmStrayReport({kind:"token",chainKey:"sol",asset:{coin:known?known.coin:`token ${mmShort(info.mint)}`,contract:info.mint,decimals:known?known.decimals:(Number(ta.decimals)||0)},raw:ta.amount,from:null,txid:`${info.mint}:${ta.amount}`,deals:solWaiting,noLink:true,noReturn:true});
+      const known=MM_ASSETS.find(x=>x.chain==="sol"&&x.contract===info.mint),seenKey=`${a.pubkey||info.mint}|${ta.amount}`;
+      if(_mmStraySolSeen.get(seenKey))continue;                                         // (the same balance was read payment by payment a moment ago)
+      if(await MMDB.get(`stray:sol:${info.mint}:${ta.amount}:${info.mint}`)){_mmStraySolSeen.set(seenKey,Date.now());continue;}      // (an older version already reported this balance: the owners are not told a second time)
+      const asset={coin:known?known.coin:`token ${mmShort(info.mint)}`,contract:info.mint,decimals:known?known.decimals:(Number(ta.decimals)||0)};
+      let left=BigInt(ta.amount);
+      if(known&&a.pubkey){
+        let sigs=[];try{sigs=await mmRpc("sol","getSignaturesForAddress",[a.pubkey,{limit:10,commitment:"confirmed"}]);}catch{}
+        for(const sg of Array.isArray(sigs)?sigs:[]){
+          if(left<=0n)break;
+          if(!sg||!sg.signature||sg.err)continue;
+          const v=await mmVerifyTx("sol",known,addr,sg.signature).catch(()=>null);
+          if(!v||!v.found||v.ok===false||!v.toUs||v.self||!(v.amountRaw>0n)||v.amountRaw>left)continue;
+          left-=v.amountRaw;
+          if(mmIgnored("sol",v.from))continue;
+          await mmStrayReport({kind:"token",chainKey:"sol",asset,raw:v.amountRaw,from:v.from||null,txid:sg.signature,deals:solWaiting,noReturn:!v.from});
+        }
+      }
+      if(left>0n){
+        const rest=left.toString();
+        await mmStrayReport({kind:"token",chainKey:"sol",asset,raw:rest,from:null,txid:`${info.mint}:${rest}`,deals:solWaiting,noLink:true,noReturn:true});
+      }
+      _mmStraySolSeen.set(seenKey,Date.now());
+      if(_mmStraySolSeen.size>200)_mmStraySolSeen.clear();
     }
   }
 }
@@ -5410,6 +5520,18 @@ async function mmSweep(){
   }catch(err){console.error("[mm] sweep:",err.message);}
   finally{_mmSweeping=false;}
 }
+// v31: the asked amount is worked out again only when the price really moved (2% or more) and only for a coin that has a price to move. A stablecoin never is: its amount stands until the deal ends.
+// The v30 clock re-worked every amount every 30 minutes, so a ticket that sat open for a night got a new amount and an "edited" card 20 times. When it is worked out again it is an EDIT of the same card, never a new message.
+const MM_REQUOTE_MOVE=0.02;
+async function mmRequote(e){
+  const keep=()=>mmUpdate(e.id,x=>{if(x.state==="await")x.quoteExp=Date.now()+MM_QUOTE_MS;}).catch(()=>{});
+  if(STABLE.has(e.coin)){await keep();return {did:false,why:"stable"};}
+  const price=await Promise.race([getPrice(e.coin),new Promise(r=>setTimeout(()=>r(null),8000))]).catch(()=>null);
+  if(!(price>0)||!(e.price>0)||Math.abs(price-e.price)/e.price<MM_REQUOTE_MOVE){await keep();return {did:false,why:"small"};}
+  const x=await mmArm(e.id,e.chain),ch=await mmChannelOf(x);
+  if(ch)await mmPostCard(ch,x,{edit:true,note:"The price moved, so the amount was worked out again. Sending the earlier amount still works."});
+  return {did:true};
+}
 async function mmSweepOne(e){
   const now=Date.now(),id=e.id;
   if(e.flow>=5)await mmRemind(e,now).catch(err=>console.error(`[mm] reminder ${id}:`,err.message));
@@ -5425,11 +5547,8 @@ async function mmSweepOne(e){
       return;
     }
     if(e.state==="await"&&e.quoteExp&&now>e.quoteExp&&!(e.watch||[]).length&&!(e.txs||[]).length&&now>(_mmRequoteAt.get(id)||0)){
-      _mmRequoteAt.set(id,now+60*1000);                             // the amount is worked out again from a fresh price (not more than once a minute); earlier amounts still count
-      try{
-        const x=await mmArm(id,e.chain),ch=await mmChannelOf(x);
-        if(ch)await mmPostCard(ch,x,{note:"The price moved, so the amount was worked out again. Sending the earlier amount still works."});
-      }catch(err){if(!(err instanceof MmError))console.error(`[mm] requote ${id}:`,err.message);}
+      _mmRequoteAt.set(id,now+60*1000);                             // (not more than once a minute); earlier amounts still count
+      try{await mmRequote(e);}catch(err){if(!(err instanceof MmError))console.error(`[mm] requote ${id}:`,err.message);}
     }
     if((e.state==="net"||e.state==="await")&&!(e.watch||[]).length&&!(e.txs||[]).length){
       if(now-e.createdAt>MM_OPEN_MS){                               // nobody paid in for a day: the deal is cancelled (the ticket stays). A deal that holds anything is never cancelled by itself.
@@ -5444,7 +5563,7 @@ async function mmSweepOne(e){
         let did=false;
         const x=await mmUpdate(id,y=>{if(y.state==="await"&&!y.remindedAt&&!(y.txs||[]).length){y.remindedAt=now;did=true;}});
         const ch=did?await mmChannelOf(x):null;
-        if(ch)await mmSayTemp(ch,{tmp:MM_TMP_LONG_MS,content:x.flow?`<@${x.depositorId}>`:`<@${x.depositorId}> <@${x.recipientId}>`,embeds:[mmEmb(x,"warn","Still Waiting For The Deposit").setDescription(`Nothing has arrived yet, and nothing is held. <@${x.depositorId}>, send **${mmFmtUnits(x.needRaw,x.decimals,x.dp)} ${x.coin}** on **${mmNetOf(x)}** to the address on the card (a little off is fine). Already sent it? Paste the transaction ID here and I check where it went. <@${x.recipientId}>, nothing is needed from you yet.\nIf the exchange is off, press **Help**, then **${x.flow?"Cancel Deal":"Cancel Middleman"}**. A deal nobody pays into is cancelled by itself after 24 hours.`).setFooter(kFoot(x.id))],allowedMentions:{users:x.flow?[x.depositorId]:[x.depositorId,x.recipientId]}}).catch(()=>{});
+        if(ch)await mmSayTemp(ch,{tmp:MM_TMP_LONG_MS,content:x.flow?`<@${x.depositorId}>`:`<@${x.depositorId}> <@${x.recipientId}>`,embeds:[mmEmb(x,"warn","Still Waiting For The Deposit").setDescription(`Nothing has arrived yet, and nothing is held. <@${x.depositorId}>, send **${mmFmtUnits(x.needRaw,x.decimals,x.dp)} ${x.coin}**${x.contract?` (the ${x.coin} token, not ${MM_CHAINS[x.chain].native})`:""} on **${MM_NET_NAME[x.chain]||mmNetOf(x)}** to the address on the card (a little off is fine). Already sent it? Paste the transaction ID here and I check where it went. <@${x.recipientId}>, nothing is needed from you yet.\nIf the exchange is off, press **Help**, then **${x.flow?"Cancel Deal":"Cancel Middleman"}**. A deal nobody pays into is cancelled by itself after 24 hours.`).setFooter(kFoot(x.id))],allowedMentions:{users:x.flow?[x.depositorId]:[x.depositorId,x.recipientId]}}).catch(()=>{});
       }
     }
     if(e.state==="short"&&!e.shortRemindedAt&&e.shortAt&&now-e.shortAt>MM_IDLE_REMIND_MS){
@@ -6755,7 +6874,7 @@ async function mmRoute(interaction,cid){
 // "$mm" asks (or brings the card back) · "$mm help" pings the owners · "we need mm" asks too · the receiving person pastes their address here · owners run the
 // whole deal with "$mm release", "$mm refund", "$mm funded 0.1", "$mm sent <tx>", "$mm approve", "$mm panel" ... and, anywhere, "$mm wallet", "$mm deals", ...
 const MM_HELP_PARTY="`$mm` shows the card  ·  `$mm help` pings the owners  ·  `$mm status`  ·  `$mm release`  ·  `$mm refund`  ·  `$mm continue` (accept a shortfall)  ·  `$mm cancel`  ·  `$mm dispute <what went wrong>`  ·  `$mm address <your address>`\nYou can also just say **we need mm** to start it, and paste your address in the chat when the funds are released.";
-const MM_HELP_OWNER="Owner commands: `$mm status`  ·  `$mm panel`  ·  `$mm release`  ·  `$mm refund`  ·  `$mm accept`  ·  `$mm funded <amount> [tx]`  ·  `$mm approve`  ·  `$mm reject`  ·  `$mm sent [tx]`  ·  `$mm retry`  ·  `$mm payout <address>`  ·  `$mm refundto <address>`  ·  `$mm cancel`  ·  `$mm undispute`  ·  `$mm wallet`  ·  `$mm deals`  ·  `$mm send <deal> <address>`  ·  `$mm sweep <chain> <address>`  ·  `$mm close <deal>`  ·  `$mm history <deal>`  ·  `$mm log`  ·  `$mm log find <address>`  ·  `$mm secure`  ·  `$mm doctor`  ·  `$freeze`  ·  `$unfreeze`  ·  `$gas`  ·  `$mm help`";
+const MM_HELP_OWNER="Owner commands: `$mm status`  ·  `$mm panel`  ·  `$mm release`  ·  `$mm refund`  ·  `$mm accept`  ·  `$mm funded <amount> [tx]`  ·  `$mm approve`  ·  `$mm reject`  ·  `$mm sent [tx]`  ·  `$mm retry`  ·  `$mm payout <address>`  ·  `$mm refundto <address>`  ·  `$mm cancel`  ·  `$mm undispute`  ·  `$mm wallet`  ·  `$mm deals`  ·  `$mm send <deal> <address>`  ·  `$mm sweep <chain> <address>`  ·  `$withdraw`  ·  `$mm close <deal>`  ·  `$mm history <deal>`  ·  `$mm log`  ·  `$mm log find <address>`  ·  `$mm secure`  ·  `$mm doctor`  ·  `$freeze`  ·  `$unfreeze`  ·  `$gas`  ·  `$mm help`";
 const _mmIntentAt=new Map();
 async function mmMessage(message,ticket){
   if(!ticket||ticket.status!=="open")return false;
@@ -6911,7 +7030,7 @@ async function mmCommand(ticket,arg,x){
 
 // ── Owner tools that work anywhere ("$mm wallet", "$mm deals", "$mm send ...") ──────────────────────────────────
 // The answer goes to the owner's DMs (a ticket has clients in it, and the wallet is nobody else's business).
-const MM_GLOBAL_SUBS=new Set(["alert","wallet","deals","send","sweep","close","history","log","secure","doctor","freeze","unfreeze","gas","ltc","btc"]);
+const MM_GLOBAL_SUBS=new Set(["alert","wallet","deals","send","sweep","close","history","log","secure","doctor","freeze","unfreeze","gas","ltc","btc","withdraw"]);
 const mmAge=ms=>{const s=Math.max(0,Math.round(ms/1000)),d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60);return d?`${d}d ${h}h`:h?`${h}h ${m}m`:m?`${m}m`:`${s}s`;};
 async function mmWalletReport(){
   const w=mmWallets(),rows=await mmWalletRows(),out=[];
@@ -6976,11 +7095,122 @@ async function mmSweepConfirm(act,code,uid){
   }
   return `Sweep to \`${rec.to}\`:\n${out.join("\n")}`;
 }
+// ── v31: "$withdraw": everything the bot's wallets hold, in one place ────────────────────────────────────────────
+//   1. `$withdraw`                     lists it: what can leave now, what is held for open deals, what can't be sent yet and why
+//   2. `$withdraw <your address>`      (a 0x... address for the Ethereum-family coins and/or a Solana address for the Solana coins) shows exactly what would be sent and where
+//   3. the owner presses the button after the countdown. Tokens go first (they need the chain's own coin for the fee), the chain's own coin last.
+// Only the two permanent owners. `$withdraw everything <address>` also takes what open deals hold: those deals are then left holding nothing, and the owner pays those people by hand.
+async function mmWithdrawRows(){
+  const out=[];
+  for(const r of await mmWalletRows()){
+    if(r.balance==null){out.push({...r,unknown:true});continue;}
+    if(!(r.balance>0n))continue;
+    const fee=r.contract?await mmGasReady(r.chain,r.address).catch(()=>null):true;                  // true · false (the wallet can't pay the fee) · null (could not be asked)
+    out.push({...r,fee,free:r.free>0n?r.free:0n,held:r.reserved>0n?(r.balance<r.reserved?r.balance:r.reserved):0n});
+  }
+  return out;
+}
+const mmWdName=r=>`${r.coin} on ${MM_CHAINS[r.chain].name}`;
+const mmWdTopUp=ck=>{const c=MM_CHAINS[ck],gp=MM_GAS_PLAN.find(p=>p.chain===ck);return `send about ${gp?gp.send:"a few dollars of"} ${c.native} to \`${mmDepositAddress(ck)}\` first`;};
+function mmWithdrawText(rows){
+  const w=mmWallets(),L=[],free=[],held=[];
+  for(const [fam,title] of [["evm","Ethereum, BNB Chain, Base, Arbitrum, Optimism, Polygon, Avalanche"],["sol","Solana"]]){
+    const s=w[fam][0];if(!s)continue;
+    L.push(`**${title}**  \`${s.address}\``);
+    const mine=rows.filter(r=>MM_CHAINS[r.chain].family===fam);
+    if(!mine.length)L.push("Nothing in it.");
+    for(const r of mine){
+      if(r.unknown){L.push(`${mmWdName(r)}: could not be read right now, so try again in a minute`);continue;}
+      const bits=[];
+      if(r.free>0n){bits.push(`**${mmFmtUnits(r.free,r.decimals)} ${r.coin}** can leave now`);free.push(r);}
+      if(r.held>0n){bits.push(`${mmFmtUnits(r.held,r.decimals)} held for ${r.deals.map(d=>d.id).join(", ")}`);held.push(r);}
+      L.push(`${mmWdName(r)}: ${bits.join("  ·  ")||"all of it is held for open deals"}${r.contract&&r.fee===false&&r.free>0n?"\n   Can't be sent yet: the wallet has too little "+MM_CHAINS[r.chain].native+" to pay the network fee, so "+mmWdTopUp(r.chain)+".":""}`);
+    }
+    L.push("");
+  }
+  L.push(`**Can leave now:** ${free.length?free.map(r=>`${mmFmtUnits(r.free,r.decimals)} ${mmWdName(r)}`).join(", "):"nothing"}`);
+  if(held.length)L.push(`**Held for open deals** (these belong to the people in those tickets): ${[...new Set(held.flatMap(r=>r.deals.map(d=>d.id)))].join(", ")}`);
+  L.push(kNote("Bitcoin and Litecoin deposits go to your own addresses (`$mm wallet` shows them), so they are not in this list."));
+  L.push("**To withdraw:** send `$withdraw <your address>`. Use a `0x...` address for the Ethereum-family coins, a Solana address for the Solana coins, or both in one message: `$withdraw 0x... <solana address>`. You see exactly what would be sent, then press the button.");
+  L.push("`$withdraw everything <address>` also takes what open deals hold. Only do that if you will pay those people yourself.");
+  return L.join("\n");
+}
+function mmWithdrawAddrs(args){
+  const out={evm:null,sol:null,bad:[]};
+  for(const a of args){
+    const e=mmNormAddress("eth",a),sl=e?null:mmNormAddress("sol",a);
+    if(e&&!out.evm)out.evm=e;else if(sl&&!out.sol)out.sol=sl;else out.bad.push(a);
+  }
+  return out;
+}
+// what would be sent: tokens first, the chain's own coin last. A chain whose tokens can't be sent yet keeps its own coin (the top-up it needs is then one number)
+function mmWithdrawItems(rows,addrs,everything){
+  const items=[],left=[],stuck=new Set(),needed=new Set();
+  for(const r of rows){
+    if(!r.contract||r.unknown)continue;
+    if((everything?r.balance:r.free)>0n&&r.fee===false)stuck.add(r.chain);          // tokens that could leave if the wallet could pay the fee
+    if(!everything&&r.held>0n)needed.add(r.chain);                                   // tokens that open deals hold: those deals need the chain's own coin to pay their release
+  }
+  for(const r of rows){
+    if(r.unknown||!(r.balance>0n))continue;
+    const raw=everything?r.balance:r.free;
+    if(!(raw>0n))continue;
+    const to=addrs[MM_CHAINS[r.chain].family];
+    if(!to){left.push({r,raw,why:"no address for that family"});continue;}
+    if(mmSameAddr(r.chain,to,r.address)){left.push({r,raw,why:"that is the middleman's own address"});continue;}
+    if(r.contract&&r.fee===false){left.push({r,raw,why:`the wallet needs ${MM_CHAINS[r.chain].native} for the network fee first`});continue;}
+    if(!r.contract&&needed.has(r.chain)){left.push({r,raw,why:`kept: the open deals holding tokens on ${MM_CHAINS[r.chain].name} need it to pay their network fee`});continue;}
+    if(!r.contract&&stuck.has(r.chain)){left.push({r,raw,why:`kept for now: the ${MM_CHAINS[r.chain].name} tokens that are still in the wallet need it for their fee`});continue;}
+    items.push({chain:r.chain,contract:r.contract,coin:r.coin,decimals:r.decimals,raw:raw.toString(),to,deals:(everything?r.deals:[]).map(d=>d.id),held:everything?r.held.toString():"0"});
+  }
+  const order=[...new Set(items.map(i=>i.chain))];
+  items.sort((a,b)=>order.indexOf(a.chain)-order.indexOf(b.chain)||((a.contract?0:1)-(b.contract?0:1)));
+  return {items,left};
+}
+function mmWithdrawPlan(items,left,addrs,everything){
+  const lines=[`This sends ${everything?"**everything**, including what open deals hold,":"everything that is **not held for an open deal**"} out of the middleman wallets:`];
+  const dest=[];if(addrs.evm&&items.some(i=>MM_CHAINS[i.chain].family==="evm"))dest.push(`Ethereum-family coins to:\n${mmBox(addrs.evm)}`);if(addrs.sol&&items.some(i=>MM_CHAINS[i.chain].family==="sol"))dest.push(`Solana coins to:\n${mmBox(addrs.sol)}`);
+  lines.push(dest.join("\n"));
+  lines.push(items.map(i=>`**${mmFmtUnits(i.raw,i.decimals)} ${i.coin}** on ${MM_CHAINS[i.chain].name}`).join("\n").slice(0,1500));
+  const heldDeals=[...new Set(items.flatMap(i=>i.deals))];
+  if(everything&&heldDeals.length)lines.push(`**These deals will be left holding nothing:** ${heldDeals.join(", ")}. You pay those people yourself, then close the deals with \`$mm close <deal> confirm\`.`);
+  if(left.length)lines.push(`**Not included:**\n${left.slice(0,8).map(x=>`${mmFmtUnits(x.raw,x.r.decimals)} ${mmWdName(x.r)} (${x.why})`).join("\n")}`);
+  lines.push("The network fee comes out of each chain's own coin. Only continue if these addresses are your own wallets. It can't be undone, and the button works for 10 minutes.");
+  return mmP25(everything?"Withdraw Everything, Held Funds Too?":"Withdraw Everything That Is Free?","Withdraw",lines,{final:true,danger:true});
+}
+async function mmWithdrawRun(items,everything,uid){
+  if(!PERMANENT_OWNER_IDS.includes(uid))throw new MmError("no","Only the two permanent owners can withdraw from the middleman wallet. Nothing was sent and the funds are safe.");
+  const now=new Map((await mmWithdrawRows()).map(r=>[r.chain+":"+(r.contract||"native"),r])),out=[];
+  for(const it of items){
+    const cur=now.get(it.chain+":"+(it.contract||"native")),name=`${it.coin} on ${MM_CHAINS[it.chain].name}`;
+    const have=cur&&!cur.unknown?(everything?cur.balance:cur.free):0n,want=BigInt(it.raw),raw=have<want?have:want;        // (never more than what is there now, and never what a deal holds unless "everything" was asked for)
+    if(!(raw>0n)){out.push(`${name}: nothing left to send`);continue;}
+    try{
+      const e=await mmPseudoDeal({kind:"sweep",chainKey:it.chain,contract:it.contract,coin:it.coin,decimals:it.decimals,amountRaw:raw,to:it.to,by:uid});
+      const g=await mmGoPayout(e.id,"release",uid,{owner:true,wait:true});
+      out.push(`${mmFmtUnits(raw,it.decimals)} ${name}: ${MM_TERMINAL.has(g.e.state)?`sent${g.e.out&&g.e.out.txid?` (${mmTxLink(g.e,g.e.out.txid)})`:""}`:g.e.state==="sending"?"on its way (it is followed until it lands)":`not sent yet (${mmErrText((g.e.payFail&&g.e.payFail.msg)||g.e.state)})`}`);
+    }catch(err){out.push(`${name}: ${err instanceof MmError?err.message:"failed"}`);}
+  }
+  const heldDeals=everything?[...new Set(items.flatMap(i=>i.deals))]:[];
+  return `Withdrawal:\n${out.join("\n")}${heldDeals.length?`\n\nThese deals now hold nothing: ${heldDeals.join(", ")}. Pay those people yourself, then close each with \`$mm close <deal> confirm\`.`:""}\nRun \`$withdraw\` again to see what is left.`;
+}
+async function mmWithdrawCommand(message,ticket,uid,sp,dm){
+  if(!PERMANENT_OWNER_IDS.includes(uid))throw new MmError("no","Only the two permanent owners can withdraw from the middleman wallet. Nothing was sent and the funds are safe.");
+  const everything=/^(everything|all)$/i.test(sp[0]||""),args=everything?sp.slice(1):sp;
+  const rows=await mmWithdrawRows();
+  if(!args.length)return dm({embeds:[mmKE("brand").setTitle("Middleman Holdings").setDescription(mmWithdrawText(rows).slice(0,4000)).setTimestamp()]});
+  const addrs=mmWithdrawAddrs(args);
+  if(addrs.bad.length)throw new MmError("address",`\`${String(addrs.bad[0]).slice(0,60)}\` is not a valid Ethereum-family (0x...) or Solana address, or you gave two of the same kind. Nothing was sent and the funds are safe.`);
+  const {items,left}=mmWithdrawItems(rows,addrs,everything);
+  if(!items.length)throw new MmError("state",`There is nothing to send to ${args.length>1?"those addresses":"that address"} right now.${left.length?` Not included: ${left.slice(0,4).map(x=>`${mmFmtUnits(x.raw,x.r.decimals)} ${mmWdName(x.r)} (${x.why})`).join("; ")}.`:" The wallet holds nothing of that kind that is free."} Nothing was sent.`);
+  await mmOwnerGuard(mmGuardDm(uid,message,ticket),mmWithdrawPlan(items,left,addrs,everything),()=>mmWithdrawRun(items,everything,uid),null);
+  return true;
+}
 async function mmGlobalCommand(message,ticket){
   const text=String(message.content||"").trim();
   if(!text||text.length>400||text[0]!=="$")return false;
   let m=text.match(/^\$(?:mm|middleman)\s+(\w+)(?:\s+([\s\S]*))?$/i);
-  if(!m)m=text.match(/^\$(freeze|unfreeze|gas)(?:\s+([\s\S]*))?$/i);          // v20: $freeze, $unfreeze and $gas work without "mm"
+  if(!m)m=text.match(/^\$(freeze|unfreeze|gas|withdraw)(?:\s+([\s\S]*))?$/i);          // v20: $freeze, $unfreeze and $gas work without "mm" (v31: so does $withdraw)
   if(!m)return false;
   const sub=m[1].toLowerCase(),rest=String(m[2]||"").trim(),sp=rest.split(/\s+/).filter(Boolean);
   if(!MM_GLOBAL_SUBS.has(sub)||(sub==="wallet"&&rest))return false;                // ("$mm wallet <address>" is the receiver's payout address)
@@ -7000,6 +7230,7 @@ async function mmGlobalCommand(message,ticket){
       const back=r.id?`${r.id} works again.`:(offNow?`The freeze is off, **but the middleman is still off**, so every new exchange still goes to an owner:\n${mmOffLines(offNow).join("\n")}`:"Everything works again. New exchanges go to the bot's middleman again.");
       return await dm({embeds:[mmKE(r.on?"warn":offNow&&whole?"warn":"ok").setTitle(`${r.id||"Middleman"} ${r.on?"Frozen":"Unfrozen"}`).setDescription((r.on?`Releases, refunds, cancels and new deals are stopped${r.id?` for ${r.id}`:""}. Deposits are still seen. A payout that was already sent can't be recalled.${whole?" New exchanges go to an owner while it is frozen, and the people in them are told it is switched off. `/mmadmin resume` does not lift a freeze: `$unfreeze` does.":""}\n\nOpen deals (${r.count}):\n${r.text}\n\nTo release or refund one deal while frozen, type \`$mm release\` or \`$mm refund\` in its ticket. \`$unfreeze\` turns everything back on.`:`${back}${whole?`\n\n${mmWaitingText(mmWaiting())}`:""}`).slice(0,4000)).setTimestamp()],components:(!r.on&&whole)?mmOffRows(offNow):[]}),true;
     }
+    if(sub==="withdraw")return await mmWithdrawCommand(message,ticket,uid,sp,dm),true;        // v31: see what is withdrawable, give an address, confirm
     if(sub==="gas"){
       const ch=await mmGasRun(message);
       return await dm({content:ch?`The gas list is open in <#${ch.id}>. It updates by itself and closes when every wallet is funded.`:"I couldn't open the gas channel. Check my permissions, or use `$mm wallet`."}),true;
