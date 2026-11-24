@@ -46,7 +46,7 @@ const { Pool } = require("pg");
 
 // Which build is running. Shown at the bottom of /ping and printed in the logs, so a deploy that did not go through is easy to spot.
 // BOT_BUILD is the first 7 characters of the commit Railway built (it matches the commit on GitHub); it is blank when run anywhere else.
-const BOT_VERSION="v32";
+const BOT_VERSION="v33";
 const BOT_BUILD=String(process.env.RAILWAY_GIT_COMMIT_SHA||"").slice(0,7);
 const BUILD_TEXT=BOT_BUILD?`${BOT_VERSION}  ·  ${BOT_BUILD}`:BOT_VERSION;
 
@@ -2910,7 +2910,7 @@ function mmPickSelect(list,owner,placeholder){
 }
 // v32: the coin picker is one short card. The deal on top, the ticket's coin as buttons (a stablecoin says its network on the button), every other coin in the dropdown.
 // (The v21 to v31 picker was a tall card with a Start button on every row: cards of that kind that are still in a ticket keep working until their step is over.)
-const MM_NET_SHORT={eth:"Ethereum",bsc:"BSC",base:"Base",arb:"Arbitrum",op:"Optimism",pol:"Polygon",avax:"Avalanche",sol:"Solana",btc:"Bitcoin",ltc:"Litecoin"},MM_PICK_BTNS=5;
+const MM_NET_SHORT={eth:"Ethereum",bsc:"BSC",base:"Base",arb:"Arbitrum",op:"Optimism",pol:"Polygon",avax:"Avalanche",sol:"Solana",btc:"Bitcoin",ltc:"Litecoin"},MM_PICK_BTNS=4;      // v33: four buttons fit one row on a phone (the fifth wrapped); every other coin is in the dropdown
 const mmPickBtnName=a=>a.contract?`${a.coin} · ${MM_NET_SHORT[a.chain]||MM_CHAINS[a.chain].name}`:a.coin;
 function mmPickCard(ticket,given){
   const list=given||mmPickList(ticket),gone=mmNamedGone(ticket,list),note=mmPickNote(gone),first=list.filter(a=>a.mine);
@@ -2919,8 +2919,8 @@ function mmPickCard(ticket,given){
   const btns=first.slice(0,MM_PICK_BTNS),rest=list.filter(a=>!btns.includes(a)),rows=[];
   if(btns.length)rows.push(new ActionRowBuilder().addComponents(...btns.map(a=>kBtn(`mm_pick__${a.coin}__${a.chain}`,mmPickBtnName(a).slice(0,80),a.mine?ButtonStyle.Primary:ButtonStyle.Secondary))));
   if(rest.length||gone)rows.push(new ActionRowBuilder().addComponents(mmPickSelect(rest,!!gone,rest.length?"More coins and networks":"Need something else?")));
-  const d=dealOf(ticket),emb=mmK("brand",mmJourney(1)).setTitle("Choose The Coin")
-    .setDescription([d&&d.hero?kHero(d.hero):"","Pick the coin and network you both agreed on.",kNote("Check the network before you press."),note].filter(Boolean).join("\n\n"));
+  const emb=mmK("brand",mmJourney(1)).setTitle("Choose The Coin")          // v33: one line (the deal is on the ticket card; the network is on the buttons and the confirm card)
+    .setDescription(["Pick the coin and network you both agreed on.",note].filter(Boolean).join("\n\n"));
   return {embeds:[emb],components:rows};
 }
 // The coin picker as one card: a Start button on every row (Components V2: raw JSON, so it works with any discord.js that can pass it on)
@@ -3044,7 +3044,7 @@ const MM_SWAP_ASK_MS=10*60*1000;
 const mmSwapOpen=f=>f&&f.swapAsk&&Date.now()-f.swapAsk.at<MM_SWAP_ASK_MS?f.swapAsk:null;
 function mmSwapPayload(t,f,ask,tag){
   const usd=f.usd>0?f.usd:0,c2c=!!dealOf(t).c2c,other=ask.by===f.sender?f.receiver:f.sender;
-  const who=(snd,rcv)=>[`<@${snd}>${tag(snd)} sends this to the middleman.`,`<@${rcv}>${tag(rcv)} then sends ${c2c?`**${f.pays||"the other coin"}**`:mmPayWords(f.pays,f.fiat,false)} to <@${snd}>.`].join("\n\n");
+  const who=(snd,rcv)=>[`<@${snd}>${tag(snd)} sends this to the middleman.`,`<@${rcv}>${tag(rcv)} then sends ${c2c?`**${f.pays||"the other coin"}**`:mmPayWords(f.pays,f.fiat,false)} to <@${snd}>.`].join("\n");
   const d=[usd?kHero(mmCoinAbout(f.coin||"",usd,f.price)):"",`<@${ask.by}> asked to swap roles.`,`**Now**\n${who(f.sender,f.receiver)}`,`**If swapped**\n${who(f.receiver,f.sender)}`,kNote(`<@${other}>, press **Accept Swap** only if you agree. Nothing changes until you do.`)].filter(Boolean);
   return {embeds:[mmFlowEmb(f,"warn","Swap Roles?").setDescription(d.join("\n\n"))],
     components:[new ActionRowBuilder().addComponents(kBtn(`mm_fk__swapyes__${ask.n}`,"Accept Swap",ButtonStyle.Success),kBtn(`mm_fk__swapno__${ask.n}`,"Decline",ButtonStyle.Secondary))]};
@@ -3060,9 +3060,9 @@ function mmFlowPayload(t,step,frozen){
     if(MM_V5()){
       const n=[f.sender,f.receiver].filter(u=>ok[u]).length;
       const L5=[usd?kHero(mmCoinAbout(f.coin||"",usd,f.price)):"**The amount is missing.** Press **Change Amount**, or type it in this chat.",
-        `${S}${tag(f.sender)} sends this to the middleman.`,
-        c2c?`${R}${tag(f.receiver)} then sends **${f.pays||"the other coin"}** to ${S}.`:`${R}${tag(f.receiver)} then sends ${mmPayWords(f.pays,f.fiat,false)} to ${S}.`,
-        kNote(`${n}/2 confirmed. Nobody goes first. The deposit address comes on the bot's next card, once you both confirm: any other address is fake. Staff never ask you to release or cancel.`)];
+        [`${S}${tag(f.sender)} sends this to the middleman.`,
+          c2c?`${R}${tag(f.receiver)} then sends **${f.pays||"the other coin"}** to ${S}.`:`${R}${tag(f.receiver)} then sends ${mmPayWords(f.pays,f.fiat,false)} to ${S}.`].join("\n"),
+        kNote(`${n}/2 confirmed. The deposit address comes only on the bot's next card: any other is fake. Staff never ask you to release or cancel.`)];
       if(f.note)L5.push(String(f.note).slice(0,300));
       return {embeds:[mmFlowEmb(f,"brand","Confirm Deal").setDescription(L5.join("\n\n"))],
         components:[row(kBtn(`mm_fk__yes__${f.rev||0}`,"Confirm",OK).setDisabled(!usd),kBtn("mm_fk__amt","Change Amount",G),kBtn("mm_fk__swap","Swap Roles",G),kBtn("mm_fk__coin","Change Coin",G))]};
@@ -3079,16 +3079,16 @@ function mmFlowPayload(t,step,frozen){
     const picks=f.picks||{},a=picks[t.userId],b=picks[t.claimedBy],clash=!!(a&&b&&a===b),word=u=>picks[u]?`**${picks[u]==="sender"?"Sender":"Receiver"}**`:"not chosen yet";
     if(frozen)return {embeds:[mmFlowEmb(f,"ok","Roles Selected").setDescription(`${S} sends **${coin}**.\n${R} receives **${coin}**.`)],components:[]};
     const emb=mmFlowEmb(f,clash?"warn":"brand","Select Your Role").setDescription([
-      `**Sender** if you are sending **${coin}** to the bot.`,`**Receiver** if you are receiving **${coin}** later from the bot.`,"",
+      `**Sender** sends ${coin} to the bot.`,`**Receiver** gets ${coin} from the bot later.`,"",
       `<@${t.userId}>  ${word(t.userId)}`,`<@${t.claimedBy}>  ${word(t.claimedBy)}`,
-      ...(clash?["",`**Both of you chose ${a==="sender"?"Sender":"Receiver"}.** One of you sends and the other receives, so press **Reset** and choose again.`]:[]),
+      ...(clash?["",`You both chose **${a==="sender"?"Sender":"Receiver"}**. One of you sends and the other receives: press **Reset** and choose again.`]:[]),
       ...(f.note?["",f.note]:[])].join("\n"));
     return {embeds:[emb],components:[row(kBtn("mm_fr__sender","Sender",P),kBtn("mm_fr__receiver","Receiver",P),kBtn("mm_fr__reset","Reset",G))]};
   }
   if(step==="rolesok"){
     if(frozen)return {embeds:[mmFlowEmb(f,"ok","Roles Confirmed").setDescription(`${S} deposits **${coin}**. ${R} receives it.\nBoth of you confirmed.`)],components:[]};
     const emb=mmFlowEmb(f,"brand","Confirm Roles").setDescription([
-      `${S} deposits **${coin}** to the bot.`,`${R} receives **${coin}** when it is released.`,`If the deal is cancelled, the refund goes to ${S}.`,"",
+      `${S} deposits ${coin} to the bot.`,`${R} receives it when it is released.`,`If the deal is cancelled, ${S} gets it back.`,"",
       ...sides.map(u=>mmTickLine(f.rok,u,"Confirmed"))].join("\n"));
     return {embeds:[emb],components:[row(kBtn("mm_fc__yes","Correct",OK),kBtn("mm_fc__no","Incorrect",NO))]};
   }
@@ -3096,25 +3096,25 @@ function mmFlowPayload(t,step,frozen){
     const sug=f.suggest>0?fmtUSD(f.suggest):null;
     if(frozen)return {embeds:[mmFlowEmb(f,"mute","Deal Amount Entered").setDescription(`${kHero(`${fmtUSD(f.usd)} USD`)}${f.amtBy?`\nEntered by <@${f.amtBy}>.`:""}`)],components:[]};
     const emb=mmFlowEmb(f,"brand","Enter Deal Amount").setDescription([
-      "Enter the deal amount in USD.",`${S}, type a number in this chat (for example \`50\`) or use a button below.`,
+      `${S}, type the amount in USD (for example \`50\`) or use a button.`,
       ...(sug?[`The ticket says **${sug}**.`]:[]),...(f.note?["",f.note]:[])].join("\n"));
     return {embeds:[emb],components:[row(...(sug?[kBtn("mm_fa__use",`Use ${sug}`,OK)]:[]),kBtn("mm_fa__enter","Enter Amount",G))]};
   }
   if(step==="amtok"){
     const ok=f.aok||{},done=sides.filter(u=>ok[u]),status=done.length===0?"No one has confirmed yet.":done.length===1?`<@${done[0]}> confirmed. Waiting for <@${sides.find(u=>!ok[u])}>.`:"Both of you confirmed.";
     if(frozen)return {embeds:[mmFlowEmb(f,"ok","Deal Amount Confirmed").setDescription(`${kHero(`${fmtUSD(f.usd)} USD`)}\nBoth of you confirmed.`)],components:[]};
-    const emb=mmFlowEmb(f,"brand","Confirm Deal Amount").setDescription([kHero(`${fmtUSD(f.usd)} USD`),"Both of you have to confirm that this is the deal amount.","",status].join("\n"));
+    const emb=mmFlowEmb(f,"brand","Confirm Deal Amount").setDescription([kHero(`${fmtUSD(f.usd)} USD`),"Both of you confirm this amount.","",status].join("\n"));
     return {embeds:[emb],components:[row(kBtn("mm_fo__yes","Confirm",OK),kBtn("mm_fo__no","Decline",NO))]};
   }
   if(step==="warn"){
     if(frozen)return {embeds:[mmFlowEmb(f,"mute","Protect Yourself").setDescription("Both of you read it.")],components:[]};
     const emb=mmFlowEmb(f,"warn","Protect Yourself").setDescription([
-      "Read this before any money moves.","",
-      "- **Do not go first.** Send nothing to each other until this ticket says **Funds Secured**. Crypto goes only to the address on the middleman card.",
-      "- Keep everything in this ticket. Never move to DMs, and ignore anyone who asks you to.",
-      "- Receiver: pay only after this ticket says **Payment Confirmed**.",
-      "- Sender: release only after the money is in your own account. A screenshot is not proof.",
-      "- Konvert staff never ask you to press **Release** or **Cancel**.","",
+      "Before any money moves:","",
+      "- **Do not go first.** Send nothing until this ticket says **Funds Secured**. Crypto goes only to the address on the middleman card.",
+      "- Stay in this ticket. Never move to DMs.",
+      "- Receiver: pay only after **Payment Confirmed**.",
+      "- Sender: release only when the money is in your own account. A screenshot is not proof.",
+      "- Staff never ask you to press **Release** or **Cancel**.","",
       ...sides.map(u=>mmTickLine(f.wok,u,"Read it"))].join("\n"));
     return {embeds:[emb],components:[row(kBtn("mm_fw__ok","I read it, confirm",OK))]};
   }
@@ -3386,7 +3386,7 @@ async function mmFlowRoute(interaction,cid,parts){
         const n=Math.random().toString(36).slice(2,8),other=uid===f1.sender?f1.receiver:f1.sender;
         mmSaveTicket(ch.id,x=>{const g=x.mmFlow;g.swapAsk={by:uid,at:Date.now(),n};g.cok={};g.rev=(g.rev||0)+1;delete g.note;});
         await mmFlowEdit(ch,"confirm");
-        await mmSayTemp(ch,{content:`<@${other}>`,embeds:[mmFlowEmb(f1,"warn","Swap Roles Requested").setDescription(`<@${uid}> asked to swap roles.\n\n<@${other}>, press **Accept Swap** on the Confirm Deal card if you agree, or **Decline**. Nothing changes unless you accept.`)],allowedMentions:{users:[other]}});
+        await mmSayTemp(ch,{content:`<@${other}>`,embeds:[mmFlowEmb(f1,"warn","Swap Roles Requested").setDescription(`<@${uid}> asked to swap roles.\n<@${other}>, accept or decline on the Confirm Deal card. Nothing changes unless you accept.`)],allowedMentions:{users:[other]}});
         return;
       }
       if(act==="swapyes"||act==="swapno"){
@@ -3394,10 +3394,10 @@ async function mmFlowRoute(interaction,cid,parts){
         const other=ask.by===f1.sender?f1.receiver:f1.sender;
         if(act==="swapyes"){
           need(uid===other,`Only <@${other}> can accept, because <@${ask.by}> is the one who asked. Nothing changed.`);
-          mmSaveTicket(ch.id,x=>{const g=x.mmFlow;[g.sender,g.receiver]=[g.receiver,g.sender];delete g.swapAsk;g.cok={};g.rev=(g.rev||0)+1;g.note=`Roles swapped: <@${ask.by}> asked and <@${other}> agreed. Both of you confirm again.`;});
+          mmSaveTicket(ch.id,x=>{const g=x.mmFlow;[g.sender,g.receiver]=[g.receiver,g.sender];delete g.swapAsk;g.cok={};g.rev=(g.rev||0)+1;g.note=`Roles swapped. Both of you confirm again.`;});
           await mmFlowEdit(ch,"confirm");
           const g2=mmTicketOf(ch.id).mmFlow;
-          await ch.send({content:`<@${g2.sender}> <@${g2.receiver}>`,embeds:[mmFlowEmb(g2,"ok","Roles Swapped").setDescription(`Both of you agreed.\n\n<@${g2.sender}> now sends to the middleman.\n<@${g2.receiver}> now receives.\n\n${kNote("Both of you have to confirm again.")}`)],allowedMentions:{users:[g2.sender,g2.receiver]}}).catch(()=>{});          // (this one stays: it is the record that both agreed)
+          await ch.send({content:`<@${g2.sender}> <@${g2.receiver}>`,embeds:[mmFlowEmb(g2,"ok","Roles Swapped").setDescription(`<@${g2.sender}> now sends to the middleman.\n<@${g2.receiver}> now receives.\n\n${kNote("You both agreed. Confirm the deal again.")}`)],allowedMentions:{users:[g2.sender,g2.receiver]}}).catch(()=>{});          // (this one stays: it is the record that both agreed)
           return;
         }
         mmSaveTicket(ch.id,x=>{const g=x.mmFlow;delete g.swapAsk;g.note=uid===ask.by?`<@${uid}> took back the swap request. Roles stay as they are.`:`<@${uid}> declined the swap. Roles stay as they are.`;});
@@ -7635,10 +7635,10 @@ function parseExchangerLimit(member){
   }
   return null;
 }
-function describeLimit(lim){
-  if(lim&&lim.mm)return {limitText:"Use MM Always",rule:`This exchanger always uses a middleman, so the bot holds the crypto and nobody goes first.`};
-  if(lim)return {limitText:_money(lim.amount),rule:`Go-first limit: **${_money(lim.amount)}**. Above that, the middleman bot holds the crypto.`};
-  return {limitText:"Not listed",rule:`No go-first limit is listed. Ask the exchanger to confirm it. Above it, the middleman bot holds the crypto.`};
+function describeLimit(lim){      // v33: plain words, no bold (the claim card keeps its one bold line for the thing to do)
+  if(lim&&lim.mm)return {limitText:"Use MM Always",rule:`This exchanger always uses a middleman, so nobody goes first.`};
+  if(lim)return {limitText:_money(lim.amount),rule:`Go-first limit: ${_money(lim.amount)}. Above it, the middleman holds the crypto.`};
+  return {limitText:"Not listed",rule:`No go-first limit is listed. Ask the exchanger to confirm it. Above it, the middleman holds the crypto.`};
 }
 
 // ---- Mandatory middleman: one rule, asked again on every claim ----
@@ -7739,37 +7739,29 @@ async function clearConfirmButtons(channel,ticket){
 }
 
 // ---- The "claimed" announcement ----
-// A line for the client when the exchanger picked one of the methods they offered
-const methodNote=t=>t.methodPicked?`Handled through **${methodLabel(t.method)}**, one of the methods you picked.\n\n`:"";
+// v33: the claim card is short. Who claimed it (the message above already pings both people), the one reason or rule, and what to do. No deal line (the ticket card has it),
+// no filler, one bold line at most, no author line and no time stamp, and one quiet footer.
+// The method the exchanger picked (when the ticket offered several) is said inside the first line.
+const methodNote=t=>t.methodPicked?` through **${methodLabel(t.method)}**`:"";
+const NO_FIRST="**Do not go first.** Send nothing to each other until the middleman card says **Funds Secured**.";
 function buildClaimEmbed(ticket,mode){
-  const ex=ticket.claimedBy,cl=ticket.userId,hero=kHero(dealOf(ticket).hero),who=`<@${cl}>, <@${ex}> claimed your ticket.`;
-  const e=kEmbed("Ticket");
+  const ex=ticket.claimedBy,cl=ticket.userId,who=`<@${ex}> claimed this ticket${methodNote(ticket)}.`;
+  const card=(tone,title,foot,...blocks)=>mmK(tone,foot).setTitle(title).setDescription(blocks.filter(Boolean).join("\n\n"));
   if(mode==="normal"){
     const {rule}=describeLimit(ticket.claimLimit||null);
-    return e.setTitle("Ticket Claimed")
-      .setDescription(`${hero}\n${who}\n\n${methodNote(ticket)}${rule}\n\nNot comfortable going first? Press **Use Middleman**, or say **we need mm**.`)
-      .setFooter(kFoot("Something wrong? Press Flag Ticket")).setTimestamp();
+    return card("brand","Ticket Claimed","Something wrong? Press Flag Ticket",`${who}\n${rule}`,"Not comfortable going first? Press **Use Middleman**, or say **we need mm**.");
   }
   if(mode==="owner"){
-    return kEmbed("Ticket","ok").setTitle("Owner Verified")
-      .setDescription(`${hero}\n${who}\n\n${methodNote(ticket)}<@${ex}> is a Konvert owner, so it is **safe to go first**.\n\nWant the crypto held anyway? Press **Use Middleman**, or say **we need mm**.`)
-      .setFooter(kFoot("Verified Konvert owner")).setTimestamp();
+    return card("ok","Owner Verified","Verified owner",`${who}\nThey are a Konvert owner, so it is safe to go first.`,"Want the crypto held anyway? Press **Use Middleman**, or say **we need mm**.");
   }
   if(mode==="mmConfirmed"){
-    return kEmbed("Ticket","ok").setTitle("Middleman Confirmed")
-      .setDescription(`${hero}\n<@${cl}> and <@${ex}> both confirmed the middleman.\n\n${methodNote(ticket)}Follow its card below. **Do not go first:** send nothing to each other until the card says **Funds Secured**.`)
-      .setFooter(kFoot("Something wrong? Press Flag Ticket")).setTimestamp();
+    return card("ok","Middleman Confirmed","Middleman starting",`Both of you confirmed the middleman.`,NO_FIRST);
   }
-  const why=ticket.mmReason||"This exchange needs a middleman.";
-  if(mode==="mmAuto")return kEmbed("Ticket","warn").setTitle("Middleman Required")
-    .setDescription(`${hero}\n${who}\n\n${methodNote(ticket)}${why}\n\n**Do not go first.** The middleman bot holds the crypto. Send nothing to <@${ex}> until its card says **Funds Secured**.\n\nIt starts now, just below.`)
-    .setFooter(kFoot("Required  \u00b7  starts automatically")).setTimestamp();
-  if(mode==="mmPaused")return kEmbed("Ticket","warn").setTitle("Middleman Required")                        // (v29: the bot's middleman is paused by an owner: the card says so instead of promising a card that will not come)
-    .setDescription(`${hero}\n${who}\n\n${methodNote(ticket)}${why}\n\n**Do not go first.** The middleman bot is switched off for the moment, so a Konvert owner will act as the middleman here. Send nothing to <@${ex}> until the owner says so.`)
-    .setFooter(kFoot("Required  \u00b7  an owner takes this one")).setTimestamp();
-  return kEmbed("Ticket","warn").setTitle("Middleman Required")
-    .setDescription(`${hero}\n${who}\n\n${methodNote(ticket)}${why}\n\n**Do not go first.** The middleman bot holds the crypto. Send nothing to <@${ex}> until its card says **Funds Secured**.\n\n<@${cl}>, press **Confirm Middleman** to start it.`)
-    .setFooter(kFoot("Exchanger confirmed  \u00b7  waiting for the client")).setTimestamp();
+  const why=String(ticket.mmReason||"This exchange needs a middleman.").replace(/\*\*/g,"");
+  if(mode==="mmAuto")return card("warn","Middleman Required","Middleman starts below",`${who}\n${why}`,NO_FIRST);
+  if(mode==="mmPaused")return card("warn","Middleman Required","An owner takes this one",`${who}\n${why}`,       // (v29: the bot's middleman is paused by an owner: the card says so instead of promising a card that will not come)
+    "**Do not go first.** The middleman bot is switched off for the moment, so a Konvert owner will act as the middleman. Send nothing to each other until the owner says so.");
+  return card("warn","Middleman Required","Waiting for the client",`${who}\n${why}`,NO_FIRST,`<@${cl}>, press **Confirm Middleman** to start it.`);
 }
 
 // ---- Exchanger suspension (triggered by the client's Flag Ticket button) ----
@@ -7992,9 +7984,8 @@ async function forceMiddleman(ch,owner,guild){
   t.mmForced=true;t.mmForcedBy=owner.id;t.mmForcedAt=Date.now();
   if(!t.claimedBy){                                                  // nobody has it yet: the rule waits for the claim
     _mem.tickets=tickets;save("tickets",tickets);
-    await ch.send({embeds:[kEmbed("Ticket","warn").setTitle("Middleman Required")
-      .setDescription(`${kHero(dealOf(t).hero)}\nThis ticket uses the built-in server middleman bot. It starts as soon as an exchanger claims it, and nobody has to go first.`)
-      .setFooter(kFoot("Required  ·  starts automatically")).setTimestamp()]}).catch(()=>{});
+    await ch.send({embeds:[mmK("warn","Starts when claimed").setTitle("Middleman Required")
+      .setDescription("This ticket uses the middleman bot. It starts as soon as an exchanger claims it, so nobody goes first.")]}).catch(()=>{});
     log(guild,`MM FORCED: #${ch.name} | ${owner.tag||owner.id} | applies when an exchanger claims`);
     return dm(`Done. #${ch.name} needs the middleman; it starts when an exchanger claims it.`);
   }
