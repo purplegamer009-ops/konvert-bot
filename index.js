@@ -46,7 +46,7 @@ const { Pool } = require("pg");
 
 // Which build is running. Shown at the bottom of /ping and printed in the logs, so a deploy that did not go through is easy to spot.
 // BOT_BUILD is the first 7 characters of the commit Railway built (it matches the commit on GitHub); it is blank when run anywhere else.
-const BOT_VERSION="v33";
+const BOT_VERSION="v34";
 const BOT_BUILD=String(process.env.RAILWAY_GIT_COMMIT_SHA||"").slice(0,7);
 const BUILD_TEXT=BOT_BUILD?`${BOT_VERSION}  ·  ${BOT_BUILD}`:BOT_VERSION;
 
@@ -10108,6 +10108,7 @@ function _gOwners(){
     _gline("postinfo","post the info embed"),
     _gline("posttos","post the Terms of Service"),
     _gline("postlinks","post the official links"),
+    _gline("postrules","post the server rules (replaces the old rules message)"),
     _gline("postleaderboard","post a live leaderboard that updates after every exchange"),
     _gline("postguide","post this guide in the channel (add a section to post just one)"),
     _gline("announce","post an announcement"),
@@ -10258,6 +10259,81 @@ async function handleGuide(interaction,{post=false}={}){
 }
 // ── end Guide ──────────────────────────────────────────────────────────────────────────────────────────────
 
+// ── v34: /postrules: the server rules as one clean post, in one command ──────────────────────────────────────────────────────────────────
+// Run it in the rules channel (or pick the channel). The bot finds the old rules message and EDITS IT IN PLACE (same message, same link), or posts a fresh one when there is
+// none. Run it again whenever the rules change: the channel never ends up with two rules posts (older ones, ours or another bot's, are removed).
+// The ten rules keep every clause of the old post, said once and shortly. The coin row is the bot's own coin emoji (made at start); without them the row is simply left out.
+const RULES_KEY="konvert_rules_msg";
+const RULES_INTRO="To keep Konvert safe, organized and enjoyable for everyone, please follow the rules below. Breaking them can mean a warning or removal from the server.";
+const RULES_LIST=[
+  ["Be Respectful","Treat all members and staff with respect. No harassment, hate speech, discrimination or personal attacks. No excessive arguing, trolling or toxic behavior."],
+  ["No Scams or Fraud","Scamming, fraud and misleading behavior are strictly prohibited. Don't impersonate staff, agents or other members. Report anything suspicious to staff."],
+  ["No Spamming","No message flooding, excessive emojis or repeated messages. No mass mentions or unnecessary pings. Keep conversations relevant to each channel."],
+  ["No Advertising or Self-Promotion","No advertising other servers, services or referral links. Don't message members to promote or solicit. Promotions need prior staff approval."],
+  ["Keep Content Appropriate","No NSFW, explicit or disturbing content. No illegal content or talk of illegal activity. Use appropriate language in every channel."],
+  ["Respect Privacy","Don't share personal or private information, yours or anyone else's. No doxxing, threats or invasion of privacy."],
+  ["Follow Staff Instructions","Listen to moderators and admins. Don't argue moderation decisions in public. If you have an issue, contact staff privately."],
+  ["Use Channels Properly","Post in the correct channel and follow any pinned messages or channel rules. Don't derail conversations."],
+  ["No Alt Abuse","Don't use alternate accounts to bypass rules or punishments. Don't abuse giveaways or events."],
+  ["Common Sense Rule","Use common sense. If something feels wrong or disruptive, don't do it."],
+];
+const RULES_COINS=[["btc"],["eth"],["sol"],["bnb"],["ltc"],["usdt","eth"],["usdc","eth"]];
+const rulesCoinRow=()=>RULES_COINS.map(([coin,chain])=>mmEmoText({coin,chain}).trim()).filter(Boolean).join(" ");
+function buildRulesEmbed(){
+  const row=rulesCoinRow();
+  return kEmbed().setTitle("Server Rules")
+    .setDescription([RULES_INTRO,row].filter(Boolean).join("\n\n")+"\n\u200b")          // (the last line is empty: a little room before rule 1, like the other posts)
+    .addFields(RULES_LIST.map(([name,text],i)=>({name:`${i+1} · ${name}`,value:text,inline:false})))
+    .setImage(IMG.BANNER).setFooter(kFoot("Ask staff if anything is unclear"));
+}
+// A rules post of the old kind: made by a bot, titled "Rules" / "Server Rules", or opening with the "Konvert Server Rules" heading. A person's message is never matched.
+const isRulesPost=m=>!!(m&&m.author&&m.author.bot&&(m.embeds||[]).some(e=>/^\W*(server\s+)?rules\W*$/i.test(String(e.title||""))||/^\W*(konvert\W+)?server rules\b/i.test(String(e.description||"").trim())));
+async function findRulesPosts(channel){                  // newest first: the message we remembered, plus every rules post in the last 100 messages
+  const found=new Map(),me=client.user&&client.user.id;
+  try{
+    const saved=await dbGet(RULES_KEY);
+    if(saved&&saved.channelId===channel.id&&saved.messageId){
+      const m=await channel.messages.fetch(saved.messageId).catch(()=>null);
+      if(m&&m.author&&m.author.id===me)found.set(m.id,m);
+    }
+  }catch{}
+  try{
+    const recent=await channel.messages.fetch({limit:100});
+    for(const m of recent.values())if(isRulesPost(m))found.set(m.id,m);
+  }catch{}
+  return [...found.values()].sort((a,b)=>(b.createdTimestamp||0)-(a.createdTimestamp||0));
+}
+function rulesMissing(channel){                          // what the bot lacks in that channel ([] = nothing, or can't tell: then it just tries)
+  try{
+    const me=channel.guild&&channel.guild.members&&channel.guild.members.me;
+    const p=me&&typeof channel.permissionsFor==="function"?channel.permissionsFor(me):null;
+    if(!p)return [];
+    return [["ViewChannel","View Channel"],["SendMessages","Send Messages"],["EmbedLinks","Embed Links"],["ReadMessageHistory","Read Message History"]].filter(([k])=>!p.has(PermissionFlagsBits[k])).map(x=>x[1]);
+  }catch{return [];}
+}
+async function postRules(channel){
+  const me=client.user&&client.user.id;
+  if(!Object.keys(MM_EMO).length)await mmEmojiSync().catch(()=>{});          // the coin row needs the emoji: make them now if the start-up run missed
+  const embed=buildRulesEmbed();
+  const posts=await findRulesPosts(channel);
+  const mine=posts.filter(m=>m.author.id===me),older=[...mine.slice(1),...posts.filter(m=>m.author.id!==me)];
+  let msg=null,how="posted";
+  if(mine.length){
+    msg=await mine[0].edit({content:null,embeds:[embed],components:[]}).catch(()=>null);
+    if(msg)how="edited";else older.unshift(mine[0]);
+  }
+  if(!msg)msg=await channel.send({embeds:[embed]});
+  let removed=0,left=0;
+  for(const m of older){try{await m.delete();removed++;}catch{left++;}}
+  await dbSet(RULES_KEY,{messageId:msg.id,channelId:channel.id,at:Date.now()}).catch(err=>console.error("[rules]",err.message));
+  return {how,message:msg,removed,left};
+}
+function rulesReply(r,channel){
+  const n=k=>`${k} older rules post${k===1?"":"s"}`;
+  return [`Rules ${r.how==="edited"?"updated":"posted"} in ${channel}: ${r.message.url}`,r.removed?`Removed ${n(r.removed)}.`:"",r.left?`${n(r.left)} could not be removed: delete ${r.left===1?"it":"them"} by hand.`:""].filter(Boolean).join("\n");
+}
+// ── end Rules ────────────────────────────────────────────────────────────
+
 const COMMANDS=[
   new SlashCommandBuilder().setName("rates").setDescription("View live crypto rates"),
   new SlashCommandBuilder().setName("fee").setDescription("Calculate your Konvert fee").addNumberOption(o=>o.setName("amount_usd").setDescription("Amount in USD").setRequired(true)),
@@ -10297,6 +10373,7 @@ const COMMANDS=[
   new SlashCommandBuilder().setName("postinfo").setDescription("[Owner] Post the Info embed").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("posttos").setDescription("[Owner] Post the Terms of Service embed").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("postlinks").setDescription("[Owner] Post the Official Links embed").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
+  new SlashCommandBuilder().setName("postrules").setDescription("[Owner] Post the server rules (replaces the old rules message)").addChannelOption(o=>o.setName("channel").setDescription("Where to post them (default: this channel)").addChannelTypes(ChannelType.GuildText,ChannelType.GuildAnnouncement).setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("adjuststats").setDescription("[Owner] Add or subtract volume from a user's stats").addUserOption(o=>o.setName("user").setDescription("User").setRequired(true)).addNumberOption(o=>o.setName("amount").setDescription("Amount in USD (use negative to subtract)").setRequired(true)).addStringOption(o=>o.setName("reason").setDescription("Reason for adjustment").setRequired(false)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("transferstats").setDescription("[Owner] Move all stats from one account to another").addUserOption(o=>o.setName("from").setDescription("Account to move stats FROM").setRequired(true)).addUserOption(o=>o.setName("to").setDescription("Account to move stats TO").setRequired(true)).setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
   new SlashCommandBuilder().setName("suspended").setDescription("[Owner] List exchangers suspended pending review").setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
@@ -11350,7 +11427,7 @@ client.on(Events.InteractionCreate,async interaction=>{
     if(typeof interaction.customId==="string"&&interaction.customId.startsWith("mm_")&&await mmInteraction(interaction))return;       // the built-in server middleman bot's buttons, menus and forms
     if(interaction.isChatInputCommand()){
       // Owner-only commands: check OWNER_IDS regardless of Discord permissions
-      const OWNER_ONLY_CMDS=["grantowner","revokeowner","listowners","wipestats","clearleaderboard","adjuststats","resetstats","transferstats","suspended","reinstate","clearexchanger","profittest","broadcast","setfeemode","postleaderboard","serverinfo","clientinfo","receipt","postguide","postbackup","pricecheck","mmadmin"];
+      const OWNER_ONLY_CMDS=["grantowner","revokeowner","listowners","wipestats","clearleaderboard","adjuststats","resetstats","transferstats","suspended","reinstate","clearexchanger","profittest","broadcast","setfeemode","postleaderboard","serverinfo","clientinfo","receipt","postguide","postbackup","pricecheck","mmadmin","postrules"];
       if(OWNER_ONLY_CMDS.includes(interaction.commandName)&&!isOwner(interaction.user.id,interaction.member)){
         return interaction.reply({content:"You don\'t have permission to use this command.",flags:64});
       }
@@ -11623,6 +11700,22 @@ Deleting in 10 seconds.`)
           .setFooter(kFoot("Using our service means you accept these terms"));
         await interaction.channel.send({embeds:[embed]});
         return interaction.reply({content:"Terms of Service embed posted.",flags:64});
+      }
+      if(cmd==="postrules"){
+        await interaction.deferReply({flags:64});
+        const picked=interaction.options.getChannel("channel");
+        const ch=(picked&&interaction.guild&&interaction.guild.channels.cache.get(picked.id))||picked||interaction.channel;
+        if(!ch||!ch.messages||typeof ch.send!=="function")return interaction.editReply({content:"Pick a text channel for the rules."});
+        const miss=rulesMissing(ch);
+        if(miss.length)return interaction.editReply({content:`I can't post the rules in ${ch}: I need ${miss.join(", ")} there.`});
+        try{
+          const r=await postRules(ch);
+          log(interaction.guild,`RULES: ${interaction.user.tag} ${r.how} the server rules in #${ch.name}`);
+          return interaction.editReply({content:rulesReply(r,ch)});
+        }catch(err){
+          console.error("[rules]",err);
+          return interaction.editReply({content:`The rules could not be posted: ${err.message}`});
+        }
       }
       if(cmd==="postlinks"){const embed=kEmbed().setTitle(`Official Links for Konvert`).setThumbnail(IMG.LOGO).setDescription("All official Konvert social media. Follow us for updates, announcements, and giveaways.\n\u200b").addFields({name:"Twitter / X",value:"[**@KonvertNow**](https://x.com/konvertnow)",inline:true},{name:"Instagram",value:"[**@KonvertNow**](https://www.instagram.com/konvertnow/)",inline:true},{name:`Stay Safe`,value:"Only interact with accounts listed here. Any other account claiming to be Konvert is an impersonator.",inline:false}).setImage(IMG.BANNER).setFooter(kFoot("Official links  ·  Follow us for updates"));await interaction.channel.send({embeds:[embed]});return interaction.reply({content:"Official links embed posted.",flags:64});}
 
